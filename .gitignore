@@ -187,3 +187,9 @@ pip-build-env-*/
 pip-modern-metadata-*/
 pip-unpack-*/
 pytest-of-*/
+
+# Local handover/briefing docs: contain LAN addresses, media paths and other
+# environment details that must never be committed.
+TikLocal接手提示词.md
+TikLocal二开启动提示词.md
+*提示词*.md
