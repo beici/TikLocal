@@ -224,7 +224,6 @@ html, body {
   align-items: center;
   justify-content: center;
   background: #000;
-  /* Children slide in from a full stage width away; keep them clipped. */
   overflow: hidden;
 }
 .image-group-media {

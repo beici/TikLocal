@@ -423,6 +423,106 @@
       return true;
     }
 
+    // Dragging sideways on a gallery moves the current child with the finger
+    // and pulls the neighbouring child in from the edge of the fixed stage;
+    // releasing past a threshold (or with a flick) commits the switch.
+    let groupDrag = null;
+
+    function startGroupDrag(dx) {
+      const item = currentItem();
+      if (groupDrag || !item || item.type !== 'image_group') return !!groupDrag;
+      const panel = item.el;
+      if (!panel || typeof panel._createGroupChild !== 'function') return false;
+      const dragStage = panel.querySelector('.image-group-stage');
+      if (!dragStage) return false;
+      const members = Array.isArray(item.items) ? item.items : [];
+      const index = Number(item.activeChildIndex) || 0;
+      const dir = dx < 0 ? 1 : -1;
+      const target = index + dir;
+      if (target < 0 || target >= members.length) return false;
+      const entry = members[target];
+      if (!entry || !entry.media_url) return false;
+      const active = dragStage.querySelector('.image-group-media');
+      if (!active) return false;
+      const neighbor = panel._createGroupChild(entry, false);
+      neighbor.dataset.groupGeneration = String(Number(panel._groupGeneration) || 1);
+      neighbor.style.transition = 'none';
+      neighbor.style.opacity = '1';
+      neighbor.style.transform = `translateX(${dir * 100}%)`;
+      dragStage.appendChild(neighbor);
+      active.style.transition = 'none';
+      groupDrag = {
+        panel,
+        stage: dragStage,
+        counterEl: panel.querySelector('.image-group-counter'),
+        active,
+        neighbor,
+        dir,
+        target,
+        width: dragStage.clientWidth || 1,
+      };
+      return true;
+    }
+
+    function applyGroupDrag(dx) {
+      if (!groupDrag) return;
+      const { dir, width } = groupDrag;
+      // Past the rest position the strip resists instead of moving on.
+      const travel = dir === 1 ? Math.min(dx, 0) : Math.max(dx, 0);
+      const eased = travel + (dx - travel) * 0.25;
+      groupDrag.active.style.transform = `translateX(${eased}px)`;
+      groupDrag.neighbor.style.transform = `translateX(${eased + dir * width}px)`;
+    }
+
+    function finishGroupDragAnimated(commit) {
+      const drag = groupDrag;
+      if (!drag) return;
+      groupDrag = null;
+      const settleMs = reduceMotion.matches ? 0 : 220;
+      const ease = 'cubic-bezier(0.22, 1, 0.36, 1)';
+      const transition = settleMs ? `transform ${settleMs}ms ${ease}` : 'none';
+      drag.active.style.transition = transition;
+      drag.neighbor.style.transition = transition;
+      if (commit) {
+        drag.active.style.transform = `translateX(${-drag.dir * drag.width}px)`;
+        drag.neighbor.style.transform = 'translateX(0)';
+        window.setTimeout(() => {
+          if (drag.active.parentNode === drag.stage) drag.active.remove();
+        }, settleMs + 60);
+      } else {
+        drag.active.style.transform = 'translateX(0)';
+        drag.neighbor.style.transform = `translateX(${drag.dir * drag.width}px)`;
+        window.setTimeout(() => {
+          if (drag.neighbor.parentNode === drag.stage) drag.neighbor.remove();
+        }, settleMs + 60);
+      }
+    }
+
+    function commitGroupDrag() {
+      const drag = groupDrag;
+      if (!drag) return;
+      const { panel, neighbor, counterEl, target } = drag;
+      const item = currentItem();
+      const members = Array.isArray(item?.items) ? item.items : [];
+      panel._groupGeneration = (Number(panel._groupGeneration) || 0) + 1;
+      neighbor.dataset.groupGeneration = String(panel._groupGeneration);
+      // The outgoing child carries the new generation too, so the render safety
+      // net lets it finish its exit animation instead of yanking it early.
+      drag.active.dataset.groupGeneration = String(panel._groupGeneration);
+      drag.active._liveVideo?.pause();
+      panel._activeChildIndex = target;
+      panel._activeLiveVideo = neighbor._liveVideo || null;
+      if (counterEl) counterEl.textContent = `${target + 1} / ${members.length}`;
+      const previousActivity = finishActivity();
+      if (item) {
+        item.activeChildIndex = target;
+        updateControls(item);
+      }
+      postActivity([previousActivity, beginActivity(item)]);
+      if (neighbor._liveVideo) playLiveVideo(neighbor._liveVideo);
+      finishGroupDragAnimated(true);
+    }
+
     function updateFavoriteState(name) {
       mediaActions.syncFavorite(name)
         .catch(() => {
@@ -665,6 +765,16 @@
         if (typeof item.renderChild === 'function') {
           item.activeChildIndex = item.renderChild(Number(item.activeChildIndex) || 0);
         }
+        // Entering the group: prune leftovers from interrupted renders or drags.
+        const groupStage = item.el ? item.el.querySelector('.image-group-stage') : null;
+        if (groupStage && item.el._groupGeneration) {
+          const currentGen = String(item.el._groupGeneration);
+          groupStage.querySelectorAll('.image-group-media').forEach((element) => {
+            if (element.dataset.groupGeneration !== currentGen && element.parentNode === groupStage) {
+              element.remove();
+            }
+          });
+        }
         // A live child that is already on stage (the slide-in was skipped) still
         // needs to start playing when its group becomes the current item.
         if (item.el?._activeLiveVideo) playLiveVideo(item.el._activeLiveVideo);
@@ -703,25 +813,7 @@
         const counterEl = panel.querySelector('.image-group-counter');
         const children = Array.isArray(item.items) ? item.items : [];
 
-        function renderImageGroup(index, force = false) {
-          if (!stage || !counterEl || !children.length) return;
-          const safeIndex = Math.max(0, Math.min(index, children.length - 1));
-          const entry = children[safeIndex];
-          if (!entry || !entry.media_url) return;
-          const previousIndex = Number(panel._activeChildIndex);
-          if (!force && stage.querySelector('.image-group-media') && safeIndex === previousIndex) {
-            // Re-showing the child that is already on stage (e.g. when the page
-            // slid in); re-rendering it would replay the slide animation.
-            return;
-          }
-          const direction = Number.isFinite(previousIndex) && safeIndex < previousIndex ? -1 : 1;
-          const outgoing = Array.from(stage.querySelectorAll('.image-group-media'));
-          // Stop the outgoing child's playback before swapping it out.
-          outgoing.forEach((element) => {
-            if (element._liveVideo) element._liveVideo.pause();
-            if (element instanceof HTMLVideoElement) element.pause();
-          });
-          panel._activeLiveVideo = null;
+        function createGroupChild(entry, force = false) {
           const media = document.createElement(entry.type === 'live' && entry.live_video_url ? 'div' : (entry.type === 'video' ? 'video' : 'img'));
           if (media instanceof HTMLDivElement) {
             // A live child: jpeg cover with the paired mp4 on hold.
@@ -742,10 +834,6 @@
             media.appendChild(video);
             media._liveVideo = video;
             media._loadImage = cover;
-            panel._activeLiveVideo = video;
-            // Live children start playing when they become the visible child of
-            // the current item; off-screen groups keep their cover only.
-            if (currentItem()?.el === panel) playLiveVideo(video);
           } else if (media instanceof HTMLVideoElement) {
             media.className = 'image-group-media';
             media.src = entry.media_url;
@@ -765,28 +853,88 @@
           media.addEventListener('error', () => handleMediaFailure(panel));
           media.loading = 'eager';
           media.decoding = 'async';
+          return media;
+        }
+
+        function renderImageGroup(index, force = false) {
+          if (!stage || !counterEl || !children.length) return;
+          const safeIndex = Math.max(0, Math.min(index, children.length - 1));
+          const entry = children[safeIndex];
+          if (!entry || !entry.media_url) return;
+          if (groupDrag && groupDrag.panel === panel) {
+            // A render mid-drag would fight the finger; drop the drag instantly.
+            const drag = groupDrag;
+            groupDrag = null;
+            drag.neighbor.remove();
+            drag.active.style.transition = 'none';
+            drag.active.style.transform = 'translateX(0)';
+          }
+          const previousIndex = Number(panel._activeChildIndex);
+          if (!force && stage.querySelector('.image-group-media') && safeIndex === previousIndex) {
+            // Re-showing the child that is already on stage (e.g. when the page
+            // slid in); re-rendering it would replay the slide animation.
+            return;
+          }
+          const direction = Number.isFinite(previousIndex) && safeIndex < previousIndex ? -1 : 1;
+          const outgoing = Array.from(stage.querySelectorAll('.image-group-media'));
+          // Stop the outgoing child's playback before swapping it out.
+          outgoing.forEach((element) => {
+            if (element._liveVideo) element._liveVideo.pause();
+            if (element instanceof HTMLVideoElement) element.pause();
+          });
+          panel._activeLiveVideo = null;
+          const media = createGroupChild(entry, force);
+          if (media._liveVideo) panel._activeLiveVideo = media._liveVideo;
           panel._groupGeneration = (Number(panel._groupGeneration) || 0) + 1;
           const generation = panel._groupGeneration;
           media.dataset.groupGeneration = String(generation);
-          // One child is ever visible: the incoming one waits hidden until its
-          // bytes are ready, then the outgoing child is removed at once and the
-          // new one fades in with a small directional nudge. Two children never
-          // share the stage, so no half-and-half ghost can appear.
+          // The incoming child waits offstage until its bytes are ready, then
+          // slides across while the outgoing child slides out the other way -
+          // a Douyin-style pan that never shows a half-loaded image.
+          const slideMs = reduceMotion.matches ? 0 : 260;
+          const slideEase = 'cubic-bezier(0.22, 1, 0.36, 1)';
           media.style.opacity = '0';
-          media.style.transform = `translateX(${direction * 14}px)`;
+          media.style.transform = outgoing.length
+            ? `translateX(${direction * 100}%)`
+            : 'translateX(0)';
           stage.appendChild(media);
+          // Live children start playing when they become the visible child of
+          // the current item; off-screen groups keep their cover only.
+          if (media._liveVideo && currentItem()?.el === panel) playLiveVideo(media._liveVideo);
           const revealMedia = () => {
             if (media.dataset.groupGeneration !== String(panel._groupGeneration)) return;
+            if (outgoing.length && slideMs) {
+              // Pan: both children travel one stage width, clipped by overflow.
+              media.style.opacity = '1';
+              // Double rAF: the offstage start position must be committed
+              // before the transition begins, or the pan snaps instantly.
+              requestAnimationFrame(() => requestAnimationFrame(() => {
+                media.style.transition = `transform ${slideMs}ms ${slideEase}`;
+                media.style.transform = 'translateX(0)';
+                outgoing.forEach((element) => {
+                  element.style.transition = `transform ${slideMs}ms ${slideEase}`;
+                  element.style.transform = `translateX(${direction * -100}%)`;
+                });
+              }));
+              window.setTimeout(() => {
+                if (media.dataset.groupGeneration !== String(panel._groupGeneration)) return;
+                outgoing.forEach((element) => {
+                  if (element.parentNode === stage) element.remove();
+                });
+              }, slideMs + 80);
+              return;
+            }
+            // Nothing to pan against (first child, or reduced motion): swap in place.
             outgoing.forEach((element) => {
               if (element.parentNode === stage) element.remove();
             });
-            requestAnimationFrame(() => {
-              media.style.transition = reduceMotion.matches
-                ? 'none'
-                : 'opacity 0.16s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)';
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+              media.style.transition = slideMs
+                ? `opacity 0.16s ease, transform 0.2s ${slideEase}`
+                : 'none';
               media.style.opacity = '1';
               media.style.transform = 'translateX(0)';
-            });
+            }));
           };
           const loadImage = media instanceof HTMLImageElement ? media : media._loadImage || null;
           if (loadImage && !(loadImage.complete && loadImage.naturalWidth > 0)) {
@@ -818,6 +966,7 @@
         }
 
         panel._renderImageGroup = renderImageGroup;
+        panel._createGroupChild = createGroupChild;
         panel._activeChildIndex = 0;
         renderImageGroup(0);
         return panel;
@@ -1332,12 +1481,23 @@
         clearTimeout(tapTimer);
         gesture.mode = gesture.longPressed ? 'none' : (Math.abs(dy) > Math.abs(dx) ? 'vertical' : 'horizontal');
         if (gesture.mode === 'horizontal' && currentVideo()) beginScrub(gesture);
+        else if (gesture.mode === 'horizontal') startGroupDrag(dx);
       }
       if (gesture.mode === 'scrub') {
         moveScrub(gesture, dx);
         return;
       }
-      if (gesture.mode === 'horizontal') gesture.dx = dx;
+      if (gesture.mode === 'horizontal') {
+        gesture.dx = dx;
+        gesture.xsamples = gesture.xsamples || [[event.timeStamp, event.clientX]];
+        gesture.xsamples.push([event.timeStamp, event.clientX]);
+        if (gesture.xsamples.length > 6) gesture.xsamples.shift();
+        // The drag latches on the first move that points at an existing
+        // neighbour, so an initial wobble towards a boundary cannot lock the
+        // gesture out of finger tracking.
+        if (!groupDrag && !currentVideo()) startGroupDrag(dx);
+        applyGroupDrag(dx);
+      }
       if (gesture.mode !== 'vertical') return;
       const dir = dy < 0 ? 1 : -1;
       if (!pager || pager.dir !== dir) beginPage(dir);
@@ -1364,6 +1524,22 @@
         const commit = !cancelled && (toward > height * 0.22 || (fling && toward > 24));
         if (commit && !pager.peer && pager.dir > 0 && flowSession.hasMore()) loadFeed();
         settlePage(commit, current.offset);
+        return;
+      }
+      if (current.mode === 'horizontal' && groupDrag) {
+        // The strip already follows the finger; settle it by distance or flick.
+        const xs = current.xsamples || [];
+        const lastX = xs[xs.length - 1] || null;
+        const firstX = (lastX && xs.find(([time]) => lastX[0] - time <= 90)) || lastX;
+        const vx = lastX && firstX && lastX[0] > firstX[0]
+          ? (lastX[1] - firstX[1]) / (lastX[0] - firstX[0])
+          : 0;
+        const commit = !cancelled && (
+          Math.abs(current.dx) > groupDrag.width * 0.22
+          || (Math.abs(vx) > 0.55 && Math.abs(current.dx) > 36)
+        );
+        if (commit) commitGroupDrag();
+        else finishGroupDragAnimated(false);
         return;
       }
       if (cancelled) return;
