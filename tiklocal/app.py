@@ -142,7 +142,13 @@ def create_app(test_config=None):
 
     @app.template_global()
     def static_asset(filename: str) -> str:
-        return url_for('static', filename=filename, v=app_version)
+        # Cache-bust by the file's own mtime so edited assets reach browsers on
+        # a plain refresh; the version only tags files that cannot be stat'ed.
+        try:
+            stamp = hex(int(os.stat(os.path.join(app.static_folder, filename)).st_mtime))
+        except OSError:
+            stamp = app_version
+        return url_for('static', filename=filename, v=stamp)
 
     @app.context_processor
     def app_identity_context():
@@ -156,7 +162,9 @@ def create_app(test_config=None):
     def apply_cache_policy(response):
         endpoint = request.endpoint or ''
         if endpoint == 'static':
-            if request.args.get('v') == app_version:
+            if request.args.get('v'):
+                # The value is per-file (mtime) or the app version; either way
+                # the URL changes whenever the content does.
                 response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
             else:
                 response.headers['Cache-Control'] = 'public, max-age=0, must-revalidate'
