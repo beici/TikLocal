@@ -173,3 +173,17 @@ outputs/
 
 # Local demo media for screenshots (not committed)
 demo-media/
+
+# Local runtime data: isolated instance dirs (TIKLOCAL_INSTANCE), databases,
+# auth files and thumbnail caches must never be committed.
+tiklocal-data/
+.smoke-data/
+*.sqlite3
+*.sqlite3-journal
+/config.yaml
+
+# Transient pip editable-install build dirs and pytest tmp roots
+pip-build-env-*/
+pip-modern-metadata-*/
+pip-unpack-*/
+pytest-of-*/

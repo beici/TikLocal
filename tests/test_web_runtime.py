@@ -3,7 +3,7 @@ import sys
 import pytest
 
 from tiklocal.app import app_version, create_app
-from tiklocal.run import main
+from tiklocal.run import load_config, main
 
 
 def test_browser_cache_policy_and_media_range(tmp_path):
@@ -20,16 +20,10 @@ def test_browser_cache_policy_and_media_range(tmp_path):
     assert media.headers['Content-Range'] == 'bytes 2-5/10'
     assert client.get('/install').status_code == 404
     assert client.get('/app.webmanifest').status_code == 404
-
-
-def test_retirement_worker_is_available_before_login(tmp_path, monkeypatch):
-    monkeypatch.setenv('TIKLOCAL_AUTH_PASSWORD', 'test-only-password')
-    client = create_app({'TESTING': True, 'MEDIA_ROOT': tmp_path, 'AUTH_ENABLED': True}).test_client()
-    worker = client.get('/service-worker.js?v=old-version')
-    assert worker.status_code == 200
-    assert worker.mimetype == 'application/javascript'
-    assert worker.headers['Service-Worker-Allowed'] == '/'
-    assert worker.headers['Cache-Control'] == 'no-cache, no-store, must-revalidate'
+    # TikLocal keeps the retired service-worker endpoint; spooly removed it.
+    assert client.get('/service-worker.js').status_code == 200
+    # TikLocal keeps the LumaFold device-pairing API (POST-only); spooly removed it.
+    assert client.get('/api/v1/pair').status_code == 405
 
 
 @pytest.mark.parametrize('key,value', [
@@ -42,3 +36,19 @@ def test_old_tls_config_does_not_silently_start_http(monkeypatch, capsys, key, v
         main()
     assert stopped.value.code == 2
     assert 'Built-in HTTPS has been removed' in capsys.readouterr().err
+
+
+def test_instance_config_takes_priority(tmp_path, monkeypatch):
+    home = tmp_path / 'home'
+    instance = tmp_path / 'instance'
+    (home / '.config' / 'tiklocal').mkdir(parents=True)
+    (home / '.config' / 'tiklocal' / 'config.yaml').write_text('name: Global\n')
+    monkeypatch.setenv('HOME', str(home))
+    # Windows resolves Path.home() through USERPROFILE, not HOME.
+    monkeypatch.setenv('USERPROFILE', str(home))
+    monkeypatch.setenv('TIKLOCAL_INSTANCE', str(instance))
+    assert load_config() == {'name': 'Global'}
+
+    instance.mkdir()
+    (instance / 'config.yaml').write_text('name: Container\nport: 9000\n')
+    assert load_config() == {'name': 'Container', 'port': 9000}

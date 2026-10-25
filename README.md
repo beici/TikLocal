@@ -50,6 +50,9 @@ network. The first start prints an access password in the terminal.
 - **Radio** — an ambient audio player for the music in the same folders.
 - **Many folders, one library** — merge several media directories; deletions go
   to a trash you can undo.
+- **相关媒体与描述搜索（实验性，默认关闭）** — 视频详情页的相关推荐、图库
+  详情页的相似照片，以及 Library 的"按描述搜索"；详见下文
+  [从 spooly 移植的功能](#从-spooly-移植的功能)。
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ChanMo/TikLocal/main/docs/screenshots/flow-mobile.jpg" alt="Flow: a full-screen waterfall video with like, save and info actions" width="260">
@@ -242,6 +245,56 @@ untouched. Revisit the same address once to retire the old service worker; old
 home-screen shortcuts can be removed by hand.
 
 </details>
+
+## 从 spooly 移植的功能
+
+本仓库在 TikLocal 0.8.45 基础上，从其换牌续作
+[spooly](https://github.com/oddloafhq/spooly) 0.8.46–0.8.48 移植了以下功能
+（品牌/设置页 UI 刷新、PWA/设备配对清理等上游差异未移植）：
+
+1. **相关视频与相似照片（spooly v0.8.48 "related videos"）**——视频按
+   时长 20% / 50% / 80% 抽取三帧（短于 1 秒只抽一帧）单独向量化；
+   匹配时先用均值向量选出 48 个候选，再做双向逐帧最佳匹配平均，避免单个
+   共同镜头主导排序。视频/图片详情页共用 `/api/recommend/similar`。
+2. **按文字描述搜索 + 相关照片发现卡片（spooly v0.8.47 "optional media
+   discovery"）**——Library 探索页新增"Search by description"面板（中文
+   可用）与"Related photos"发现卡片；数据层把 `image_vectors` 统一为
+   `media_vectors`（数据库迁移 011/012，含迁移事务安全修复）。Flow 偶数页
+   也会插入相关照片组卡片。
+3. **Docker / NAS 部署链路**——多阶段 `Dockerfile`（含 ffmpeg、yt-dlp、
+   gallery-dl、Deno）、`compose.yaml`、尊重配置端口的健康检查，以及无 AVX
+   NAS CPU 可用的 llama.cpp EmbeddingGemma-2 侧车方案
+   （[`deployment/embedding/`](deployment/embedding/README.md)）。本仓库不
+   发布镜像，部署时本地构建：见 [`docs/docker.md`](docs/docker.md)。
+4. **兼容性小修复**——废弃 `datetime.utcnow()` 清理（Python 3.12+）、
+   pytest 移入 dev 依赖组、`TIKLOCAL_INSTANCE` 实例目录（其 `config.yaml`
+   优先读取，Docker 数据卷即用它隔离）。
+
+### 默认关闭与启用方式
+
+embedding 功能默认**关闭**（`experiments.similarity.enabled` 缺省为
+`false`），关闭时不注册任何向量路由、页面不显示相关入口，核心浏览功能零
+依赖。启用需要自备一个 768 维 embedding 服务（OpenAI 兼容 `/embeddings`
+接口；本地推荐 llama.cpp 方案）：
+
+```yaml
+# ~/.config/tiklocal/config.yaml
+experiments:
+  similarity:
+    enabled: true
+embedding:
+  base_url: http://127.0.0.1:9379/v1   # 或 OpenRouter 等云端服务
+  model_name: embeddinggemma-2
+  # api_key: sk-...                    # 云端服务需要；本地 llama.cpp 不用
+```
+
+启用后：设置页 → Similar Images（或 CLI `tiklocal vectorize --dry-run`
+预览再执行）完成媒体准备；准备完成前旧向量仍可用于浏览。**性能参考**
+（spooly 在无 AVX 的 N5105 NAS 实测）：单张图片约 26 秒、三帧视频约 3 倍、
+容器内存约 1.1 GiB——建议在 PC 上建好索引再迁往 NAS；换模型会重建向量。
+架构细节见 [`docs/media-index-and-recommendation.md`](docs/media-index-and-recommendation.md)。
+
+> 移植方式为逐文件复制 + 包名重命名，未引入 spooly 的品牌与设置页 UI。
 
 ## LumaFold for iPhone and Android
 

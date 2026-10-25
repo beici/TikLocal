@@ -364,7 +364,10 @@ time.sleep(60)
     monkeypatch.setenv('PATH', str(tmp_path) + os.pathsep + os.environ['PATH'])
     monkeypatch.setenv('DOWNLOAD_TEST_READY', str(ready))
     manager = create_app({'TESTING': True, 'MEDIA_ROOT': tmp_path}).extensions['download_manager']
-    manager.update_config({'max_concurrent': limit})
+    manager.update_config({
+        'max_concurrent': limit,
+        'gallery_archive_file': str(tmp_path / 'gallery-dl-archive.txt'),
+    })
     manager.start()
     try:
         job = manager.enqueue('https://example.com/slow', engine=engine)

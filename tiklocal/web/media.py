@@ -9,7 +9,7 @@ from urllib.parse import quote, unquote
 from flask import redirect, render_template, request, send_file
 
 from tiklocal.services.embedded_metadata import read_embedded_generation
-from tiklocal.services.library import IMAGE_EXTENSIONS
+from tiklocal.services.library import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from tiklocal.web.media_payloads import media_urls
 
 
@@ -47,6 +47,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         return render_template(
             'detail.html',
             file=name,
+            is_video=target.suffix.lower() in VIDEO_EXTENSIONS,
             resume=activity_store.positions_for([canonical]).get(canonical),
             file_path_encoded=file_path_encoded,
             file_query_encoded=file_query_encoded,

@@ -1,0 +1,8 @@
+services:
+  tiklocal:
+    networks:
+      - tiklocal-ai
+
+networks:
+  tiklocal-ai:
+    external: true

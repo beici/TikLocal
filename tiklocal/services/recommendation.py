@@ -74,7 +74,7 @@ class RecommendService:
                 profile = profiles.get(rel_path) or {}
                 affinity = max(-1.0, min(float(profile.get('affinity_score') or 0.0), 1.8))
                 revisit_score = max(0.65, 1.0 + affinity * 0.2)
-                recent_penalty = self._recent_exposure_weight(profile.get('last_shown_at'), now)
+                recent_penalty = self._recent_view_weight(profile.get('last_shown_at'), now)
                 dimensions = self.activity_store.dimensions_for(rel_path, file_type) if self.activity_store else []
                 preference_score = sum(dimension_scores.get(dimension, 0.0) for dimension in dimensions)
                 preference_weight = max(0.8, min(1.25, 1.0 + preference_score * 0.08))
@@ -188,7 +188,7 @@ class RecommendService:
         return reasons
 
     @staticmethod
-    def _recent_exposure_weight(value: object, now: datetime.datetime) -> float:
+    def _recent_view_weight(value: object, now: datetime.datetime) -> float:
         shown = _parse_shown_at(value)
         if not shown:
             return 1.0

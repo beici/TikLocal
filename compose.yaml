@@ -1,0 +1,18 @@
+# TikLocal with Docker Compose: edit the media path, then run `docker compose up -d --build`.
+services:
+  tiklocal:
+    build: .
+    image: tiklocal:latest
+    container_name: tiklocal
+    restart: unless-stopped
+    init: true
+    # Run as the owner of your media folder (`id -u` and `id -g` on the host).
+    user: "1000:1000"
+    ports:
+      - "8000:8000"
+    environment:
+      TZ: Etc/UTC                      # your time zone, used by Timeline and On This Day
+      # TIKLOCAL_AUTH_PASSWORD: ""       # first start only; otherwise see `docker logs tiklocal`
+    volumes:
+      - ~/Videos:/media                # your library; writable for downloads and trash
+      - ./tiklocal-data:/data            # database, password, thumbnails and config.yaml

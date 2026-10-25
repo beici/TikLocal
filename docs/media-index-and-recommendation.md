@@ -1,7 +1,7 @@
 # 媒体索引与本地推荐架构
 
 - 模块: Library Index / Recommendation / Thumbnail
-- 更新时间: 2026-09-30
+- 更新时间: 2026-10-14
 
 ## 现状概述
 
@@ -25,7 +25,9 @@
 - Radio 的选曲和列表都读取索引中的 audio，并过滤当前不存在的文件；外部新增音频在启动或手动同步后可见，下载输出登记后可见。选曲仍不探测音频标签，metadata 按原有入口懒读取。
 - Flow、Library、集合与相似结果复用媒体链接生成规则；相似结果的预览使用 `/thumb`，不再请求原图。
 - 公共链接与字段转换归入 `web/media_payloads.py`，Flow 混排和主题组装归入 `web/flow.py`；删除原 `view_builders.py`。内置 HTTPS 与 PWA 已下线，普通 HTTP/媒体 Range 保留，外部反向代理可提供 HTTPS。
-- 向量与相似分组实现位于 `experiments/similarity/`：配置、向量构建、分组、CLI 与 HTTP 入口集中维护。命令行按需加载；`experiments.similarity.enabled` 控制实验服务注册，关闭后核心无向量运行依赖。相似结果移至 `/experiments/similarity`，状态与查询只读取本地数据；同步 Web 构建返回 410，构建沿用 CLI。存储仍使用原数据库表和 `embedding_config.json`，无需重建已有向量。
+- 向量与相似分组实现位于 `experiments/similarity/`：配置、向量构建、分组、CLI 与 HTTP 入口集中维护。命令行按需加载；`experiments.similarity.enabled` 控制实验服务注册，关闭后核心无向量运行依赖。连接只从 `config.yaml` 读取，页面只读。浏览器与 `tiklocal vectorize` 共用同一流程：先图片后视频，完成后在本地重建图片分组。视频在时长的 20%、50%、80% 处抽取三帧，少于一秒的视频只取一帧，无法读取的帧会被跳过；抽帧使用临时目录，不改库内封面。每帧单独调用模型，全部完成后才原子保存；暂停在当前请求结束后生效，未完成视频下次从头准备。
+- `media_vectors` 每个文件一行；`video_frames` 保存连续排列的 768 维 float32 帧向量，`embedding` 保存归一化各帧后取平均的向量，二者在同一次写入中更新。`model` 列决定是否属于当前模型；换模型后逐个覆盖重建。旧视频记录没有帧向量，下次准备会更新，旧图片无需重新编码。准备完成前旧视频仍可使用原来的缩略图向量。
+- 图片和视频详情共用 `experiments/media-similarity.html`、`media-similarity.js` 与 `/api/recommend/similar`，接口按文件类型返回同类媒体。视频相似度按两边各帧的最佳匹配取双向平均，避免单个共同镜头主导排序；先用平均向量选出最多 48 个候选，再只对候选逐帧比较，不做全库两两比较。文字搜索中视频取与查询最接近的一帧计分，与图片分数可比。详情页读取已保存向量，不请求模型；视频自动分组尚未实现。
 
 ## 接口与边界
 
@@ -37,7 +39,7 @@
 - `FavoriteService`：读改写在同一实例锁内完成，原子替换防止半写入；损坏或不可写文件不得转换为成功。收藏 API 失败返回 503，Flow/Gallery 回滚乐观状态并允许重试。
 - `RecommendService.get_weighted_selection()`：从媒体索引读取候选并执行轻量加权选择。
 - `ThumbnailService.get_thumbnail()`：读取有效缓存或同步生成单规格缩略图。
-- `ThumbnailService.get_radio_artwork()`：Web 与原生 Radio 共用内嵌封面优先、生成封面降级；各 HTTP 入口保留自己的访问校验。`cache_stats()` / `clear_cache()` 统一缓存目录操作，清理不删除媒体或映射。
+- `ThumbnailService.get_radio_artwork()`：Web Radio 优先使用内嵌封面，再降级到生成封面；HTTP 入口保留访问校验。`cache_stats()` / `clear_cache()` 统一缓存目录操作，清理不删除媒体或映射。
 - `ThumbnailService.generate_thumbnail()`：CLI、Web 按需生成和手动选帧共用的生成入口；临时文件完成后原子替换缓存，失败保留已有缓存。CLI 默认优先时长 20% 处，Web 保留 5/1/0.1 秒尝试，显式选帧支持 0 秒。
 - `/api/feed/mix`：按 seed 混排并分页；候选和权重不变时可复现，主题与本页图集不改变基础媒体分页边界。
 - `/api/library/items`：返回媒体库分页数据。
@@ -73,6 +75,7 @@
 - 旧的裸相对路径继续映射到默认媒体源。
 - `/media?uri=...` 保留兼容；新生成的页面数据直接使用 `/media/<path>`，避免额外重定向。
 - 收藏、集合、行为记录和向量数据不会因媒体源暂时离线而被级联删除。
+- 收藏以数据目录中的 `favorites.json` 为唯一存储；媒体目录中的旧 `favorite.json` 不再自动导入，避免已取消的收藏在重启后恢复。尚未迁移的旧文件可由用户手动核对后导入。
 - 新缩略图统一以规范 URI 计算缓存键。默认来源的旧裸路径缓存仅在源文件可访问、缓存非空且不早于源文件时复用；其他来源不复用裸路径缓存，避免同名资源串图。旧文件和 `thumbs.json` 保留，不做全量迁移。
 - CLI 生成、检查覆盖率与清理共用缩略图服务；单目录清理跳过未知来源和离线来源。手动选帧和删除操作使用同一规范缓存键。
 - 下载历史增加可选字段 `failure_stage`；`index` 表示文件已经下载、登记未完成，状态仍为 `failed`。原重试 API 复用同一任务完成登记；输出缺失则明确拒绝并提示重新创建下载任务。没有该字段的旧失败任务仍创建新的下载任务，重启仍将未完成任务标为失败。
