@@ -164,7 +164,7 @@ def test_blog_filter_and_chips(tmp_path):
 
 
 def test_blogger_display_name():
-    from tiklocal.services.media_naming import blogger_display_name, album_member, is_live_stem
+    from tiklocal.services.media_naming import blogger_display_name, album_member, is_live_stem, post_title
     assert blogger_display_name('UID123456789_示例博主_发布作品') == '示例博主'
     assert blogger_display_name('普通文件夹') == '普通文件夹'
     assert is_live_stem('2024-05-04 12.00.00-实况-示例博主-标题_1')
@@ -173,3 +173,6 @@ def test_blogger_display_name():
         '2024-06-01 09.00.00-图集-示例博主-风景', 10)
     assert album_member('2024-06-01 09.00.00-图集-示例博主-风景.jpeg') is None
     assert album_member('2024-06-01 09.00.00-视频-示例博主-风景_1.mp4') is None
+    assert post_title('2024-05-04 12.00.00-实况-示例博主-幸福瞬间#海边 晚风_3.jpeg') == '幸福瞬间#海边 晚风'
+    assert post_title('2024-05-04 12.00.00-视频-示例博主-带-连-字符-的标题.mp4') == '带-连-字符-的标题'
+    assert post_title('IMG_2048.jpeg') == ''

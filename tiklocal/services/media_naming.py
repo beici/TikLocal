@@ -13,10 +13,21 @@ ALBUM_MARKER = '-图集-'
 
 _ALBUM_INDEX = re.compile(r'_(\d+)$')
 _BLOGGER_FOLDER = re.compile(r'^UID\d+_(?P<name>.+)_发布作品$')
+_POST_TITLE = re.compile(
+    r'^\d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.\d{2}-(?:实况|图集|视频)-[^-]+-(?P<title>.+)$'
+)
 
 
 def is_live_stem(stem: str) -> bool:
     return LIVE_MARKER in str(stem or '')
+
+
+def post_title(filename: str) -> str:
+    """``YYYY-MM-DD HH.MM.SS-类型-博主名-标题_N.ext`` → ``标题``; '' when it does not match."""
+    stem = str(filename or '').rsplit('/', 1)[-1].rsplit('.', 1)[0]
+    stem = _ALBUM_INDEX.sub('', stem)
+    match = _POST_TITLE.match(stem)
+    return match.group('title').strip() if match else ''
 
 
 def live_post(filename: str) -> tuple[str, int] | None:
