@@ -741,6 +741,7 @@
             media.appendChild(cover);
             media.appendChild(video);
             media._liveVideo = video;
+            media._loadImage = cover;
             panel._activeLiveVideo = video;
             // Live children start playing when they become the visible child of
             // the current item; off-screen groups keep their cover only.
@@ -755,6 +756,7 @@
             if (entry.thumb_url) media.poster = entry.thumb_url;
             media.play().catch(() => {});
           } else {
+            media.className = 'image-group-media';
             media.src = force
               ? `${entry.media_url}${entry.media_url.includes('?') ? '&' : '?'}retry=${Date.now()}`
               : entry.media_url;
@@ -766,27 +768,47 @@
           panel._groupGeneration = (Number(panel._groupGeneration) || 0) + 1;
           const generation = panel._groupGeneration;
           media.dataset.groupGeneration = String(generation);
-          // The stage is a sliding window: children never overlap, the incoming
-          // one starts one full stage width away and slides into place.
-          const slideMs = reduceMotion.matches ? 0 : 240;
-          media.style.transform = outgoing.length
-            ? `translateX(${direction * 100}%)`
-            : 'translateX(0)';
+          // One child is ever visible: the incoming one waits hidden until its
+          // bytes are ready, then the outgoing child is removed at once and the
+          // new one fades in with a small directional nudge. Two children never
+          // share the stage, so no half-and-half ghost can appear.
+          media.style.opacity = '0';
+          media.style.transform = `translateX(${direction * 14}px)`;
           stage.appendChild(media);
-          requestAnimationFrame(() => {
-            if (slideMs) media.style.transition = `transform ${slideMs}ms cubic-bezier(0.22, 1, 0.36, 1)`;
-            media.style.transform = 'translateX(0)';
+          const revealMedia = () => {
+            if (media.dataset.groupGeneration !== String(panel._groupGeneration)) return;
             outgoing.forEach((element) => {
-              if (slideMs) element.style.transition = `transform ${slideMs}ms cubic-bezier(0.22, 1, 0.36, 1)`;
-              element.style.transform = `translateX(${direction * -100}%)`;
-            });
-          });
-          window.setTimeout(() => {
-            stage.querySelectorAll('.image-group-media').forEach((element) => {
-              if (element.dataset.groupGeneration === String(generation)) return;
               if (element.parentNode === stage) element.remove();
             });
-          }, slideMs + 90);
+            requestAnimationFrame(() => {
+              media.style.transition = reduceMotion.matches
+                ? 'none'
+                : 'opacity 0.16s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)';
+              media.style.opacity = '1';
+              media.style.transform = 'translateX(0)';
+            });
+          };
+          const loadImage = media instanceof HTMLImageElement ? media : media._loadImage || null;
+          if (loadImage && !(loadImage.complete && loadImage.naturalWidth > 0)) {
+            let settled = false;
+            const onReady = () => {
+              if (settled) return;
+              settled = true;
+              revealMedia();
+            };
+            loadImage.addEventListener('load', onReady, { once: true });
+            loadImage.addEventListener('error', onReady, { once: true });
+            window.setTimeout(onReady, 350);
+          } else {
+            revealMedia();
+          }
+          // Safety net: stale children from interrupted renders never linger.
+          window.setTimeout(() => {
+            stage.querySelectorAll('.image-group-media').forEach((element) => {
+              if (element.dataset.groupGeneration === String(panel._groupGeneration)) return;
+              if (element.parentNode === stage) element.remove();
+            });
+          }, 500);
           panel._activeChildIndex = safeIndex;
           counterEl.textContent = `${safeIndex + 1} / ${children.length}`;
           if (currentItem()?.el === panel) {
