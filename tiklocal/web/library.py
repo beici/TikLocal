@@ -2,12 +2,14 @@
 
 import datetime
 import random
+from pathlib import Path
 from urllib.parse import quote
 
 from flask import render_template, request
 
 from tiklocal.services.collections import normalize_collection_mutation_uris
 from tiklocal.services.library import IMAGE_EXTENSIONS
+from tiklocal.services.media_naming import blogger_display_name
 from tiklocal.web.media_payloads import build_feed_media_item, media_urls, serialize_library_item
 from tiklocal.web import read_int_arg
 
@@ -29,15 +31,38 @@ def register_library_routes(
         seed = str(request.args.get('seed', '')).strip()
         if mode == 'image_random' and not seed:
             seed = str(random.randint(1, 999999))
+        blog = str(request.args.get('blog', '')).strip() if scope == 'all' else ''
+        if blog and blog not in library_service.sources_by_id:
+            blog = ''
         return {
             'mode': mode,
             'search': search,
             'month': month,
             'seed': seed,
+            'blog': blog,
             'offset': read_int_arg('offset', 0, minimum=0),
             'limit': read_int_arg('limit', 24, minimum=12, maximum=96),
             'min_mb': read_int_arg('min_mb', 50, minimum=1, maximum=10240),
         }
+
+    def _blog_chips() -> list[dict]:
+        chips = []
+        for row in media_index.blog_rows():
+            source = library_service.sources_by_id.get(row['source_id'])
+            if not source:
+                continue
+            # Sources are usually named after their export folder; fall back to
+            # the folder itself when the id was reused as the display name.
+            folder = Path(source.path).name if str(source.path) not in {'', '.', '/'} else ''
+            display = folder or source.name
+            chips.append({
+                'id': row['source_id'],
+                'name': blogger_display_name(display),
+                'count': row['count'],
+                'thumb_url': media_urls(row['latest_uri'])['thumb_url'] if row['latest_uri'] else '',
+                'flow_url': f"/flow?blog={row['source_id']}",
+            })
+        return chips
 
     def _render_library_page(
         page: dict, *, scope: str = 'all', mode: str = 'all',
@@ -120,6 +145,7 @@ def register_library_routes(
         collection_id: str = '',
         search: str = '',
         month: str = '',
+        blog: str = '',
     ) -> dict:
         uris = None
         if collection_id:
@@ -130,6 +156,7 @@ def register_library_routes(
             mode=mode, seed=seed, search=search, month=month,
             min_size=min_mb * 1024 * 1024 if mode == 'big_files' else 0,
             offset=offset, limit=limit, uris=uris, preserve_order=bool(collection_id),
+            source_id=blog if uris is None else '',
         )
         records = page.pop('records')
         items = [serialize_library_item(record) for record in records]
@@ -205,6 +232,8 @@ def register_library_routes(
             library_view=requested_view, timeline_month=options['month'],
             timeline_payload=timeline_payload,
             media_search_available=bool(media_search_available and media_search_available()),
+            blog=options['blog'],
+            blogs=_blog_chips(),
         )
 
     @app.route('/favorite')
@@ -281,6 +310,10 @@ def register_library_routes(
             'success': True,
             'data': _serialize_timeline_payload(payload),
         }
+
+    @app.route('/api/library/blogs')
+    def api_library_blogs():
+        return {'success': True, 'data': {'items': _blog_chips()}}
 
     @app.route('/api/library/sync', methods=['POST'])
     def api_library_sync():

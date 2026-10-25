@@ -327,6 +327,15 @@ def _migrate_012_add_video_frames(conn: sqlite3.Connection) -> None:
     conn.execute('ALTER TABLE media_vectors ADD COLUMN video_frames BLOB')
 
 
+def _migrate_013_douyin_media_groups(conn: sqlite3.Connection) -> None:
+    """Live-photo pairs and album membership for Douyin-style exports."""
+    conn.execute('ALTER TABLE media_items ADD COLUMN live_video_uri TEXT')
+    conn.execute('ALTER TABLE media_items ADD COLUMN album_key TEXT')
+    conn.execute('ALTER TABLE media_items ADD COLUMN album_index INTEGER')
+    conn.execute('ALTER TABLE media_items ADD COLUMN album_size INTEGER')
+    conn.execute('CREATE INDEX idx_media_items_album ON media_items(album_key, album_index)')
+
+
 MIGRATIONS = [
     Migration(1, "create_image_vectors", _migrate_001_create_image_vectors),
     Migration(2, "create_media_similarity_groups", _migrate_002_create_media_similarity_groups),
@@ -340,6 +349,7 @@ MIGRATIONS = [
     Migration(10, "add_media_dimensions", _migrate_010_add_media_dimensions),
     Migration(11, "simplify_media_vectors", _migrate_011_simplify_media_vectors),
     Migration(12, "add_video_frames", _migrate_012_add_video_frames),
+    Migration(13, "douyin_media_groups", _migrate_013_douyin_media_groups),
 ]
 
 

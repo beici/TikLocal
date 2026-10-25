@@ -296,6 +296,34 @@ embedding:
 
 > 移植方式为逐文件复制 + 包名重命名，未引入 spooly 的品牌与设置页 UI。
 
+## 抖音式二开功能（实况 / 图集 / 按博主）
+
+针对抖音归档命名（`YYYY-MM-DD HH.MM.SS-类型-博主名-标题_N.ext`，博主文件夹
+`UID…_博主名_发布作品`）的三个核心功能，均在扫描/索引层完成：
+
+1. **实况配对**——`-实况-` 帖子内 `_N` 跨文件连续编号，mp4 与相邻 jpeg 严格
+   相邻配对成一条 `live` 条目（封面为 jpeg，`live_video_uri` 指向 mp4，mp4
+   不再单独成条）。Flow 中显示静图封面 + "实况"徽章，**按住播放动态 mp4**
+   （松开停止；有声播放被浏览器拒绝时自动降级为静音）。
+2. **图集接入**——`-图集-` 同时间戳前缀的 jpeg 归为一组（`album_key`），
+   Flow 中作为一张可**左右滑动**的组卡呈现；实况多图帖同样整帖成组，
+   组内可混合 image/live/video 成员。
+3. **按博主浏览**——每个博主文件夹注册为一个 media source（`--media-source
+   id=路径` 或 config.yaml `media_sources`），Library 探索页出现博主 chips
+   （显示从文件夹名提取的博主名与条数），点击筛选；选中后出现"去刷"入口
+   直达该博主的 Flow（`/flow?blog=<source_id>`）。推荐流按博主维度过滤，
+   图集/实况组在过滤流中保持完整。
+
+媒体库维表：`media_items` 新增 `live_video_uri` 与 `album_key/album_index/
+album_size`（数据库迁移 13）；推荐候选只取各组第 0 位封面，避免组员重复
+进入信息流。
+
+```bash
+tiklocal serve --port 8000 \
+  --media-source b1=/media/UID100000000000001_甲博主_发布作品 \
+  --media-source b2=/media/UID100000000000002_乙博主_发布作品
+```
+
 ## LumaFold for iPhone and Android
 
 `apps/radio` contains **LumaFold**, a local-first native client. It imports photos

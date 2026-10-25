@@ -7,6 +7,7 @@ from pathlib import Path
 from PIL import Image
 
 from tiklocal.services.library import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+from tiklocal.services import media_naming
 from tiklocal.services.database import AppDatabase
 from tiklocal.services.media_info import probe_media_dims
 
@@ -39,8 +40,9 @@ class MediaIndexStore:
                       uri, source_id, rel_path, filename, parent_path, media_type,
                       extension, size_bytes, mtime, captured_at, captured_local_date,
                       capture_year, capture_month, time_source, time_confidence,
-                      time_metadata_version, discovered_at, indexed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      time_metadata_version, discovered_at, indexed_at,
+                      live_video_uri, album_key, album_index, album_size
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(uri) DO UPDATE SET
                       source_id = excluded.source_id,
                       rel_path = excluded.rel_path,
@@ -57,7 +59,11 @@ class MediaIndexStore:
                       time_source = excluded.time_source,
                       time_confidence = excluded.time_confidence,
                       time_metadata_version = excluded.time_metadata_version,
-                      indexed_at = excluded.indexed_at
+                      indexed_at = excluded.indexed_at,
+                      live_video_uri = excluded.live_video_uri,
+                      album_key = excluded.album_key,
+                      album_index = excluded.album_index,
+                      album_size = excluded.album_size
                     """,
                     values,
                 )
@@ -103,8 +109,9 @@ class MediaIndexStore:
                       uri, source_id, rel_path, filename, parent_path, media_type,
                       extension, size_bytes, mtime, captured_at, captured_local_date,
                       capture_year, capture_month, time_source, time_confidence,
-                      time_metadata_version, discovered_at, indexed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      time_metadata_version, discovered_at, indexed_at,
+                      live_video_uri, album_key, album_index, album_size
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(uri) DO UPDATE SET
                       size_bytes = excluded.size_bytes,
                       mtime = excluded.mtime,
@@ -115,7 +122,12 @@ class MediaIndexStore:
                       time_source = excluded.time_source,
                       time_confidence = excluded.time_confidence,
                       time_metadata_version = excluded.time_metadata_version,
-                      indexed_at = excluded.indexed_at
+                      indexed_at = excluded.indexed_at,
+                      media_type = excluded.media_type,
+                      live_video_uri = excluded.live_video_uri,
+                      album_key = excluded.album_key,
+                      album_index = excluded.album_index,
+                      album_size = excluded.album_size
                     """,
                     self._record_values(record, now),
                 )
@@ -145,7 +157,7 @@ class MediaIndexStore:
             rows = conn.execute(
                 """
                 SELECT uri, media_type, mtime FROM media_items
-                WHERE media_type IN ('video', 'image')
+                WHERE media_type IN ('video', 'image', 'live')
                   AND (probed_mtime IS NULL OR probed_mtime != mtime)
                 ORDER BY mtime DESC
                 LIMIT ?
@@ -162,8 +174,14 @@ class MediaIndexStore:
                 rows,
             )
 
-    def records(self, *, search: str = "", media_type: str = "") -> list[dict]:
-        where, params = self._filters(search=search, media_type=media_type)
+    def records(
+        self, *, search: str = "", media_type: str = "",
+        source_id: str = "", album_covers_only: bool = False,
+    ) -> list[dict]:
+        where, params = self._filters(
+            search=search, media_type=media_type, source_id=source_id,
+            album_covers_only=album_covers_only,
+        )
         with self.database.connect() as conn:
             rows = conn.execute(
                 f"SELECT * FROM media_items {where} ORDER BY mtime DESC, uri",
@@ -181,7 +199,7 @@ class MediaIndexStore:
             rows = conn.execute(
                 f"""
                 SELECT * FROM media_items
-                WHERE media_type IN ('video', 'image')
+                WHERE media_type IN ('video', 'image', 'live')
                   AND capture_year < ?
                   AND substr(captured_local_date, 6, 5) IN ({placeholders})
                 ORDER BY captured_at DESC, uri
@@ -204,6 +222,8 @@ class MediaIndexStore:
         seed: str = "",
         uris: list[str] | set[str] | None = None,
         preserve_order: bool = False,
+        source_id: str = "",
+        album_covers_only: bool = False,
     ) -> dict:
         if mode == 'image_random':
             media_type = 'image'
@@ -211,6 +231,7 @@ class MediaIndexStore:
             media_type = 'video'
         where, params = self._filters(
             search=search, media_type=media_type, min_size=min_size, month=month,
+            source_id=source_id, album_covers_only=album_covers_only,
         )
         safe_offset = max(0, int(offset))
         safe_limit = max(1, min(int(limit), 96))
@@ -273,7 +294,7 @@ class MediaIndexStore:
                   COUNT(*) AS item_count,
                   COUNT(DISTINCT {month_expr}) AS month_count
                 FROM media_items
-                WHERE media_type IN ('image', 'video')
+                WHERE media_type IN ('image', 'video', 'live')
                 GROUP BY year
                 HAVING year IS NOT NULL
                 ORDER BY year DESC
@@ -284,11 +305,11 @@ class MediaIndexStore:
                 SELECT
                   {month_expr} AS month_key,
                   COUNT(*) AS item_count,
-                  SUM(CASE WHEN media_type = 'image' THEN 1 ELSE 0 END) AS image_count,
+                  SUM(CASE WHEN media_type IN ('image', 'live') THEN 1 ELSE 0 END) AS image_count,
                   SUM(CASE WHEN media_type = 'video' THEN 1 ELSE 0 END) AS video_count,
                   MAX(mtime) AS latest_mtime
                 FROM media_items
-                WHERE media_type IN ('image', 'video')
+                WHERE media_type IN ('image', 'video', 'live')
                   {before_clause}
                 GROUP BY month_key
                 HAVING month_key IS NOT NULL
@@ -309,7 +330,7 @@ class MediaIndexStore:
                     f"""
                     SELECT *
                     FROM media_items
-                    WHERE media_type IN ('image', 'video')
+                    WHERE media_type IN ('image', 'video', 'live')
                       AND {month_expr} = ?
                     ORDER BY captured_at DESC, uri
                     LIMIT 120
@@ -354,11 +375,59 @@ class MediaIndexStore:
             state = conn.execute("SELECT * FROM media_index_state WHERE id = 1").fetchone()
         return {
             "videos": counts.get("video", 0),
-            "images": counts.get("image", 0),
+            "images": counts.get("image", 0) + counts.get("live", 0),
+            "lives": counts.get("live", 0),
             "audios": counts.get("audio", 0),
             "total": sum(counts.values()),
             "last_synced_at": str(state["last_synced_at"]) if state else "",
         }
+
+    def album_members(self, album_key: str) -> list[dict]:
+        """Group members ordered by position; live posts mix image, live and video rows."""
+        with self.database.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM media_items
+                WHERE album_key = ? AND media_type IN ('image', 'live', 'video')
+                ORDER BY album_index, uri
+                """,
+                (str(album_key or ''),),
+            ).fetchall()
+        return [self._to_library_record(row) for row in rows]
+
+    def blog_rows(self) -> list[dict]:
+        """Per media source counts for the blogger switcher; latest media feeds the cover."""
+        with self.database.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT source_id,
+                       COUNT(*) AS item_count,
+                       MAX(mtime) AS latest_mtime
+                FROM media_items
+                WHERE media_type IN ('image', 'video', 'live')
+                GROUP BY source_id
+                ORDER BY latest_mtime DESC
+                """
+            ).fetchall()
+            latest = {}
+            for row in rows:
+                cover = conn.execute(
+                    """
+                    SELECT uri FROM media_items
+                    WHERE source_id = ? AND media_type IN ('image', 'video', 'live')
+                    ORDER BY mtime DESC, uri LIMIT 1
+                    """,
+                    (row["source_id"],),
+                ).fetchone()
+                latest[str(row["source_id"])] = str(cover["uri"]) if cover else ""
+        return [
+            {
+                "source_id": str(row["source_id"]),
+                "count": int(row["item_count"] or 0),
+                "latest_uri": latest.get(str(row["source_id"]), ""),
+            }
+            for row in rows
+        ]
 
     def time_states(self) -> dict[str, dict]:
         """Return cached capture metadata so unchanged files are not reopened."""
@@ -386,6 +455,10 @@ class MediaIndexStore:
             str(record.get("time_confidence") or "fallback"),
             int(record.get("time_metadata_version") or 1),
             now, now,
+            (str(record["live_video_uri"]) if record.get("live_video_uri") else None),
+            (str(record["album_key"]) if record.get("album_key") else None),
+            (int(record["album_index"]) if record.get("album_index") is not None else None),
+            (int(record["album_size"]) if record.get("album_size") is not None else None),
         )
 
     @staticmethod
@@ -402,6 +475,11 @@ class MediaIndexStore:
             "width": row["width"],
             "height": row["height"],
             "is_favorite": False,
+            "source_id": str(row["source_id"] or ""),
+            "live_video_uri": (str(row["live_video_uri"]) if row["live_video_uri"] else ""),
+            "album_key": (str(row["album_key"]) if row["album_key"] else ""),
+            "album_index": (int(row["album_index"]) if row["album_index"] is not None else None),
+            "album_size": (int(row["album_size"]) if row["album_size"] is not None else None),
         }
 
     @staticmethod
@@ -417,14 +495,24 @@ class MediaIndexStore:
         media_type: str,
         min_size: int = 0,
         month: str = "",
+        source_id: str = "",
+        album_covers_only: bool = False,
     ) -> tuple[str, list[object]]:
         clauses: list[str] = []
         params: list[object] = []
-        if media_type:
+        if media_type == 'image':
+            # Live photos pair with images in image-shaped views.
+            clauses.append("media_type IN ('image', 'live')")
+        elif media_type:
             clauses.append("media_type = ?")
             params.append(media_type)
         else:
-            clauses.append("media_type IN ('video', 'image')")
+            clauses.append("media_type IN ('video', 'image', 'live')")
+        if album_covers_only:
+            clauses.append("(album_key IS NULL OR album_index = 0)")
+        if source_id:
+            clauses.append("source_id = ?")
+            params.append(str(source_id))
         if min_size > 0:
             clauses.append("size_bytes >= ?")
             params.append(int(min_size))
@@ -577,6 +665,7 @@ class LibraryIndexer:
                     record for path in self.library.scan_source(source)
                     if (record := self._record_for_path(path, time_states))
                 ]
+                records = self._apply_douyin_pairing(records)
             except OSError as error:
                 failures[source.id] = str(error)
                 continue
@@ -604,9 +693,93 @@ class LibraryIndexer:
             if record is None:
                 raise ValueError(f'Unable to register media output: {uri}')
             records.append(record)
+        records = self._apply_douyin_pairing(records)
         count = self.store.upsert(records)
         self.on_change()
         return count
+
+    def _apply_douyin_pairing(self, records: list[dict]) -> list[dict]:
+        """Fold Douyin-style export posts into swipeable groups.
+
+        Both live (``-实况-``) and album (``-图集-``) posts share a timestamp
+        prefix; every member carries album_key/index/size so a post renders as
+        one entry. Inside a live post the ``_N`` counter runs across mp4 and
+        jpeg alike: an mp4 pairs with the adjacent jpeg (next, else previous) —
+        the pair becomes one 'live' row on the jpeg cover, and the mp4 keeps no
+        row of its own.
+        """
+        grouped: dict[tuple[str, str], list[dict]] = {}
+        for record in records:
+            grouped.setdefault((record['source_id'], record['parent_path']), []).append(record)
+
+        output: list[dict] = []
+        for members in grouped.values():
+            live_posts: dict[str, list[tuple[int, dict]]] = {}
+            albums: dict[str, list[tuple[int, dict]]] = {}
+            plain: list[dict] = []
+            for record in members:
+                filename = record['filename']
+                if record['media_type'] not in ('image', 'video'):
+                    plain.append(record)
+                    continue
+                post = media_naming.live_post(filename)
+                if post:
+                    live_posts.setdefault(post[0], []).append((post[1], record))
+                    continue
+                album = media_naming.album_member(filename)
+                if album and record['media_type'] == 'image':
+                    albums.setdefault(album[0], []).append((album[1], record))
+                    continue
+                plain.append(record)
+
+            def emit(key: str, ordered: list[dict]) -> None:
+                size = len(ordered)
+                # Stored 0-based so "album_index = 0" is the group's cover.
+                for position, record in enumerate(ordered):
+                    record['album_key'] = f"{record['source_id']}|{record['parent_path']}|{key}"
+                    record['album_index'] = position
+                    record['album_size'] = size
+                    plain.append(record)
+
+            for key, indexed in albums.items():
+                indexed.sort(key=lambda pair: pair[0])
+                emit(key, [record for _index, record in indexed])
+
+            for key, indexed in live_posts.items():
+                # Same-N ties (same-stem exports) keep the video before its cover.
+                indexed.sort(key=lambda pair: (pair[0], pair[1]['media_type'] != 'video'))
+                paired: set[int] = set()
+                pairs: dict[int, int] = {}  # video position -> jpeg position
+
+                def free_jpeg(pos: int) -> bool:
+                    return (0 <= pos < len(indexed) and pos not in paired
+                            and indexed[pos][1]['media_type'] == 'image')
+
+                for position, (_index, record) in enumerate(indexed):
+                    if record['media_type'] != 'video' or position in paired:
+                        continue
+                    # An mp4 pairs with the strictly adjacent jpeg: next, else previous.
+                    if free_jpeg(position + 1):
+                        pairs[position] = position + 1
+                        paired.update({position, position + 1})
+                    elif free_jpeg(position - 1):
+                        pairs[position] = position - 1
+                        paired.update({position, position - 1})
+                ordered: list[dict] = []
+                for position, (_index, record) in enumerate(indexed):
+                    if position in pairs:
+                        video = record
+                        cover = indexed[pairs[position]][1]
+                        cover['media_type'] = 'live'
+                        cover['live_video_uri'] = video['uri']
+                        continue  # merged into its cover's live row below via the cover
+                    if position in paired and record['media_type'] == 'video':
+                        continue
+                    ordered.append(record)
+                emit(key, ordered)
+
+            output.extend(plain)
+        return output
 
     def _record_for_path(self, path: Path, time_states: dict[str, dict] | None = None) -> dict | None:
         stat = path.stat()
@@ -671,7 +844,9 @@ class MediaProbeWorker:
         while rows := self.store.unprobed(batch):
             results = []
             for row in rows:
-                width, height = probe_media_dims(self.library, row["uri"], row["media_type"])
+                # A live entry is probed through its jpeg cover.
+                media_type = 'image' if row["media_type"] == 'live' else row["media_type"]
+                width, height = probe_media_dims(self.library, row["uri"], media_type)
                 results.append((width, height, row["mtime"], row["uri"]))
             self.store.set_dimensions(results)
             done += len(results)

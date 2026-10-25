@@ -952,3 +952,53 @@ body:not([data-nav-context="favorite"]) {
   }
   .coll-drag-handle { display: block; }
 }
+
+/* Blogger switcher: one chip per media source (one export folder per blogger). */
+.blog-chips {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 2px 2px 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.blog-chips::-webkit-scrollbar {
+  display: none;
+}
+.blog-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  font-size: 13px;
+  color: inherit;
+  text-decoration: none;
+  white-space: nowrap;
+  opacity: 0.85;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+.blog-chip:hover {
+  opacity: 1;
+}
+.blog-chip.is-active {
+  background: rgba(127, 127, 127, 0.18);
+  border-color: rgba(127, 127, 127, 0.6);
+  opacity: 1;
+  font-weight: 600;
+}
+.blog-chip-count {
+  font-size: 11px;
+  opacity: 0.6;
+}
+.blog-chip-flow {
+  font-weight: 600;
+}
+.blog-chip-flow svg {
+  width: 14px;
+  height: 14px;
+}

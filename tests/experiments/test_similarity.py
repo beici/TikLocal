@@ -526,7 +526,7 @@ def test_groups_are_bounded_and_varied():
 
 
 def test_flow_reuses_gallery_slot_for_related_photos():
-    def select(*, file_type, limit, seed):
+    def select(*, file_type, limit, seed, source_id=''):
         return [f'video-{index}.mp4' for index in range(limit)] if file_type == 'video' else []
 
     recommendation = SimpleNamespace(get_weighted_selection=select, get_forgotten_selection=select,

@@ -18,6 +18,7 @@
   let semanticSearch = false;
   let searchRequest = 0;
   let searchQuery = new URLSearchParams(window.location.search).get('q') || '';
+  const blogFilter = new URLSearchParams(window.location.search).get('blog') || '';
 
   const grid = document.getElementById('library-grid');
   const statusText = document.getElementById('library-status-text');
@@ -400,6 +401,7 @@
       offset: String(offset),
       limit: String(pageSize),
     });
+    if (blogFilter) params.set('blog', blogFilter);
     if (scope === 'collection' && collectionId) {
       params.set('collection_id', String(collectionId));
     }

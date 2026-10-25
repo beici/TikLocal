@@ -10,26 +10,36 @@ def media_urls(uri: str) -> dict[str, str]:
     }
 
 
-def build_feed_media_item(name: str, media_type: str) -> dict[str, str]:
+def build_feed_media_item(name: str, media_type: str, *, live_video_uri: str = '') -> dict[str, str]:
     encoded = quote(name)
     detail_url = (f"/detail/{encoded}" if media_type == 'video' else
                   f"/media/{quote(name, safe='/')}" if media_type == 'audio' else
                   f"/image?uri={encoded}")
-    return {
+    item = {
         'type': media_type,
         'name': name,
         **media_urls(name),
         'detail_url': detail_url,
     }
+    if media_type == 'live':
+        # The cover is the entry; the paired mp4 plays on press-and-hold.
+        item['is_live'] = True
+        item['live_video_url'] = f"/media/{quote(live_video_uri, safe='/')}" if live_video_uri else ''
+    return item
 
 
 def serialize_library_item(record: dict) -> dict:
     name = str(record.get('name') or '')
     media_type = str(record.get('media_type') or 'video')
-    return {
-        **build_feed_media_item(name, media_type),
+    item = {
+        **build_feed_media_item(name, media_type, live_video_uri=str(record.get('live_video_uri') or '')),
         'mtime_ts': float(record.get('mtime_ts') or 0),
         'size_bytes': int(record.get('size_bytes') or 0),
         'width': record.get('width'),
         'height': record.get('height'),
     }
+    if record.get('album_key'):
+        item['album_key'] = str(record.get('album_key'))
+        item['album_index'] = record.get('album_index')
+        item['album_size'] = record.get('album_size')
+    return item

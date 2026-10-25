@@ -579,6 +579,7 @@
     function clearPreviousState(prevItem) {
       magnifier.toggle(false);
       endBoost();
+      stopLivePlayback();
 
       if (!prevItem) return;
       prevItem.el.classList.remove('active');
@@ -701,21 +702,54 @@
           const previousIndex = Number(panel._activeChildIndex);
           const direction = Number.isFinite(previousIndex) && safeIndex < previousIndex ? -1 : 1;
           const previousMedia = stage.querySelector('.image-group-media');
-          const img = document.createElement('img');
-          img.className = 'image-group-media';
-          img.addEventListener('error', () => handleMediaFailure(panel));
-          img.src = force
-            ? `${entry.media_url}${entry.media_url.includes('?') ? '&' : '?'}retry=${Date.now()}`
-            : entry.media_url;
-          img.alt = entry.name || '';
-          img.loading = 'eager';
-          img.decoding = 'async';
-          img.style.opacity = '0';
-          img.style.transform = `translateX(${direction * 18}px)`;
-          stage.appendChild(img);
+          // Stop the outgoing child's playback before swapping it out.
+          if (previousMedia?._liveVideo) previousMedia._liveVideo.pause();
+          if (previousMedia instanceof HTMLVideoElement) previousMedia.pause();
+          panel._activeLiveVideo = null;
+          const media = document.createElement(entry.type === 'live' && entry.live_video_url ? 'div' : (entry.type === 'video' ? 'video' : 'img'));
+          if (media instanceof HTMLDivElement) {
+            // A live child: jpeg cover with the paired mp4 on hold.
+            media.className = 'image-group-media image-group-live';
+            const cover = document.createElement('img');
+            cover.src = force
+              ? `${entry.media_url}${entry.media_url.includes('?') ? '&' : '?'}retry=${Date.now()}`
+              : entry.media_url;
+            cover.alt = entry.name || '';
+            const video = document.createElement('video');
+            video.className = 'image-group-live-video';
+            video.src = entry.live_video_url;
+            video.preload = 'none';
+            video.muted = false;
+            video.loop = true;
+            video.playsInline = true;
+            media.appendChild(cover);
+            media.appendChild(video);
+            media._liveVideo = video;
+            panel._activeLiveVideo = video;
+          } else if (media instanceof HTMLVideoElement) {
+            media.className = 'image-group-media';
+            media.src = entry.media_url;
+            media.muted = true;
+            media.loop = true;
+            media.playsInline = true;
+            media.preload = 'metadata';
+            if (entry.thumb_url) media.poster = entry.thumb_url;
+            media.play().catch(() => {});
+          } else {
+            media.src = force
+              ? `${entry.media_url}${entry.media_url.includes('?') ? '&' : '?'}retry=${Date.now()}`
+              : entry.media_url;
+            media.alt = entry.name || '';
+          }
+          media.addEventListener('error', () => handleMediaFailure(panel));
+          media.loading = 'eager';
+          media.decoding = 'async';
+          media.style.opacity = '0';
+          media.style.transform = `translateX(${direction * 18}px)`;
+          stage.appendChild(media);
           requestAnimationFrame(() => {
-            img.style.opacity = '1';
-            img.style.transform = 'translateX(0)';
+            media.style.opacity = '1';
+            media.style.transform = 'translateX(0)';
             if (previousMedia) {
               previousMedia.style.opacity = '0';
               previousMedia.style.transform = `translateX(${direction * -12}px)`;
@@ -738,6 +772,48 @@
         panel._activeChildIndex = 0;
         renderImageGroup(0);
         return panel;
+      }
+
+      if (item.type === 'live' && item.live_video_url) {
+        // A live photo shows its jpeg cover; press and hold plays the paired mp4.
+        const wrap = document.createElement('div');
+        wrap.className = 'feed-media feed-live';
+        const cover = document.createElement('img');
+        cover.className = 'feed-live-cover';
+        cover.loading = 'lazy';
+        cover.decoding = 'async';
+        cover.alt = item.name;
+        cover.src = item.media_url;
+        cover.addEventListener('error', () => {
+          cover._loadFailed = true;
+          handleMediaFailure(wrap);
+        });
+        cover.addEventListener('load', () => {
+          cover._loadFailed = false;
+          quietSkips = 0;
+        });
+        const video = document.createElement('video');
+        video.className = 'feed-live-video';
+        video.muted = false;
+        video.loop = true;
+        video.playsInline = true;
+        video.controls = false;
+        video.preload = 'none';
+        video.dataset.src = item.live_video_url;
+        video.dataset.name = item.name;
+        const badge = document.createElement('div');
+        badge.className = 'feed-live-badge';
+        badge.textContent = '实况';
+        const hint = document.createElement('div');
+        hint.className = 'feed-live-hint';
+        hint.textContent = '按住播放';
+        wrap.appendChild(cover);
+        wrap.appendChild(video);
+        wrap.appendChild(badge);
+        wrap.appendChild(hint);
+        wrap._liveCover = cover;
+        wrap._liveVideo = video;
+        return wrap;
       }
 
       if (item.type === 'video') {
@@ -828,6 +904,8 @@
           });
           if (seed) query.set('seed', seed);
           if (feedMode) query.set('mode', feedMode);
+          const blogFilter = new URLSearchParams(window.location.search).get('blog');
+          if (blogFilter) query.set('blog', blogFilter);
 
           const res = await fetch(`/api/feed/mix?${query.toString()}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1009,6 +1087,52 @@
       hideHud();
     }
 
+    // Live photos: holding the cover plays the paired video, releasing stops it.
+    let playingLiveVideo = null;
+
+    function playLiveVideo(video) {
+      if (!video) return false;
+      if (!video.src && video.dataset.src) video.src = video.dataset.src;
+      playingLiveVideo = video;
+      video.classList.add('is-playing');
+      video.currentTime = 0;
+      const promise = video.play();
+      if (promise) {
+        promise.catch(() => {
+          // Autoplay with sound can be refused; fall back to a muted hold.
+          video.muted = true;
+          video.play().catch(() => stopLivePlayback());
+        });
+      }
+      navigator.vibrate?.(10);
+      return true;
+    }
+
+    function startLivePlayback() {
+      const item = currentItem();
+      if (!item) return false;
+      if (item.type === 'live' && item.el?._liveVideo) {
+        item.el.classList.add('live-playing');
+        return playLiveVideo(item.el._liveVideo);
+      }
+      if (item.type === 'image_group' && item.el?._activeLiveVideo) {
+        return playLiveVideo(item.el._activeLiveVideo);
+      }
+      return false;
+    }
+
+    function stopLivePlayback() {
+      document.querySelectorAll('.feed-live.live-playing').forEach((element) => {
+        element.classList.remove('live-playing');
+      });
+      if (playingLiveVideo) {
+        playingLiveVideo.pause();
+        playingLiveVideo.currentTime = 0;
+        playingLiveVideo.classList.remove('is-playing');
+        playingLiveVideo = null;
+      }
+    }
+
     function seekBy(seconds) {
       const video = currentVideo();
       const duration = Number(video?.duration);
@@ -1120,7 +1244,7 @@
         clearTimeout(tapTimer);
         const video = currentVideo();
         if (video) beginBoost(video);
-        else toggleUI();
+        else if (!startLivePlayback()) toggleUI();
       }, longPressMs);
     });
 

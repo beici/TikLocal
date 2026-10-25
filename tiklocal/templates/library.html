@@ -73,6 +73,21 @@
         <i data-feather="x" aria-hidden="true"></i>
       </button>
     </div>
+    {% if blogs %}
+    <nav id="blog-chips" class="blog-chips" aria-label="Browse by blogger">
+      <a class="blog-chip{% if not blog %} is-active{% endif %}" href="/library?view=explore">全部</a>
+      {% for chip in blogs %}
+      <a class="blog-chip{% if blog == chip.id %} is-active{% endif %}" href="/library?view=explore&blog={{ chip.id }}" title="{{ chip.count }} 条媒体">
+        {{ chip.name }}<span class="blog-chip-count">{{ chip.count }}</span>
+      </a>
+      {% endfor %}
+      {% if blog %}
+      <a class="blog-chip blog-chip-flow" href="/flow?blog={{ blog }}">
+        <i data-feather="zap" aria-hidden="true"></i>去刷
+      </a>
+      {% endif %}
+    </nav>
+    {% endif %}
     </div>
   </section>
   {% elif scope == 'favorite' %}

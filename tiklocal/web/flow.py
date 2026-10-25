@@ -5,6 +5,7 @@ import random
 
 from flask import render_template, request
 
+from tiklocal.services import media_naming
 from tiklocal.services.recommendation import FORGOTTEN_DAYS, shown_within
 from tiklocal.web import read_int_arg
 from tiklocal.web.media_payloads import build_feed_media_item
@@ -143,6 +144,7 @@ def build_mix_feed_page(
     activity_store=None,
     related_photo_groups=None,
     mode: str = '',
+    blog: str = '',
 ) -> dict:
     video_ratio = 4
     image_ratio = 1
@@ -159,11 +161,13 @@ def build_mix_feed_page(
         file_type='video',
         limit=request_window,
         seed=f"{seed}:video",
+        source_id=blog,
     )
     images = select(
         file_type='image',
         limit=request_window,
         seed=f"{seed}:image",
+        source_id=blog,
     )
 
     target_image_prob = image_ratio / max(1, ratio_total)
@@ -230,6 +234,7 @@ def build_mix_feed_page(
     page_names = {name for _, name in page_media}
     # The forgotten feed stays plain media; cards belong to the everyday Flow.
     records = [] if forgotten else media_index.records()
+    records_by_name = {str(record.get('name') or ''): record for record in records}
     source_groups = collect_source_media_groups([
         record for record in records if record['name'] in page_names
     ], download_source_store) if records else []
@@ -249,10 +254,37 @@ def build_mix_feed_page(
         image_group_names = {str(item.get('name') or '') for item in group_items}
         break
 
-    mixed_entries: list[dict] = [
-        {'type': media_type, 'name': name}
-        for media_type, name in page_media
-    ]
+    mixed_entries: list[dict] = []
+    for media_type, name in page_media:
+        record = records_by_name.get(name)
+        if record and record.get('album_key'):
+            # Group members only surface through their cover's swipeable entry.
+            if int(record.get('album_index') or 0) != 0:
+                continue
+            members = media_index.album_members(str(record['album_key']))
+            if len(members) <= 1:
+                # A lone member is just itself; its row type already says which.
+                mixed_entries.append({'type': str(record.get('media_type') or media_type), 'name': name})
+                continue
+            is_live_post = media_naming.is_live_stem(name.rsplit('/', 1)[-1].rsplit('.', 1)[0])
+            mixed_entries.append({
+                'type': 'image_group',
+                'name': f"album:{name}",
+                'title': '实况' if is_live_post else '图集',
+                'subtitle': '左右滑动查看整组内容',
+                'items': [
+                    build_feed_media_item(
+                        str(member['name']), str(member['media_type']),
+                        live_video_uri=str(member.get('live_video_uri') or ''),
+                    )
+                    for member in members
+                ],
+            })
+            continue
+        if record and str(record.get('media_type') or '') == 'live':
+            mixed_entries.append({'type': 'live', 'name': name})
+            continue
+        mixed_entries.append({'type': media_type, 'name': name})
     if image_group_candidate and mixed_entries:
         mixed_entries = [
             entry for entry in mixed_entries
@@ -303,7 +335,7 @@ def build_mix_feed_page(
     recommendation_reasons = recommend_service.reasons_for([
         str(entry.get('name') or '')
         for entry in mixed_entries
-        if entry.get('type') in {'video', 'image'}
+        if entry.get('type') in {'video', 'image', 'live'}
     ])
     items = []
     for entry in mixed_entries:
@@ -313,9 +345,13 @@ def build_mix_feed_page(
             continue
 
         name = str(entry.get('name') or '')
-        if not name or item_type not in {'video', 'image'}:
+        if not name or item_type not in {'video', 'image', 'live'}:
             continue
-        item = build_feed_media_item(name, item_type)
+        record = records_by_name.get(name) or {}
+        item = build_feed_media_item(
+            name, item_type,
+            live_video_uri=str(record.get('live_video_uri') or ''),
+        )
         item['recommendation_reason'] = recommendation_reasons.get(name, '')
         items.append(item)
 
@@ -347,6 +383,7 @@ def register_flow_routes(
             activity_store=activity_store,
             related_photo_groups=related_photo_groups,
             mode=request.args.get('mode', ''),
+            blog=str(request.args.get('blog', '')).strip(),
         )
         if request.args.get('snapshot') == '1':
             result['has_more'] = False

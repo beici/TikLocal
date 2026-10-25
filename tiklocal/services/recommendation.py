@@ -36,12 +36,14 @@ class RecommendService:
         self.activity_store = activity_store
         self.media_index = media_index
 
-    def get_weighted_selection(self, file_type='video', limit=20, seed=None) -> list[str]:
+    def get_weighted_selection(self, file_type='video', limit=20, seed=None, source_id='') -> list[str]:
         """Get intelligent random selection of files."""
         if self.media_index:
             candidates = [
                 {'uri': item['name'], 'mtime': item['mtime_ts']}
-                for item in self.media_index.records(media_type=file_type)
+                for item in self.media_index.records(
+                    media_type=file_type, source_id=source_id, album_covers_only=True,
+                )
             ]
         elif file_type == 'video':
             candidates = [
@@ -121,14 +123,16 @@ class RecommendService:
             pool.remove(chosen)
         return result
 
-    def get_forgotten_selection(self, file_type='video', limit=20, seed=None) -> list[str]:
+    def get_forgotten_selection(self, file_type='video', limit=20, seed=None, source_id='') -> list[str]:
         """Old media not shown for a long time; what was once finished, replayed or favorited comes first."""
         if not self.media_index:
             return []
         now = datetime.datetime.now()
         cutoff = now.timestamp() - FORGOTTEN_DAYS * 86400
         names = [
-            item['name'] for item in self.media_index.records(media_type=file_type)
+            item['name'] for item in self.media_index.records(
+                media_type=file_type, source_id=source_id, album_covers_only=True,
+            )
             if 0 < float(item.get('mtime_ts') or 0) <= cutoff
         ]
         profiles = self.activity_store.profiles_for(names) if self.activity_store else {}
