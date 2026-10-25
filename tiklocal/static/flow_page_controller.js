@@ -665,8 +665,17 @@
         if (typeof item.renderChild === 'function') {
           item.activeChildIndex = item.renderChild(Number(item.activeChildIndex) || 0);
         }
+        // A live child that is already on stage (the slide-in was skipped) still
+        // needs to start playing when its group becomes the current item.
+        if (item.el?._activeLiveVideo) playLiveVideo(item.el._activeLiveVideo);
         playStatusIcon.classList.add('hidden');
         playStatusIcon.classList.remove('visible');
+      } else if (item.type === 'live') {
+        playStatusIcon.classList.remove('visible');
+        mediaActions.loadCaption(item.name);
+        if (item.el._loadFailed) handleMediaFailure(item.el);
+        // A live photo plays as soon as it slides in, like a video.
+        startLivePlayback();
       } else {
         playStatusIcon.classList.remove('visible');
         mediaActions.loadCaption(item.name);
@@ -733,6 +742,9 @@
             media.appendChild(video);
             media._liveVideo = video;
             panel._activeLiveVideo = video;
+            // Live children start playing when they become the visible child of
+            // the current item; off-screen groups keep their cover only.
+            if (currentItem()?.el === panel) playLiveVideo(video);
           } else if (media instanceof HTMLVideoElement) {
             media.className = 'image-group-media';
             media.src = entry.media_url;
@@ -821,7 +833,7 @@
         badge.textContent = '实况';
         const hint = document.createElement('div');
         hint.className = 'feed-live-hint';
-        hint.textContent = '按住播放';
+        hint.textContent = '长按开关声音';
         wrap.appendChild(cover);
         wrap.appendChild(video);
         wrap.appendChild(badge);
@@ -1102,9 +1114,9 @@
       hideHud();
     }
 
-    // Live photos: holding the cover plays the paired video, releasing stops it.
+    // Live photos: the paired mp4 plays while the item is on stage and stops
+    // when it leaves; a long press (or the space bar) toggles its sound.
     let playingLiveVideo = null;
-    let liveKeyHeld = false;
 
     function playLiveVideo(video) {
       if (!video) return false;
@@ -1115,11 +1127,35 @@
       const promise = video.play();
       if (promise) {
         promise.catch(() => {
-          // Autoplay with sound can be refused; fall back to a muted hold.
+          // Autoplay with sound can be refused; fall back to a muted playback.
           video.muted = true;
-          video.play().catch(() => stopLivePlayback());
+          video.play().then(() => {
+            showHud('已静音自动播放 · 长按开启声音', 1600);
+          }).catch(() => stopLivePlayback());
         });
       }
+      navigator.vibrate?.(10);
+      return true;
+    }
+
+    function activeLiveVideo() {
+      const item = currentItem();
+      if (!item) return null;
+      if (item.type === 'live') return item.el?._liveVideo || null;
+      if (item.type === 'image_group') return item.el?._activeLiveVideo || null;
+      return null;
+    }
+
+    function toggleLiveSound() {
+      const item = currentItem();
+      const video = activeLiveVideo();
+      if (!video) return false;
+      video.muted = !video.muted;
+      if (video.paused) {
+        if (item?.type === 'live' && item.el) item.el.classList.add('live-playing');
+        playLiveVideo(video);
+      }
+      showHud(video.muted ? '实况已静音' : '实况声音已开启', 900);
       navigator.vibrate?.(10);
       return true;
     }
@@ -1260,7 +1296,7 @@
         clearTimeout(tapTimer);
         const video = currentVideo();
         if (video) beginBoost(video);
-        else if (!startLivePlayback()) toggleUI();
+        else if (!toggleLiveSound()) toggleUI();
       }, longPressMs);
     });
 
@@ -1430,20 +1466,9 @@
       if (event.key === 'ArrowUp') goPrev();
       if (event.key === ' ') {
         event.preventDefault();
-        // On a live photo, holding the space bar plays the paired video
-        // exactly like holding a finger on the cover; a tap keeps the usual toggle.
-        if (!liveKeyHeld && !event.repeat && startLivePlayback()) {
-          liveKeyHeld = true;
-          return;
-        }
-        if (!liveKeyHeld) togglePlay();
-      }
-    });
-
-    document.addEventListener('keyup', (event) => {
-      if (event.key === ' ' && liveKeyHeld) {
-        liveKeyHeld = false;
-        stopLivePlayback();
+        // On a live photo, the space bar toggles its sound, matching a long
+        // press; elsewhere it is the usual play/pause toggle.
+        if (!toggleLiveSound()) togglePlay();
       }
     });
 

@@ -197,9 +197,10 @@ html, body {
   backdrop-filter: blur(6px);
   transition: opacity 0.2s ease;
 }
-.feed-live.live-playing .feed-live-hint,
-.feed-live.live-playing .feed-live-badge {
-  opacity: 0;
+.feed-live.live-playing .feed-live-hint {
+  /* Autoplay keeps a live photo playing; the badge marks it, the hint explains
+     the long-press sound toggle, so both stay readable over the video. */
+  opacity: 0.72;
 }
 .feed-image-group {
   display: none;
