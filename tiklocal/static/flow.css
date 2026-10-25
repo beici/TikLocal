@@ -223,6 +223,8 @@ html, body {
   align-items: center;
   justify-content: center;
   background: #000;
+  /* Children slide in from a full stage width away; keep them clipped. */
+  overflow: hidden;
 }
 .image-group-media {
   position: absolute;
@@ -232,8 +234,7 @@ html, body {
   object-fit: contain;
   display: block;
   opacity: 1;
-  transform: translateX(0);
-  transition: opacity 0.18s ease, transform 0.22s ease;
+  will-change: transform;
 }
 /* A live child inside a swipeable group mirrors the standalone live node. */
 .image-group-live img {

@@ -700,11 +700,18 @@
           const entry = children[safeIndex];
           if (!entry || !entry.media_url) return;
           const previousIndex = Number(panel._activeChildIndex);
+          if (!force && stage.querySelector('.image-group-media') && safeIndex === previousIndex) {
+            // Re-showing the child that is already on stage (e.g. when the page
+            // slid in); re-rendering it would replay the slide animation.
+            return;
+          }
           const direction = Number.isFinite(previousIndex) && safeIndex < previousIndex ? -1 : 1;
-          const previousMedia = stage.querySelector('.image-group-media');
+          const outgoing = Array.from(stage.querySelectorAll('.image-group-media'));
           // Stop the outgoing child's playback before swapping it out.
-          if (previousMedia?._liveVideo) previousMedia._liveVideo.pause();
-          if (previousMedia instanceof HTMLVideoElement) previousMedia.pause();
+          outgoing.forEach((element) => {
+            if (element._liveVideo) element._liveVideo.pause();
+            if (element instanceof HTMLVideoElement) element.pause();
+          });
           panel._activeLiveVideo = null;
           const media = document.createElement(entry.type === 'live' && entry.live_video_url ? 'div' : (entry.type === 'video' ? 'video' : 'img'));
           if (media instanceof HTMLDivElement) {
@@ -744,22 +751,30 @@
           media.addEventListener('error', () => handleMediaFailure(panel));
           media.loading = 'eager';
           media.decoding = 'async';
-          media.style.opacity = '0';
-          media.style.transform = `translateX(${direction * 18}px)`;
+          panel._groupGeneration = (Number(panel._groupGeneration) || 0) + 1;
+          const generation = panel._groupGeneration;
+          media.dataset.groupGeneration = String(generation);
+          // The stage is a sliding window: children never overlap, the incoming
+          // one starts one full stage width away and slides into place.
+          const slideMs = reduceMotion.matches ? 0 : 240;
+          media.style.transform = outgoing.length
+            ? `translateX(${direction * 100}%)`
+            : 'translateX(0)';
           stage.appendChild(media);
           requestAnimationFrame(() => {
-            media.style.opacity = '1';
+            if (slideMs) media.style.transition = `transform ${slideMs}ms cubic-bezier(0.22, 1, 0.36, 1)`;
             media.style.transform = 'translateX(0)';
-            if (previousMedia) {
-              previousMedia.style.opacity = '0';
-              previousMedia.style.transform = `translateX(${direction * -12}px)`;
-            }
+            outgoing.forEach((element) => {
+              if (slideMs) element.style.transition = `transform ${slideMs}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+              element.style.transform = `translateX(${direction * -100}%)`;
+            });
           });
-          if (previousMedia) {
-            window.setTimeout(() => {
-              if (previousMedia.parentNode === stage) previousMedia.remove();
-            }, 220);
-          }
+          window.setTimeout(() => {
+            stage.querySelectorAll('.image-group-media').forEach((element) => {
+              if (element.dataset.groupGeneration === String(generation)) return;
+              if (element.parentNode === stage) element.remove();
+            });
+          }, slideMs + 90);
           panel._activeChildIndex = safeIndex;
           counterEl.textContent = `${safeIndex + 1} / ${children.length}`;
           if (currentItem()?.el === panel) {
