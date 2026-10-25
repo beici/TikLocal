@@ -1089,6 +1089,7 @@
 
     // Live photos: holding the cover plays the paired video, releasing stops it.
     let playingLiveVideo = null;
+    let liveKeyHeld = false;
 
     function playLiveVideo(video) {
       if (!video) return false;
@@ -1414,7 +1415,20 @@
       if (event.key === 'ArrowUp') goPrev();
       if (event.key === ' ') {
         event.preventDefault();
-        togglePlay();
+        // On a live photo, holding the space bar plays the paired video
+        // exactly like holding a finger on the cover; a tap keeps the usual toggle.
+        if (!liveKeyHeld && !event.repeat && startLivePlayback()) {
+          liveKeyHeld = true;
+          return;
+        }
+        if (!liveKeyHeld) togglePlay();
+      }
+    });
+
+    document.addEventListener('keyup', (event) => {
+      if (event.key === ' ' && liveKeyHeld) {
+        liveKeyHeld = false;
+        stopLivePlayback();
       }
     });
 
