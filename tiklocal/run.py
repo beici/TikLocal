@@ -75,6 +75,15 @@ def parse_cli_media_source(value):
 
 
 def main():
+    # When stdout is redirected, Python encodes with the locale codec (PEP 528 only
+    # covers a real console). Never let an unencodable character abort the start.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, 'reconfigure', None)
+        if reconfigure is not None:
+            try:
+                reconfigure(errors='replace')
+            except (ValueError, OSError):
+                pass
     # Read the configuration file.
     config = load_config()
 
@@ -338,11 +347,14 @@ Examples:
     bootstrap = app.extensions.get('auth_bootstrap')
     print("Access authentication: enabled")
     if bootstrap and bootstrap.generated_password:
-        print("┌────────────────────────────────────────────┐")
-        print("│ Initial access password                          │")
-        print(f"│ {bootstrap.generated_password:<42} │")
-        print("│ Save it; change it with tiklocal auth set-password │")
-        print("└────────────────────────────────────────────┘")
+        # Plain ASCII: a redirected stdout uses the locale encoding (cp1252 has no
+        # box-drawing characters), and an UnicodeEncodeError here would abort the
+        # first start right after the password was generated but before it printed.
+        print("+--------------------------------------------+")
+        print("| Initial access password                    |")
+        print(f"| {bootstrap.generated_password:<42} |")
+        print("| Save it; change it with tiklocal auth set-password |")
+        print("+--------------------------------------------+")
     download_manager = app.extensions['download_manager']
     previous_sigterm = signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:

@@ -404,3 +404,29 @@ def test_start_link_resolves_an_album_member_to_its_group(tmp_path):
     ]
     assert payload['has_more'] is False
 
+
+def test_mix_feed_pages_do_not_repeat_cards_after_impressions(tmp_path):
+    """Page 2+ must slice one stable order, even though page 1 recorded impressions."""
+    files = {f'pic{index:03d}.jpg': 1 + index / 100 for index in range(60)}
+    client = _tag_client(tmp_path, files)
+
+    seen: list[str] = []
+    since = None
+    for page in (1, 2, 3):
+        params = {'page': page, 'size': 20, 'seed': 'stable-seed'}
+        if since:
+            params['since'] = since
+        payload = client.get('/api/feed/mix', query_string=params).get_json()
+        names = [item['name'] for item in payload['items'] if item.get('name')]
+        assert names, page
+        assert not [name for name in names if name in seen], f'page {page} repeated a card'
+        seen += names
+        if since is None:
+            assert payload['since'], 'the first page must pin the session cutoff'
+            since = payload['since']
+        client.post('/api/activity', json={'events': [
+            {'uri': name, 'event': 'impression', 'media_type': 'image', 'ratio': 1.0}
+            for name in names
+        ]})
+
+    assert len(seen) == len(set(seen)) == 60

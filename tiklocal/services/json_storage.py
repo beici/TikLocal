@@ -75,6 +75,10 @@ def read_json_file(path: Path, default: object, *, expected_type: type | tuple[t
         raw = path.read_text(encoding='utf-8')
     except FileNotFoundError:
         return default
+    except UnicodeDecodeError:
+        # Not UTF-8 at all: that is corruption, not a sharing violation.
+        quarantine_corrupt_file(path)
+        return default
     except OSError:
         # A transient sharing violation is not corruption: quarantining here
         # would rename a perfectly good store and hand back the defaults, which
@@ -87,6 +91,9 @@ def read_json_file(path: Path, default: object, *, expected_type: type | tuple[t
                 raw = path.read_text(encoding='utf-8')
                 break
             except FileNotFoundError:
+                return default
+            except UnicodeDecodeError:
+                quarantine_corrupt_file(path)
                 return default
             except OSError:
                 continue

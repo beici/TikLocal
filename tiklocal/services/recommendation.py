@@ -1,6 +1,7 @@
 import datetime
 import math
 import random
+import zlib
 
 from tiklocal.services.library import LibraryService, VIDEO_EXTENSIONS
 from tiklocal.services.favorites import FavoriteService
@@ -53,8 +54,14 @@ class RecommendService:
         self.activity_store = activity_store
         self.media_index = media_index
 
-    def get_weighted_selection(self, file_type='video', limit=20, seed=None, source_id='') -> list[str]:
-        """Get intelligent random selection of files."""
+    def get_weighted_selection(self, file_type='video', limit=20, seed=None, source_id='',
+                               session_start=None) -> list[str]:
+        """Get intelligent random selection of files.
+
+        ``session_start`` (datetime) marks when the current feed session began: an
+        item shown after that moment is not penalised again, otherwise every page
+        request would re-rank the pool and page 2 repeated cards from page 1.
+        """
         if self.media_index:
             candidates = [
                 {'uri': item['name'], 'mtime': item['mtime_ts']}
@@ -95,7 +102,7 @@ class RecommendService:
                 profile = profiles.get(rel_path) or {}
                 affinity = max(-1.0, min(float(profile.get('affinity_score') or 0.0), 1.8))
                 revisit_score = max(0.65, 1.0 + affinity * 0.2)
-                recent_penalty = self._recent_view_weight(profile.get('last_shown_at'), now)
+                recent_penalty = self._recent_view_weight(profile.get('last_shown_at'), now, session_start)
                 dimensions = self.activity_store.dimensions_for(rel_path, file_type) if self.activity_store else []
                 preference_score = sum(dimension_scores.get(dimension, 0.0) for dimension in dimensions)
                 preference_weight = max(0.8, min(1.25, 1.0 + preference_score * 0.08))
@@ -125,7 +132,14 @@ class RecommendService:
         picks_target = min(limit, len(pool), DIVERSITY_PICKS)
         while pool and len(result) < picks_target:
             if len(result) % 4 == 3:
-                least_seen = sorted(pool, key=lambda item: item['impressions'])
+                if session_start is not None:
+                    # Ordering the exploration pool by impression count reshuffled it on
+                    # every request (each page records impressions), so page 2 repeated
+                    # page 1's cards. A seed-stable hash keeps the intent per session.
+                    least_seen = sorted(pool, key=lambda item: zlib.crc32(
+                        f"{seed}:{item['uri']}".encode('utf-8')))
+                else:
+                    least_seen = sorted(pool, key=lambda item: item['impressions'])
                 exploration_pool = least_seen[:max(1, len(least_seen) // 3)]
                 varied = [item for item in exploration_pool if self._diversity_weight(item, recent_dimensions) >= 1.0]
                 if varied:
@@ -165,7 +179,8 @@ class RecommendService:
                 result.append(item['uri'])
         return result
 
-    def get_forgotten_selection(self, file_type='video', limit=20, seed=None, source_id='') -> list[str]:
+    def get_forgotten_selection(self, file_type='video', limit=20, seed=None, source_id='',
+                                session_start=None) -> list[str]:
         """Old media not shown for a long time; what was once finished, replayed or favorited comes first."""
         if not self.media_index:
             return []
@@ -234,9 +249,15 @@ class RecommendService:
         return reasons
 
     @staticmethod
-    def _recent_view_weight(value: object, now: datetime.datetime) -> float:
+    def _recent_view_weight(value: object, now: datetime.datetime,
+                            session_start: datetime.datetime | None = None) -> float:
         shown = _parse_shown_at(value)
         if not shown:
+            return 1.0
+        if session_start is not None and shown >= session_start:
+            # Shown while the user is already scrolling this session: the feed must
+            # keep its order, so do not down-weight it again (that reshuffled the
+            # pool between pages and duplicated cards).
             return 1.0
         hours = max((now - shown).total_seconds() / 3600, 0.0)
         if hours < 6:

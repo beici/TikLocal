@@ -1,4 +1,4 @@
-﻿(() => {
+(() => {
   const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
   const themeButtons = Array.from(document.querySelectorAll('[data-theme-preference]'));
   const refreshButton = document.getElementById('refresh-library');
@@ -84,7 +84,15 @@
       document.getElementById('media-total').textContent = Number(payload.indexed_total || videos + images);
       document.getElementById('videos-count').textContent = videos;
       document.getElementById('images-count').textContent = images;
-      document.getElementById('cache-size').textContent = `${Number(payload.cache_mb || 0)} MB`;
+      const cacheCopy = document.getElementById('cache-copy');
+      if (cacheCopy) {
+        // The size lives inside a translated sentence; writing a bare #cache-size
+        // span threw once the template stopped rendering it, and the throw flipped
+        // the sync card into its error state on every settings visit.
+        cacheCopy.textContent = T('settings.library.cache_copy', {
+          size: `${Number(payload.cache_mb || 0)} MB`,
+        });
+      }
       document.getElementById('index-sync-copy').textContent = formatSyncTime(payload.last_synced_at);
       document.getElementById('index-sync-state').classList.remove('is-error');
     } catch (error) {

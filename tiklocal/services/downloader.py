@@ -1,4 +1,5 @@
 import ipaddress
+import logging
 import os
 import queue
 from collections import deque
@@ -55,6 +56,7 @@ COOKIE_FILE_EXTENSIONS = {".txt", ".cookies"}
 DOWNLOAD_ENGINES = {"yt-dlp", "gallery-dl", "tiktok-downloader"}
 USER_DOWNLOAD_ENGINES = {"yt-dlp", "gallery-dl"}
 DEFAULT_DOWNLOAD_ENGINE = "yt-dlp"
+LOGGER = logging.getLogger(__name__)
 DIRECT_DOWNLOAD_TIMEOUT_SEC = 30
 # A tool that stalls silently (no stdout for hours) used to block the single worker
 # forever; the queue then accepted jobs that never ran. This is the wall-clock cap.
@@ -950,6 +952,10 @@ class DownloadManager:
                     job["finished_at"] = utc_now_iso()
                     self._persist_locked()
         except Exception as exc:
+            # Without this the only trace of an engine/library crash was an empty
+            # error_message: the UI showed "failed" with no reason and the server
+            # kept no traceback at all.
+            LOGGER.exception('Download job %s crashed', job_id)
             with self._lock:
                 job = self._jobs.get(job_id)
                 if not job:
@@ -965,7 +971,9 @@ class DownloadManager:
                     engine = job.get('engine') or DEFAULT_DOWNLOAD_ENGINE
                     job['error_message'] = f'{engine} was not found. Install it before using this engine.'
                 else:
-                    job['error_message'] = str(exc)
+                    # Exceptions such as TimeoutError() stringify to ''; fall back to
+                    # the type name so the failure is never silent.
+                    job['error_message'] = str(exc) or f'{type(exc).__name__} while downloading.'
                 self._persist_locked()
         finally:
             with self._lock:
@@ -1008,29 +1016,35 @@ class DownloadManager:
         if error:
             return 1, error, []
 
-        output_path = ""
+        output_paths: list[str] = []
 
         def on_line(line: str) -> None:
-            nonlocal output_path
             progress = parse_progress(line)
             if progress:
                 self._update_progress(job_id, progress)
-            output_path = parse_output_path(line) or output_path
+            destination = parse_output_path(line)
+            if destination and destination not in output_paths:
+                # A playlist download reports one Destination per item; keeping only
+                # the last one hid N-1 files from the index, the history and delete.
+                output_paths.append(destination)
 
         # yt-dlp writes .part/.ytdl files while downloading; keep them out of the
         # library so a cancel or timeout cannot leave hidden junk behind.
         temp_dir = (self.media_root / DOWNLOAD_TMP_DIR / job_id).resolve()
         temp_dir.mkdir(parents=True, exist_ok=True)
+        # yt-dlp opens --cookies read-write and dumps the jar back on exit, so two
+        # concurrent jobs sharing the imported file would truncate each other.
+        cookie_for_job = self._private_cookie_copy(cookie_path, temp_dir)
         try:
             cmd = yt_dlp_command(yt_dlp_bin, self.media_root, url, allow_playlist=allow_playlist,
-                                 cookie_path=cookie_path, temp_dir=temp_dir)
+                                 cookie_path=cookie_for_job, temp_dir=temp_dir)
             return_code, error_message = self._run_tool(job_id, cmd, on_line)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
         if not error_message and return_code != 0:
             error_message = f"yt-dlp exited with code {return_code}."
-        output_rel = self._to_media_relative(output_path)
-        return return_code, error_message, [output_rel] if output_rel else []
+        output_rel = [self._to_media_relative(path) for path in output_paths]
+        return return_code, error_message, [path for path in output_rel if path]
 
     def _execute_download_gallery_dl(self, job_id: str) -> tuple[int, str, list[str]]:
         gallery_dl_bin = resolve_tool("gallery-dl")
@@ -1057,9 +1071,10 @@ class DownloadManager:
         temp_dir = (self.media_root / DOWNLOAD_TMP_DIR / job_id).resolve()
         temp_dir.mkdir(parents=True, exist_ok=True)
         log_file = temp_dir / "gallery-dl.log"
+        cookie_for_job = self._private_cookie_copy(cookie_path, temp_dir)
         try:
             cmd = gallery_dl_command(gallery_dl_bin, temp_dir, log_file, url,
-                                     archive_path=archive_path, cookie_path=cookie_path)
+                                     archive_path=archive_path, cookie_path=cookie_for_job)
             return_code, error_message = self._run_tool(job_id, cmd, lambda line: None)
             if return_code != 0:
                 return return_code, error_message or f"gallery-dl exited with code {return_code}.", []
@@ -1200,6 +1215,22 @@ class DownloadManager:
         if cookie_file and str(job.get("cookie_match_mode") or "none") in {"auto", "manual"}:
             return self._resolve_cookie_path(cookie_file)
         return None, None
+
+    def _private_cookie_copy(self, cookie_path: Path | None, temp_dir: Path) -> Path | None:
+        """Hand the engine a throwaway copy: yt-dlp dumps the jar back into its file.
+
+        The imported cookie file lives in the persistent cookie directory and is
+        the user's original; two concurrent jobs pointing at it would interleave
+        their writes and truncate the jar.
+        """
+        if cookie_path is None:
+            return None
+        copy_path = temp_dir / "cookies.txt"
+        try:
+            shutil.copyfile(cookie_path, copy_path)
+        except OSError:
+            return cookie_path
+        return copy_path
 
     def _run_tool(self, job_id: str, cmd: list[str], on_line: Callable[[str], None]) -> tuple[int, str]:
         """Run a download tool to completion, keeping its last error line.

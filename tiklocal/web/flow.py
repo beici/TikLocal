@@ -365,6 +365,7 @@ def build_mix_feed_page(
     sources_by_id: dict | None = None,
     tag: str = '',
     start: str = '',
+    session_start=None,
 ) -> dict:
     raw_tag = str(tag or '').strip()
     tag = normalize_tag(raw_tag)
@@ -395,17 +396,22 @@ def build_mix_feed_page(
 
     forgotten = mode == 'forgotten'
     select = recommend_service.get_forgotten_selection if forgotten else recommend_service.get_weighted_selection
+    # Only pass the session cutoff when there is one: injected/legacy recommend
+    # services (tests, alternative implementations) predate the keyword.
+    session_kwargs = {'session_start': session_start} if session_start is not None else {}
     videos = select(
         file_type='video',
         limit=request_window,
         seed=f"{seed}:video",
         source_id=blog,
+        **session_kwargs,
     )
     images = select(
         file_type='image',
         limit=request_window,
         seed=f"{seed}:image",
         source_id=blog,
+        **session_kwargs,
     )
 
     target_image_prob = image_ratio / max(1, ratio_total)
@@ -558,6 +564,9 @@ def build_mix_feed_page(
         'page': page,
         'has_more': len(mixed) > end,
         'seed': seed,
+        # Echo the session marker so the next page ranks against the same cutoff
+        # instead of the impressions this page just created.
+        'since': session_start.timestamp() if session_start is not None else None,
     }
 
 
@@ -576,6 +585,15 @@ def register_flow_routes(
 
     @app.route('/api/feed/mix')
     def api_feed_mix():
+        # The first request of a feed session pins the ranking cutoff; every later
+        # page echoes it back, so cards already shown are not re-ranked (which made
+        # page 2 repeat page 1 and permanently skip the items pushed up).
+        since_raw = request.args.get('since')
+        try:
+            session_start = (datetime.datetime.fromtimestamp(float(since_raw))
+                             if since_raw else datetime.datetime.now())
+        except (TypeError, ValueError, OverflowError, OSError):
+            session_start = datetime.datetime.now()
         result = build_mix_feed_page(
             page=read_int_arg('page', 1, minimum=1, maximum=5000),
             size=read_int_arg('size', 24, minimum=8, maximum=200),
@@ -590,6 +608,7 @@ def register_flow_routes(
             sources_by_id=getattr(library_service, 'sources_by_id', None) or {},
             tag=request.args.get('tag', ''),
             start=request.args.get('start', ''),
+            session_start=session_start,
         )
         if request.args.get('snapshot') == '1':
             result['has_more'] = False

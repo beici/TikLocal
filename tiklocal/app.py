@@ -7,6 +7,7 @@ from pathlib import Path
 from flask import Flask, render_template, request, send_file, url_for
 
 # Service Imports
+from tiklocal.logging_setup import configure_logging
 from tiklocal.services.library import LibraryService, build_media_sources
 from tiklocal.services.favorites import FavoriteService
 from tiklocal.services.recommendation import RecommendService
@@ -92,6 +93,10 @@ app_version = get_app_version()
 
 def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)
+    # Configure logging before anything can touch app.logger: Flask then skips its
+    # default stderr handler and waitress' late basicConfig() becomes a no-op, so a
+    # record is written once -- to stderr and to the rotating file under instance/.
+    configure_logging(app.instance_path)
     app.config.from_mapping(
         SECRET_KEY = None,
         # Unauthenticated endpoints such as /api/v1/pair must not be able to make

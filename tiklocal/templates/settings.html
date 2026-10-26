@@ -107,7 +107,7 @@
           <span class="setting-icon"><i data-feather="image"></i></span>
           <div class="settings-row-main">
             <div class="settings-row-title">{{ t('settings.library.cache_title') }}</div>
-            <div class="settings-row-copy">{{ t('settings.library.cache_copy', size=cache_size_mb ~ ' MB') }}</div>
+            <div class="settings-row-copy" id="cache-copy">{{ t('settings.library.cache_copy', size=cache_size_mb ~ ' MB') }}</div>
           </div>
           <button id="clear-cache" class="settings-action" type="button">{{ t('settings.library.clear') }}</button>
         </div>

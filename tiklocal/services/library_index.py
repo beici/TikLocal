@@ -1,4 +1,5 @@
 import datetime
+import logging
 import re
 import random
 import threading
@@ -10,6 +11,8 @@ from tiklocal.services.library import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_
 from tiklocal.services import media_naming
 from tiklocal.services.database import AppDatabase
 from tiklocal.services.media_info import probe_media_dims, probe_tool_available
+
+LOGGER = logging.getLogger(__name__)
 
 
 class MediaIndexStore:
@@ -23,6 +26,7 @@ class MediaIndexStore:
         records: list[dict],
         *,
         synced_source_ids: set[str] | None = None,
+        preserved_prefixes: list[str] | None = None,
     ) -> dict:
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         source_ids = sorted(
@@ -71,13 +75,22 @@ class MediaIndexStore:
             deleted = 0
             if source_ids:
                 placeholders = ",".join("?" for _ in source_ids)
+                # A subfolder we could not read this round must not be treated as
+                # deleted: keep every row under the skipped URI prefixes.
+                keep_prefix_sql = ""
+                keep_params: list[str] = []
+                for prefix in preserved_prefixes or ():
+                    escaped = prefix.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+                    keep_prefix_sql += " AND uri NOT LIKE ? ESCAPE '\\'"
+                    keep_params.append(f'{escaped}%')
                 deleted = conn.execute(
                     f"""
                     DELETE FROM media_items
                     WHERE source_id IN ({placeholders})
                       AND uri NOT IN (SELECT uri FROM media_index_seen)
+                      {keep_prefix_sql}
                     """,
-                    source_ids,
+                    [*source_ids, *keep_params],
                 ).rowcount
             conn.execute("DROP TABLE media_index_seen")
             item_count = int(conn.execute("SELECT COUNT(*) FROM media_items").fetchone()[0])
@@ -701,10 +714,12 @@ class LibraryIndexer:
         completed_sources = set()
         failures = {}
         records_by_uri = {}
+        preserved: list[str] = []
         for source in self.library.sources:
+            skipped: list[str] = []
             try:
                 records = [
-                    record for path in self.library.scan_source(source)
+                    record for path in self.library.scan_source(source, skipped=skipped)
                     if (record := self._record_for_path(path, time_states))
                 ]
                 records = self._apply_douyin_pairing(records)
@@ -712,11 +727,15 @@ class LibraryIndexer:
                 failures[source.id] = str(error)
                 continue
             completed_sources.add(source.id)
+            preserved.extend(skipped)
             records_by_uri.update((record['uri'], record) for record in records)
         result = self.store.replace_snapshot(
             list(records_by_uri.values()),
             synced_source_ids=completed_sources,
+            preserved_prefixes=preserved,
         )
+        if preserved:
+            result['skipped_prefixes'] = list(preserved)
         result['unavailable_sources'] = list(failures)
         result['source_errors'] = failures
         self.on_change()
@@ -880,6 +899,7 @@ class MediaProbeWorker:
         self.library = library_service
         self.store = store
         self._wake = threading.Event()
+        self.failures = 0
 
     def start(self) -> None:
         threading.Thread(target=self._loop, name="media-probe", daemon=True).start()
@@ -917,5 +937,9 @@ class MediaProbeWorker:
             try:
                 self.run_once()
             except Exception:
-                pass  # Dimensions are optional; the next wake retries.
+                # Dimensions are optional and the next wake retries, but swallowing
+                # this silently meant a locked database left every new file without
+                # width/height with nothing in the log to explain it.
+                self.failures += 1
+                LOGGER.warning('Media probe pass failed; dimensions stay unset for now', exc_info=True)
             self._wake.wait()

@@ -28,8 +28,11 @@ _DESTINATION_PATTERNS = [
     re.compile(r'^\[ExtractAudio\] Destination: (?P<path>.+)$'),
 ]
 # Keeps the fields source_from_filename reads back when no source was recorded.
+# display_id/id are bounded because some extractors put the whole page title in
+# them: an unbounded name makes --write-info-json fail before any media is
+# written (Windows MAX_PATH), so the job downloads nothing at all.
 YT_DLP_OUTPUT_TEMPLATE = (
-    "%(extractor_key|na)s__%(uploader_id|na).24B__%(display_id|na)s__%(id|na)s__%(upload_date|na)s__%(autonumber)02d.%(ext)s"
+    "%(extractor_key|na)s__%(uploader_id|na).24B__%(display_id|na).80B__%(id|na).80B__%(upload_date|na)s__%(autonumber)02d.%(ext)s"
 )
 
 
@@ -109,12 +112,16 @@ def yt_dlp_command(binary: str | list[str], media_root: Path, url: str, *, allow
         "--fragment-retries", "10",
         "--file-access-retries", "5",
         "--socket-timeout", "30",
-        "-o", str(media_root / YT_DLP_OUTPUT_TEMPLATE),
+        # The output template must stay relative: yt-dlp ignores `--paths temp:`
+        # whenever `-o` carries an absolute path (it warns and keeps .part files
+        # next to the media), so the job-private temp folder would never be used.
+        "-o", YT_DLP_OUTPUT_TEMPLATE,
+        "-P", f"home:{media_root}",
     ]
     if temp_dir is not None:
         # Partial files (.part/.ytdl) belong in the job's private folder: a canceled
         # or timed-out download used to leave them in the library forever.
-        cmd.extend(["--paths", f"temp:{temp_dir}"])
+        cmd.extend(["-P", f"temp:{temp_dir}"])
     if not allow_playlist:
         cmd.append("--no-playlist")
     if cookie_path:

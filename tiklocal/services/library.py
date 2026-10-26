@@ -118,12 +118,17 @@ class LibraryService:
 
     def scan_source(
         self, source: MediaSource, extensions: set[str] | None = None, *, recursive: bool = True,
+        skipped: list[str] | None = None,
     ) -> list[Path]:
         """Scan one source, skipping directories it may not read.
 
         Raising on the first unreadable folder (System Volume Information at a drive
         root, an ACL-locked folder) used to fail the whole source, which left the
         library empty and froze the index: a failed scan never publishes a snapshot.
+
+        A skipped subfolder is recorded in ``skipped`` (source-relative URI prefix):
+        the indexer must keep those rows, otherwise a folder we merely cannot read
+        right now looks like "all its media was deleted".
         """
         extensions = extensions if extensions is not None else VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS
 
@@ -134,6 +139,13 @@ class LibraryService:
             if Path(error.filename or '') == source.path:
                 raise error
             if error.errno in (errno.EACCES, errno.EPERM):
+                if skipped is not None and error.filename:
+                    try:
+                        relative = Path(error.filename).resolve().relative_to(source.path.resolve())
+                    except (OSError, ValueError):
+                        relative = None
+                    if relative is not None and str(relative) != '.':
+                        skipped.append(f'@{source.id}/{relative.as_posix().rstrip("/")}/')
                 return
             raise error
 
@@ -144,9 +156,9 @@ class LibraryService:
             else:
                 # Neither the trash nor a download's scratch folder holds finished
                 # media; indexing them published half-written files and broken previews.
-                for skipped in (TRASH_DIR, DOWNLOAD_TMP_DIR):
-                    if skipped in folders:
-                        folders.remove(skipped)
+                for hidden in (TRASH_DIR, DOWNLOAD_TMP_DIR):
+                    if hidden in folders:
+                        folders.remove(hidden)
                 # A junction/symlink can point outside the library (or back into an
                 # ancestor and loop forever); its files would also be indexed under a
                 # host absolute path and never load.

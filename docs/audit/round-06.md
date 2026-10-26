@@ -101,6 +101,17 @@ warm 启动实测：1000 → 1.17 s，4000 → 5.62 s，8000 → **8.59 s**；cP
 - `py_compile`：`json_storage.py`、`downloader.py`、`library.py`、`library_index.py`、`recommendation.py`、`flow.py`、`media.py`、`app.py`、`i18n_pages_library.py`。
 - 全量 `pytest -q`：**399 passed / 6 skipped / 0 failed**（75.38s）。期间两个由本轮改动引入的失败（`test_flow_reuses_gallery_slot_for_related_photos` 的索引替身、`test_tiktok_enqueue_downloads_album_into_library` 的 `urlopen` 桩）已在本轮内修正。
 
+实机验证（`127.0.0.1:8000`，instance `.smoke-run`，媒体源 71 项）：
+
+| 项 | 结果 |
+|----|------|
+| 页面级 404（`GET /no-such-page`） | `404`，返回 styled 页面（74163 字节，含 `返回首页`），不再是 Werkzeug 英文页 |
+| `/api/does-not-exist` | `404 application/json`，`{"error":"请求的资源不存在。","success":false}` |
+| `/api/feed/mix?limit=24` | `200`，67 ms（本机 71 项小库） |
+| `/api/library/items?limit=48` / `/api/library/stats` | `200`，8 ms / 6 ms |
+| 移动端 375×667 `/library` 滚到 700px | 吸顶条 `top: 66px`，日期按钮中心 `elementFromPoint` 命中按钮自身（修复前命中的是 `A.app-wordmark`） |
+| 图片详情页 | `/static/image_detail.css` 含 `touch-action: pan-y` 与 `overscroll-behavior-y: contain`，页面 200 |
+
 ## 检索
 
 本轮未引入新依赖，修法全部来自仓库既有模式（`write_json_atomic` 的重试惯例、`ui_feedback.js` 的焦点循环、`library_timeline_controller.js` 的 `loadUntilVisible` 守卫）。唯一需要外部依据的是 Windows `os.replace` 的共享冲突语义，已用并发探针实测确认（960 写 / 7457 次默认值读取 / 206 份副本）。

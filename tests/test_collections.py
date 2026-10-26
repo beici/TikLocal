@@ -1,4 +1,4 @@
-from urllib.parse import quote
+﻿from urllib.parse import quote
 
 import pytest
 
@@ -149,3 +149,19 @@ def test_corrupt_collections_file_blocks_writes_and_keeps_a_backup(client):
     assert 'backup' in response.get_json()['error'].lower() or '备份' in response.get_json()['error']
     assert store_path.read_text(encoding='utf-8') == '{ this is not json'
     assert store_path.with_name(store_path.name + '.corrupt').exists()
+
+def test_collection_header_count_follows_the_index_after_a_delete(client):
+    names = ['one.jpg', 'two.jpg', 'three.jpg']
+    for name in names:
+        (client.application.config['MEDIA_ROOT'] / name).write_bytes(b'image')
+    client.post('/api/library/sync')
+    collection_id = client.post('/api/collections', json={'name': 'Shrinking'}).get_json()['data']['item']['id']
+    client.post(f'/api/collections/{collection_id}/items', json={'uris': names})
+
+    page = client.get(f'/collection/{collection_id}').get_data(as_text=True)
+    assert '3 条媒体' in page
+
+    assert client.post('/delete/@default/two.jpg').status_code in (200, 302)
+    page = client.get(f'/collection/{collection_id}').get_data(as_text=True)
+    assert '2 条媒体' in page
+    assert '3 条媒体' not in page

@@ -292,9 +292,12 @@ def register_library_routes(
             collection_id=collection_id,
             limit=read_int_arg('limit', 24, minimum=12, maximum=96),
         )
-        return _render_library_page(
-            page, scope='collection', collection=_serialize_collection_summary(collection),
-        )
+        summary = _serialize_collection_summary(collection)
+        # The stored item_count is historical: deleting a file through the app
+        # removes the index row but leaves the collection entry behind, so the
+        # header promised more items than the grid (which joins the index) shows.
+        summary['item_count'] = int(page.get('total') or 0)
+        return _render_library_page(page, scope='collection', collection=summary)
 
     @app.route('/api/library/items')
     def api_library_items():

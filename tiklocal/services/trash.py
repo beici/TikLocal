@@ -58,8 +58,30 @@ class TrashService:
     def purge(self, entry_id: str) -> str:
         """Permanently delete one entry and return the URI it came from."""
         folder, entry = self._entry(entry_id)
-        shutil.rmtree(folder)
+        self._delete_folder(folder)
         return entry['uri']
+
+    @staticmethod
+    def _delete_folder(folder: Path) -> None:
+        """Delete a trash folder without losing the entry on a partial failure.
+
+        ``shutil.rmtree`` deletes ``entry.json`` before it reaches the payload; on
+        Windows a read-only media file (copied from a disc or a read-only share)
+        then raised PermissionError and left a folder that was no longer listed,
+        could not be restored and never expired -- a silent, permanent leak.
+        Payload files go first, the manifest last, and read-only bits are cleared.
+        """
+        manifest = folder / 'entry.json'
+        for path in folder.rglob('*'):
+            if not path.is_file() or path == manifest:
+                continue
+            try:
+                path.chmod(0o666)
+            except OSError:
+                pass
+            path.unlink()
+        manifest.unlink(missing_ok=True)
+        shutil.rmtree(folder)
 
     def entries(self) -> list[dict]:
         """All trashed files across sources, newest first."""

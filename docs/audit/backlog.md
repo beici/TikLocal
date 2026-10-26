@@ -30,6 +30,8 @@
 | 盲 SSRF：重定向目标请求仍会发出（只在读 body 前拦） | `tiklocal/services/downloader.py::_direct_fetch` | 已用 `response.geturl()` 复验最终地址并丢弃结果；彻底修复需要出口地址过滤（socket 级），属于部署层能力 |
 | 缩略图冷缓存无进程内 single-flight | `tiklocal/services/thumbnail.py:144-152` | 10 个并发请求会起 10 个 ffmpeg；结果正确（原子 `os.replace`），只是浪费 CPU。加 in-flight 字典需处理异常与超时回收 |
 | yt-dlp / gallery-dl 引擎没有重定向内网约束 | `tiklocal/services/downloader.py`（子进程引擎） | 子进程内的 HTTP 客户端不受本进程控制，只能靠部署层出口过滤 |
+| Windows 保留名与超长路径会让下载失败 | 下载命名层（`tiklocal/services/media_naming.py` 与 `download_tools.py` 的模板） | `CON.mp4` / `aux.jpg` 需要改写文件名，>259 字符需要 `\\?\` 前缀；两者都会改变已有文件的命名与去重键，必须单独一轮做迁移与回归 |
+| 索引扫描的 `skipped_prefixes` 没有回给前端 | `tiklocal/services/library_index.py:738`（`result['skipped_prefixes']`） | 后端已能收集权限不足的前缀并保留索引行，但 `/api/library/sync` 的响应还没带出来，用户不知道有目录被跳过；补一个字段即可，留到下一轮做 UI 提示时一起改 |
 
 ## P3
 
