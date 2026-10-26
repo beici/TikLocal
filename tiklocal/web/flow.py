@@ -571,7 +571,7 @@ def register_flow_routes(
     @app.route('/api/feed/mix')
     def api_feed_mix():
         result = build_mix_feed_page(
-            page=read_int_arg('page', 1, minimum=1),
+            page=read_int_arg('page', 1, minimum=1, maximum=5000),
             size=read_int_arg('size', 24, minimum=8, maximum=200),
             seed=request.args.get('seed') or str(random.randint(1, 999999)),
             recommend_service=recommend_service,

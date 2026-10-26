@@ -6,7 +6,7 @@ import pytest
 
 from tiklocal.app import create_app
 from tiklocal.services.library import LibraryService
-from tiklocal.services.trash import TRASH_DIR
+from tiklocal.services.trash import TRASH_DIR, TrashService
 
 
 @pytest.fixture
@@ -80,3 +80,17 @@ def test_library_scan_skips_trash(client):
     trash_delete(client, 'clip.mp4')
     service = LibraryService(client.application.config['MEDIA_ROOT'])
     assert [path.name for path in service.scan_source(service.sources[0])] == ['a b.jpg']
+
+
+def test_purge_of_locked_file_is_reported_as_conflict(client, monkeypatch):
+    entry_id = trash_delete(client, 'clip.mp4')
+
+    def locked(self, target_id):
+        raise OSError(13, 'Permission denied')
+
+    monkeypatch.setattr(TrashService, 'purge', locked)
+    response = client.delete(f'/api/trash/{entry_id}')
+    assert response.status_code == 409
+    assert response.get_json()['error']
+    # Emptying the trash keeps going when one entry is locked.
+    assert client.delete('/api/trash').get_json() == {'purged': 0, 'failed': 1}

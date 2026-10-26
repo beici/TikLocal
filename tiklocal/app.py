@@ -176,8 +176,8 @@ def create_app(test_config=None):
     def timestamp_to_date(timestamp):
         locale = current_locale()
         try:
-            moment = datetime.datetime.fromtimestamp(timestamp)
-        except (ValueError, OSError):
+            moment = datetime.datetime.fromtimestamp(float(timestamp))
+        except (TypeError, ValueError, OSError, OverflowError):
             return translate(locale, 'common.unknown_time')
         if locale == 'en':
             day = moment.strftime('%d').lstrip('0')
@@ -318,13 +318,6 @@ def create_app(test_config=None):
     register_settings_routes(app, media_index, favorite_service, thumbnail_service, app_version)
 
     # --- Template Filters ---
-    @app.template_filter('timestamp_to_date')
-    def timestamp_to_date(timestamp):
-        try:
-            return datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
-        except (ValueError, OSError):
-            return 'Unknown time'
-
     @app.template_filter('filesizeformat')
     def filesizeformat(num_bytes):
         if num_bytes is None: return '0 B'

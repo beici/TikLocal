@@ -107,7 +107,7 @@ def test_key_precedence_and_config_presence_match_actual_request(caption_app, mo
     assert wire['calls'][-1][1]['headers']['Authorization'] == f'Bearer fixture-secret-{winner}'
 
 
-@pytest.mark.parametrize('condition,status', [('disabled', 400), ('no_model', 500), ('no_key', 500)])
+@pytest.mark.parametrize('condition,status', [('disabled', 400), ('no_model', 400), ('no_key', 400)])
 def test_unavailable_caption_configuration_never_calls_provider(caption_app, monkeypatch, condition, status):
     create, wire = caption_app
     if condition == 'no_model':
@@ -134,8 +134,10 @@ def test_dimension_only_metadata_allows_generation_and_saved_caption_skips_it(ca
     assert len(wire['calls']) == 1
 
 
-@pytest.mark.parametrize('failure', ['timeout', 'http_error', 'empty', 'empty_object', 'html'])
-def test_generation_failure_does_not_overwrite_existing_metadata(caption_app, tmp_path, failure):
+@pytest.mark.parametrize('failure,status', [
+    ('timeout', 502), ('http_error', 502), ('empty', 502), ('empty_object', 502), ('html', 400),
+])
+def test_generation_failure_does_not_overwrite_existing_metadata(caption_app, tmp_path, failure, status):
     create, wire = caption_app
     client = create()
     if failure == 'timeout':
@@ -149,5 +151,9 @@ def test_generation_failure_does_not_overwrite_existing_metadata(caption_app, tm
     ImageMetadataStore(path).set('@default/photo.jpg', {'title': 'keep', 'tags': ['saved'], 'media_meta': {'width': 120}})
     before = path.read_bytes()
     response = client.post('/api/image/metadata', json={'uri': 'photo.jpg', 'force': True})
-    assert response.status_code == 500 and not response.get_json()['success']
+    payload = response.get_json()
+    assert response.status_code == status and not payload['success']
+    # Provider detail (which can carry masked keys or internal base URLs) stays in the
+    # server log; the browser only gets a stable, translated message.
+    assert payload['error'] and 'provider timed out' not in payload['error']
     assert path.read_bytes() == before

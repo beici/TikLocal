@@ -3,6 +3,7 @@ import json
 import random
 import subprocess as sp
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -246,6 +247,17 @@ class RadioService:
         metadata = self._probe_audio_metadata(path)
         self._metadata_cache[cache_key] = (mtime, metadata)
         return metadata
+
+    def metadata_for_many(self, paths: list[Path]) -> list[AudioMetadata]:
+        """Resolve metadata for a batch; cold cache entries are probed concurrently.
+
+        Probing one by one made the radio page wait for a full ffprobe round trip per
+        track (200 tracks ≈ seconds) whenever the process had just started.
+        """
+        if len(paths) <= 1:
+            return [self.metadata_for(path) for path in paths]
+        with ThreadPoolExecutor(max_workers=min(8, len(paths)), thread_name_prefix="radio-probe") as pool:
+            return list(pool.map(self.metadata_for, paths))
 
     def _probe_audio_metadata(self, path: Path) -> AudioMetadata:
         # Prefer the bundled/resolved binary; a system ffprobe that the resolver

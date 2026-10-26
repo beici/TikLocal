@@ -108,9 +108,14 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
 
     def purge(entry_id):
         uri = trash_service.purge(entry_id)
-        for candidate in library_service.legacy_candidates(uri):
-            download_manager.delete_source_for_file(candidate)
-        thumbnail_service.delete_thumbnail(uri)
+        try:
+            for candidate in library_service.legacy_candidates(uri):
+                download_manager.delete_source_for_file(candidate)
+            thumbnail_service.delete_thumbnail(uri)
+        except OSError:
+            # The trashed file is already gone; the derived cleanup is best effort and
+            # must not turn a successful purge into an error response.
+            pass
 
     def purge_expired():
         for entry_id in trash_service.expired():
@@ -167,14 +172,29 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             purge(entry_id)
         except KeyError:
             return {'error': t('detail.error.not_in_trash')}, 404
+        except OSError:
+            # A trashed file still open elsewhere (Windows) is a conflict, not a 500.
+            return {'error': t('detail.error.trash_purge_failed')}, 409
         return {'ok': True}
 
     @app.route('/api/trash', methods=['DELETE'])
     def api_trash_empty():
         items = trash_service.entries()
+        purged = 0
+        failed = 0
         for item in items:
-            purge(item['id'])
-        return {'purged': len(items)}
+            try:
+                purge(item['id'])
+                purged += 1
+            except KeyError:
+                continue
+            except OSError:
+                # One locked file must not abort the whole purge.
+                failed += 1
+        result = {'purged': purged}
+        if failed:
+            result['failed'] = failed
+        return result
 
     @app.route("/delete", methods=['POST', 'GET'])
     def delete_confirm_legacy():
@@ -232,8 +252,18 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
 
         payload = json_body()
         ts = payload.get('time')
+        timestamp = None
+        if ts is not None:
+            try:
+                timestamp = float(ts)
+            except (TypeError, ValueError):
+                return {'success': False, 'error': t('detail.error.invalid_time')}, 400
+            # Reject NaN/inf/negative before ffmpeg sees them: it used to fail deep in
+            # the pipeline and surface as an opaque 500.
+            if not (0 <= timestamp < 10 ** 9):
+                return {'success': False, 'error': t('detail.error.invalid_time')}, 400
 
-        success = thumbnail_service.generate_thumbnail(name, timestamp=float(ts) if ts is not None else None)
+        success = thumbnail_service.generate_thumbnail(name, timestamp=timestamp)
 
         if success:
              return {'success': True, 'url': f"{media_urls(name)['thumb_url']}&v={int(datetime.datetime.now().timestamp())}"}

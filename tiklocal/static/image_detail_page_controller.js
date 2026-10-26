@@ -379,7 +379,8 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Keyboard navigation.
   document.addEventListener('keydown', (e) => {
-    if (e.target.closest('input, textarea, select') || !promptModal.classList.contains('hidden')) return;
+    // e.target is the document itself when nothing has focus: closest() would throw.
+    if (!(e.target instanceof Element) || e.target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') || !promptModal.classList.contains('hidden')) return;
     if (fullscreenModal.classList.contains('hidden')) {
       switch(e.key) {
         case ' ':

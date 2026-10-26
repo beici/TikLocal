@@ -17,16 +17,22 @@ class ImageMetadataStore:
             data = json.loads(self.store_path.read_text(encoding='utf-8'))
         except FileNotFoundError:
             return {}
+        except json.JSONDecodeError:
+            # Caption metadata is a derived cache: a truncated file only means the
+            # entries get regenerated, so a read must not surface as a 500.
+            return {}
         if not isinstance(data, dict):
             raise ValueError('Invalid media metadata file format')
         return data
 
     def get(self, key: str) -> dict[str, Any] | None:
-        return self._load().get(key)
+        with self._lock:
+            return self._load().get(key)
 
     def get_many(self, keys) -> dict[str, dict]:
-        data = self._load()
-        return {key: data[key] for key in keys if key in data}
+        with self._lock:
+            data = self._load()
+            return {key: data[key] for key in keys if key in data}
 
     def set(self, key: str, value: dict[str, Any], overwrite: bool = True) -> tuple[dict[str, Any], bool]:
         with self._lock:

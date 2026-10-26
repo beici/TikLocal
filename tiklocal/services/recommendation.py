@@ -8,14 +8,27 @@ from tiklocal.services.favorites import FavoriteService
 # Media this old, and not shown for as long, counts as forgotten.
 FORGOTTEN_DAYS = 180
 
+# Beyond this many picks the O(picks * pool) diversity reshuffle stops paying off; the
+# remaining items follow one seed-stable weighted ordering instead.
+DIVERSITY_PICKS = 240
+
 
 def _parse_shown_at(value: object) -> datetime.datetime | None:
+    """Parse a stored timestamp into naive local time.
+
+    Impressions are written as UTC ISO strings; callers compare them against
+    ``datetime.now()`` (naive local), so the offset must be applied here instead
+    of being dropped, otherwise the comparison shifts by the UTC offset.
+    """
     if not value:
         return None
     try:
-        return datetime.datetime.fromisoformat(str(value).replace('Z', '+00:00')).replace(tzinfo=None)
+        parsed = datetime.datetime.fromisoformat(str(value).replace('Z', '+00:00'))
     except (TypeError, ValueError):
         return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    return parsed
 
 
 def shown_within(profile: dict | None, days: float, now: datetime.datetime) -> bool:
@@ -93,7 +106,12 @@ class RecommendService:
         result: list[str] = []
         recent_dimensions: list[dict[str, str]] = []
         pool = weighted_pool[:]
-        while pool and len(result) < limit:
+        # The interactive reshuffle below is O(picks * pool): a deep feed page asking for
+        # thousands of items froze the worker for seconds. Keep full fidelity for normal
+        # page sizes and let the tail follow a seed-stable weighted order, so successive
+        # pages of the same seed still line up.
+        picks_target = min(limit, len(pool), DIVERSITY_PICKS)
+        while pool and len(result) < picks_target:
             if len(result) % 4 == 3:
                 least_seen = sorted(pool, key=lambda item: item['impressions'])
                 exploration_pool = least_seen[:max(1, len(least_seen) // 3)]
@@ -121,6 +139,18 @@ class RecommendService:
             result.append(chosen['uri'])
             recent_dimensions = (recent_dimensions + [chosen['dimensions']])[-3:]
             pool.remove(chosen)
+
+        if len(result) < min(limit, len(weighted_pool)):
+            tail_rng = random.Random(f"{seed}:tail") if seed else random
+            keyed = [
+                (tail_rng.random() ** (1.0 / max(item['weight'], 1e-9)), item)
+                for item in pool
+            ]
+            keyed.sort(key=lambda pair: pair[0], reverse=True)
+            for _, item in keyed:
+                if len(result) >= min(limit, len(weighted_pool)):
+                    break
+                result.append(item['uri'])
         return result
 
     def get_forgotten_selection(self, file_type='video', limit=20, seed=None, source_id='') -> list[str]:

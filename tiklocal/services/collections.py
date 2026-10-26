@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import datetime
 import json
-import os
 import threading
 import uuid
 from pathlib import Path
 from typing import Any
 
 from tiklocal.i18n import t
+from tiklocal.services.json_storage import write_json_atomic
+
+
+class CollectionStoreCorrupt(RuntimeError):
+    """The collections file exists but cannot be parsed.
+
+    Reads degrade to an empty list so pages still render, but mutations must fail
+    instead of overwriting the unreadable file with a fresh, empty payload.
+    """
 
 
 COLLECTIONS_VERSION = 1
@@ -54,22 +62,34 @@ class CollectionStore:
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
-    def _read(self) -> dict[str, Any]:
+    def _empty_payload(self) -> dict[str, Any]:
+        return {
+            "version": COLLECTIONS_VERSION,
+            "updated_at": _utc_now_iso(),
+            "collections": [],
+        }
+
+    def _quarantine(self) -> None:
+        """Keep one copy of the unreadable file so a later write cannot erase it."""
+        backup = self.store_path.with_name(self.store_path.name + ".corrupt")
+        if backup.exists():
+            return
+        try:
+            backup.write_bytes(self.store_path.read_bytes())
+        except OSError:
+            pass
+
+    def _read(self, *, strict: bool = False) -> dict[str, Any]:
         if not self.store_path.exists():
-            return {
-                "version": COLLECTIONS_VERSION,
-                "updated_at": _utc_now_iso(),
-                "collections": [],
-            }
+            return self._empty_payload()
         try:
             with self.store_path.open("r", encoding="utf-8") as f:
                 payload = json.load(f)
-        except Exception:
-            return {
-                "version": COLLECTIONS_VERSION,
-                "updated_at": _utc_now_iso(),
-                "collections": [],
-            }
+        except Exception as exc:
+            self._quarantine()
+            if strict:
+                raise CollectionStoreCorrupt(str(self.store_path)) from exc
+            return self._empty_payload()
         return self._normalize_payload(payload)
 
     def _normalize_payload(self, payload: Any) -> dict[str, Any]:
@@ -135,15 +155,22 @@ class CollectionStore:
         }
 
     def _write(self, payload: dict[str, Any]) -> None:
-        tmp_path = self.store_path.with_name(self.store_path.name + ".tmp")
-        with tmp_path.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, self.store_path)
+        write_json_atomic(self.store_path, payload)
 
     def list(self) -> list[dict[str, Any]]:
         with self._lock:
             payload = self._read()
             return [self._collection_copy(item, include_items=False) for item in payload["collections"]]
+
+    def list_with_items(self) -> list[dict[str, Any]]:
+        """Every collection including its items, parsed once.
+
+        Callers that need preview items must use this instead of calling
+        ``list_item_uris`` per collection, which re-reads the whole file each time.
+        """
+        with self._lock:
+            payload = self._read()
+            return [self._collection_copy(item, include_items=True) for item in payload["collections"]]
 
     def get(self, collection_id: str) -> dict[str, Any] | None:
         key = _normalize_text(collection_id)
@@ -174,7 +201,7 @@ class CollectionStore:
             "items": [],
         }
         with self._lock:
-            payload = self._read()
+            payload = self._read(strict=True)
             payload["collections"].insert(0, item)
             payload["updated_at"] = now
             self._write(payload)
@@ -193,7 +220,7 @@ class CollectionStore:
             return None
 
         with self._lock:
-            payload = self._read()
+            payload = self._read(strict=True)
             found = self._find_collection(payload["collections"], key)
             if not found:
                 return None
@@ -229,7 +256,7 @@ class CollectionStore:
         if not key:
             return False
         with self._lock:
-            payload = self._read()
+            payload = self._read(strict=True)
             collections = payload["collections"]
             next_collections = [item for item in collections if item.get("id") != key]
             if len(next_collections) == len(collections):
@@ -248,7 +275,7 @@ class CollectionStore:
             return self.get(collection_id)
 
         with self._lock:
-            payload = self._read()
+            payload = self._read(strict=True)
             found = self._find_collection(payload["collections"], key)
             if not found:
                 return None
@@ -281,7 +308,7 @@ class CollectionStore:
             return self.get(collection_id)
 
         with self._lock:
-            payload = self._read()
+            payload = self._read(strict=True)
             found = self._find_collection(payload["collections"], key)
             if not found:
                 return None

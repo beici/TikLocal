@@ -53,6 +53,10 @@ DEFAULT_VISION_CONFIG = {
 }
 
 
+class CaptionConfigError(RuntimeError):
+    """User-fixable vision configuration problem (maps to 400, not 500)."""
+
+
 def get_default_prompt_config() -> dict[str, Any]:
     return dict(DEFAULT_PROMPT_CONFIG)
 
@@ -315,11 +319,11 @@ class CaptionService:
         self.base_url = base_url
         self.api_key = api_key
         if not self.api_key:
-            raise RuntimeError(t('image.error.api_key_missing'))
+            raise CaptionConfigError(t('image.error.api_key_missing'))
         if not self.model:
-            raise RuntimeError(t('image.error.model_missing'))
+            raise CaptionConfigError(t('image.error.model_missing'))
         if self.base_url and "openrouter.ai" in self.base_url and "/api/v1" not in self.base_url:
-            raise RuntimeError(t('image.error.base_url_path'))
+            raise CaptionConfigError(t('image.error.base_url_path'))
 
     def generate(
         self,
@@ -335,11 +339,11 @@ class CaptionService:
         system_prompt = str(effective_prompt["system_prompt"])
         user_prompt = self._render_user_prompt(str(effective_prompt["user_prompt"]), tags_limit)
         if not system_prompt.strip() or not user_prompt.strip():
-            raise RuntimeError(t('image.error.prompt_not_configured'))
+            raise CaptionConfigError(t('image.error.prompt_not_configured'))
 
         text = self._request_chat_completion(system_prompt, user_prompt, data_url, temperature)
         if self._looks_like_html(text):
-            raise RuntimeError(t('image.error.html_response'))
+            raise CaptionConfigError(t('image.error.html_response'))
 
         parsed = self._parse_output(text, tags_limit)
         if not parsed['title'] and not parsed['tags']:

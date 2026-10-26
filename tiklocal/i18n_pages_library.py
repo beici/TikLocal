@@ -99,6 +99,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'library.collection.none': '不在任何合集中',
         'library.collection.name_placeholder': '新合集名称',
         'library.collection.not_found': '合集不存在',
+        'library.collection.store_corrupt': '合集数据文件无法读取，已保留备份且本次修改未生效。',
         # ---- library: multi-select organize bar ----
         'library.organize.toggle': '整理',
         'library.organize.selected': '已选 {n} 项',
@@ -294,6 +295,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'library.collection.none': 'Not in any collections',
         'library.collection.name_placeholder': 'New collection name',
         'library.collection.not_found': 'Collection not found',
+        'library.collection.store_corrupt': 'The collections file cannot be read. A backup was kept and nothing was changed.',
         # ---- library: multi-select organize bar ----
         'library.organize.toggle': 'Organize',
         'library.organize.selected': '{n} selected',

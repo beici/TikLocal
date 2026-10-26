@@ -8,7 +8,7 @@ from urllib.parse import quote
 from flask import render_template, request
 
 from tiklocal.i18n import t
-from tiklocal.services.collections import normalize_collection_mutation_uris
+from tiklocal.services.collections import CollectionStoreCorrupt, normalize_collection_mutation_uris
 from tiklocal.services.library import IMAGE_EXTENSIONS
 from tiklocal.services.media_naming import blogger_display_name
 from tiklocal.web.media_payloads import build_feed_media_item, media_urls, serialize_library_item
@@ -19,6 +19,16 @@ def register_library_routes(
     app, *, library_service, media_index, library_indexer, favorite_service,
     collection_store, activity_store, media_search_available=None,
 ):
+    @app.errorhandler(CollectionStoreCorrupt)
+    def handle_collections_corrupt(exc):
+        # Refuse to overwrite a collections file we cannot read; the store keeps a
+        # .corrupt copy next to it so the user can recover the original data.
+        app.logger.error('Collections file is unreadable: %s', exc)
+        message = t('library.collection.store_corrupt')
+        if request.path.startswith('/api/'):
+            return {'success': False, 'error': message}, 503
+        return message, 503
+
     def _read_page_options(scope: str = 'all') -> dict:
         mode = str(request.args.get('mode', 'all')).strip()
         if scope != 'all' or mode not in {'all', 'image_random', 'video_latest', 'big_files'}:
@@ -110,7 +120,12 @@ def register_library_routes(
     def _serialize_collection_summary(collection: dict) -> dict:
         collection_id = str(collection.get('id') or '')
         cover_uri = str(collection.get('cover_uri') or '').strip()
-        candidates = [cover_uri, *collection_store.list_item_uris(collection_id, newest_first=True)]
+        stored_items = collection.get('items')
+        if isinstance(stored_items, list) and stored_items:
+            item_uris = [str(entry.get('uri') or '') for entry in reversed(stored_items) if isinstance(entry, dict)]
+        else:
+            item_uris = collection_store.list_item_uris(collection_id, newest_first=True)
+        candidates = [cover_uri, *item_uris]
         previews = []
         seen = set()
         for candidate in candidates:
@@ -353,7 +368,7 @@ def register_library_routes(
     @app.route('/api/collections', methods=['GET', 'POST'])
     def api_collections():
         if request.method == 'GET':
-            collections = collection_store.list()
+            collections = collection_store.list_with_items()
             items = [_serialize_collection_summary(item) for item in collections]
             return {'success': True, 'data': {'items': items}}
 

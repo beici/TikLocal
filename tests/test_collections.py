@@ -134,3 +134,18 @@ def test_favorite_view_accepts_collection_filter(client):
     assert client.get('/favorite?collection=missing-id').status_code == 200
     assert client.get('/favorite?collection=').status_code == 200
     assert client.get('/library?view=explore').status_code == 200
+
+def test_corrupt_collections_file_blocks_writes_and_keeps_a_backup(client):
+    from tiklocal.paths import get_collections_path
+
+    store_path = get_collections_path()
+    store_path.write_text('{ this is not json', encoding='utf-8')
+
+    # Reads degrade to an empty list so the page still renders.
+    assert client.get('/api/collections').get_json()['data']['items'] == []
+
+    response = client.post('/api/collections', json={'name': 'Trip'})
+    assert response.status_code == 503
+    assert 'backup' in response.get_json()['error'].lower() or '备份' in response.get_json()['error']
+    assert store_path.read_text(encoding='utf-8') == '{ this is not json'
+    assert store_path.with_name(store_path.name + '.corrupt').exists()

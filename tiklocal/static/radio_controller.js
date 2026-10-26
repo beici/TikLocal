@@ -210,10 +210,12 @@
       }
     });
     document.addEventListener('keydown', function (event) {
-      if (event.key === 'Escape') {
-        closeRoomMenu();
-        els.btnRoom.focus();
-      }
+      if (event.key !== 'Escape') return;
+      // Escape anywhere on the page used to yank focus to the room button; only act
+      // when the picker is actually open.
+      if (!els.roomMenu || els.roomMenu.hidden) return;
+      closeRoomMenu();
+      els.btnRoom.focus();
     });
     els.progressBar.addEventListener('input', function (event) {
       var duration = playableDuration();

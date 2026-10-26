@@ -232,8 +232,15 @@ Examples:
     host = args.host or os.environ.get('TIKLOCAL_HOST') or config.get('host', '0.0.0.0')
     if any(config.get(key) for key in ('https', 'tls_cert', 'tls_key', 'hostnames')):
         parser.error('Built-in HTTPS has been removed. Delete the old TLS settings and provide HTTPS through an external reverse proxy.')
-    configured_port = int(os.environ.get('TIKLOCAL_PORT', 0)) or config.get('port')
-    port = args.port or configured_port or 8000
+    try:
+        env_port = int(os.environ.get('TIKLOCAL_PORT') or 0)
+    except ValueError:
+        parser.error('TIKLOCAL_PORT must be an integer')
+    configured_port = env_port or config.get('port')
+    try:
+        port = int(args.port or configured_port or 8000)
+    except (TypeError, ValueError):
+        parser.error('The server port must be an integer')
     media_sources = normalize_media_sources(config, getattr(args, 'media_source', None), media_root=media_root)
     download_source = args.download_source or config.get('download_source') or 'default'
     vision_config = config.get('vision') or config.get('vision_config') or None

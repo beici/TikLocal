@@ -164,7 +164,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Keyboard shortcuts.
   document.addEventListener('keydown', (e) => {
-    if (e.target.tagName.toLowerCase() === 'input') return;
+    // Keydown can target the document (no focused element) where tagName is undefined,
+    // and Space on a focused button must activate the button, not toggle playback.
+    const target = e.target instanceof Element ? e.target : null;
+    if (target && target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return;
+    if (target && target.closest('button, a[href], summary') && e.key === ' ') return;
     
     switch(e.key) {
       case 'Escape':

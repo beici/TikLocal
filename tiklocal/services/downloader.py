@@ -1,5 +1,6 @@
 import json
 import os
+import queue
 from collections import deque
 import shutil
 import signal
@@ -53,6 +54,9 @@ DOWNLOAD_ENGINES = {"yt-dlp", "gallery-dl", "tiktok-downloader"}
 USER_DOWNLOAD_ENGINES = {"yt-dlp", "gallery-dl"}
 DEFAULT_DOWNLOAD_ENGINE = "yt-dlp"
 DIRECT_DOWNLOAD_TIMEOUT_SEC = 30
+# A tool that stalls silently (no stdout for hours) used to block the single worker
+# forever; the queue then accepted jobs that never ran. This is the wall-clock cap.
+DEFAULT_JOB_TIMEOUT_SEC = 3600
 DIRECT_DOWNLOAD_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -337,6 +341,8 @@ class DownloadManager:
         self._started = False
         self._closed = False
         self._pending: deque[str] = deque()
+        # job_id -> monotonic time of the last progress persist (see _update_progress).
+        self._progress_persist_at: dict[str, float] = {}
 
         self._jobs: dict[str, dict[str, Any]] = {}
         self._job_order: list[str] = []
@@ -462,6 +468,11 @@ class DownloadManager:
         if cookie_error:
             raise RuntimeError(cookie_error)
 
+        # Probing the engine spawns a subprocess (and can hit the 5s timeout when the
+        # tool is missing); doing it under the queue lock stalled every other queue
+        # operation for that long, including the status polling endpoint.
+        engine_version = probe_binary(engine)[1]
+
         with self._lock:
             if not self._started or self._closed:
                 raise RuntimeError('The download manager has not started or is closed.')
@@ -475,7 +486,7 @@ class DownloadManager:
                 "url": url,
                 "save_mode": save_mode,
                 "engine": engine,
-                "engine_version": probe_binary(engine)[1],
+                "engine_version": engine_version,
                 "status": "queued",
                 "progress_percent": None,
                 "eta_sec": None,
@@ -1025,7 +1036,12 @@ class DownloadManager:
                     percent = ((index - 1) + max(0.0, min(fraction, 1.0))) * 100.0 / total
                     self._update_progress(job_id, {"percent": round(percent, 1)})
 
-                error = self._direct_fetch(url, target, on_progress)
+                error = self._direct_fetch(
+                    url,
+                    target,
+                    on_progress,
+                    cancelled=(lambda: bool(cancel_event and cancel_event.is_set())),
+                )
                 if error:
                     return 1, error, []
                 downloaded.append(target)
@@ -1038,7 +1054,13 @@ class DownloadManager:
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    def _direct_fetch(self, url: str, target: Path, on_progress: Callable[[float], None] | None = None) -> str | None:
+    def _direct_fetch(
+        self,
+        url: str,
+        target: Path,
+        on_progress: Callable[[float], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> str | None:
         """Stream one media file to ``target``; return an error message or None."""
         # The URL comes from a sidecar response, so a rewritten payload must not turn
         # the downloader into a local-file reader (file://) or an SSRF probe.
@@ -1058,6 +1080,12 @@ class DownloadManager:
                 total_bytes = int(response.headers.get("Content-Length") or 0)
                 received = 0
                 while True:
+                    # Cancellation used to be checked only between files, so a slow
+                    # multi-file post kept streaming for minutes after the user hit
+                    # cancel. Check per chunk: it is a flag read, far cheaper than a read.
+                    if cancelled and cancelled():
+                        tmp_path.unlink(missing_ok=True)
+                        return "Canceled."
                     chunk = response.read(64 * 1024)
                     if not chunk:
                         break
@@ -1069,9 +1097,14 @@ class DownloadManager:
         except urllib.error.HTTPError as exc:
             tmp_path.unlink(missing_ok=True)
             return f"Media download failed with HTTP {exc.code}."
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
             tmp_path.unlink(missing_ok=True)
             return f"Unable to reach the media host: {exc}"
+        except OSError as exc:
+            # Disk-full / permission errors are local, not upstream: reporting them as
+            # an unreachable host sent users looking at the network.
+            tmp_path.unlink(missing_ok=True)
+            return f"Unable to write the downloaded file: {exc.strerror or exc}"
         if on_progress:
             on_progress(1.0)
         return None
@@ -1083,22 +1116,57 @@ class DownloadManager:
         return None, None
 
     def _run_tool(self, job_id: str, cmd: list[str], on_line: Callable[[str], None]) -> tuple[int, str]:
-        """Run a download tool to completion, keeping its last error line."""
+        """Run a download tool to completion, keeping its last error line.
+
+        Stdout is pumped by a helper thread so the main loop can enforce a wall-clock
+        deadline and react to cancellation even while the tool prints nothing.
+        """
         process = self._start_process(job_id, cmd)
         cancel_event = self._cancel_events.get(job_id)
+        timeout = float(self._config.get("job_timeout_sec") or DEFAULT_JOB_TIMEOUT_SEC)
+        deadline = time.monotonic() + max(1.0, timeout)
         error_message = ""
-        if process.stdout is not None:
-            for raw_line in process.stdout:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                on_line(line)
-                error_message = error_line(line) or error_message
+        lines: queue.Queue[str | None] = queue.Queue()
+
+        def pump() -> None:
+            if process.stdout is None:
+                lines.put(None)
+                return
+            try:
+                for raw_line in process.stdout:
+                    lines.put(raw_line.strip())
+            finally:
+                lines.put(None)
+
+        threading.Thread(target=pump, name=f"download-pump-{job_id}", daemon=True).start()
+
+        timed_out = False
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                line = lines.get(timeout=min(remaining, 1.0))
+            except queue.Empty:
                 if cancel_event and cancel_event.is_set():
                     self._terminate_process(process)
+                continue
+            if line is None:
+                break
+            if line:
+                on_line(line)
+                error_message = error_line(line) or error_message
+            if cancel_event and cancel_event.is_set():
+                self._terminate_process(process)
+
+        if timed_out:
+            self._terminate_process(process)
+            error_message = f"Download exceeded the {int(timeout)}s time limit."
         return process.wait(), error_message
 
     def _update_progress(self, job_id: str, progress: dict[str, Any]) -> None:
+        now = time.monotonic()
         with self._lock:
             job = self._jobs.get(job_id)
             if not job or job["status"] != "running":
@@ -1109,6 +1177,12 @@ class DownloadManager:
             if progress.get("eta_sec") is not None:
                 job["eta_sec"] = progress["eta_sec"]
 
+            # yt-dlp emits progress dozens of times per second; rewriting the whole job
+            # list each tick kept the disk busy for the entire download. Throttle to one
+            # write per second per job (in-memory fields still update on every tick).
+            if now - self._progress_persist_at.get(job_id, 0.0) < 1.0:
+                return
+            self._progress_persist_at[job_id] = now
             self._persist_locked()
 
     def _persist_locked(self) -> None:

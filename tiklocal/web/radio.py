@@ -80,9 +80,9 @@ def register_radio_routes(app, library_service, radio_service, thumbnail_service
         audios = radio_service.collect_candidates()
         total = len(audios)
         page = audios[offset:offset + limit]
+        metadata_list = radio_service.metadata_for_many([track.path for track in page])
         items = []
-        for track in page:
-            metadata = radio_service.metadata_for(track.path)
+        for track, metadata in zip(page, metadata_list):
             items.append({
                 **_serialize_radio_track(track),
                 'title': metadata.title or track.title,

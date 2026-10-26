@@ -1,6 +1,7 @@
 from flask import request
 
-from tiklocal.services.captions import generate_caption, validate_prompt_config
+from tiklocal.i18n import t
+from tiklocal.services.captions import CaptionConfigError, generate_caption, validate_prompt_config
 from tiklocal.web import json_body
 
 
@@ -44,7 +45,7 @@ def register_caption_routes(app, library, metadata, settings):
         payload = json_body()
         uri = request.args.get('uri') if request.method == 'GET' else payload.get('uri')
         if not uri:
-            return {'success': False, 'error': 'Missing uri'}, 400
+            return {'success': False, 'error': t('image.error.missing_uri')}, 400
         uri = library.canonicalize_uri(uri)
         try:
             keys = library.legacy_candidates(uri)
@@ -64,14 +65,20 @@ def register_caption_routes(app, library, metadata, settings):
             return {'success': True, 'data': existing, 'skipped': True}
         target = library.resolve_path(uri)
         if not target or not target.is_file():
-            return {'success': False, 'error': 'File not found'}, 404
+            return {'success': False, 'error': t('image.error.file_not_found')}, 404
 
         resolved = settings.resolve(override)['vision']
         if not resolved['effective']['enabled']:
-            return {'success': False, 'error': 'Image recognition is disabled. Set vision.enabled in the configuration file.'}, 400
+            return {'success': False, 'error': t('image.error.disabled')}, 400
         try:
             result = generate_caption(target, resolved)
             merged = metadata.update_many({uri: result}, defaults={uri: existing or {}})[uri]
             return {'success': True, 'data': merged}
-        except Exception as error:
-            return {'success': False, 'error': str(error)}, 500
+        except CaptionConfigError as error:
+            # Missing api_key/model/prompt is a configuration problem the user can fix.
+            return {'success': False, 'error': str(error)}, 400
+        except Exception:
+            # Provider failures can embed masked keys or internal base URLs: log the
+            # detail server-side and hand the browser a stable message.
+            app.logger.exception('image metadata generation failed')
+            return {'success': False, 'error': t('image.error.provider_failed')}, 502

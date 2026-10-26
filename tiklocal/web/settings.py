@@ -26,17 +26,28 @@ def register_settings_routes(app, media_index, favorite_service, thumbnail_servi
             return {'success': False, 'error': str(exc)}, 500
 
     def library_stats() -> dict:
-        index = media_index.stats()
-        cache = thumbnail_service.cache_stats()
+        # Settings is the only page that can clear the thumbnail cache or repair the
+        # author sync config, so a corrupt favorites.json (or a cache clear racing the
+        # scan) must degrade to zeros instead of taking the whole page down.
+        def safe(call, fallback):
+            try:
+                return call()
+            except Exception:
+                app.logger.exception('library stats unavailable')
+                return fallback
+
+        index = safe(media_index.stats, {}) or {}
+        cache = safe(thumbnail_service.cache_stats, {}) or {}
+        favorites = safe(favorite_service.load, []) or []
         return {
-            'videos': index['videos'],
-            'images': index['images'],
-            'audios': index['audios'],
-            'indexed_total': index['total'],
-            'last_synced_at': index['last_synced_at'],
-            'favorites': len(favorite_service.load()),
-            'cache_count': cache['count'],
-            'cache_mb': cache['size_mb'],
+            'videos': index.get('videos', 0),
+            'images': index.get('images', 0),
+            'audios': index.get('audios', 0),
+            'indexed_total': index.get('total', 0),
+            'last_synced_at': index.get('last_synced_at'),
+            'favorites': len(favorites) if isinstance(favorites, list) else 0,
+            'cache_count': cache.get('count', 0),
+            'cache_mb': cache.get('size_mb', 0),
         }
 
     @app.route('/api/library/stats')

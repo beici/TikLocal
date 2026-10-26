@@ -99,10 +99,10 @@ def local_work_names(media_index, source_id: str) -> list[str]:
     it has to see album members and live-post parts too, not just the covers the
     grid renders.
     """
-    try:
-        records = media_index.records(source_id=source_id, album_covers_only=False)
-    except Exception:
-        return []
+    # No blanket except here: treating an index failure as "no local works" made
+    # 更新最新视频 queue up to 100 already-downloaded videos again. Let it reach the
+    # route's 502 handler instead.
+    records = media_index.records(source_id=source_id, album_covers_only=False)
     return [str(record.get('name') or '') for record in records or () if record.get('name')]
 
 
