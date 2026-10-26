@@ -184,3 +184,29 @@ def test_login_is_rate_limited_after_repeated_failures(authenticated_app):
     blocked = _login(client, password='incorrect-password')
     assert blocked.status_code == 429
     assert 0 < int(blocked.headers['Retry-After']) <= 300
+
+
+def test_login_returns_to_the_requested_page_and_drops_external_targets(authenticated_app):
+    app, _ = authenticated_app
+    client = app.test_client()
+
+    landed = _login(client, next_url='/flow?mode=album')
+    assert landed.status_code == 302
+    assert landed.headers['Location'] == '/flow?mode=album'
+
+    stranger = app.test_client()
+    hostile = _login(stranger, next_url='//evil.example/steal')
+    assert hostile.status_code == 302
+    assert hostile.headers['Location'] == '/'
+
+
+def test_unsafe_api_request_without_session_is_401_not_403(authenticated_app):
+    # require_auth must answer 401 before it inspects the CSRF token; otherwise
+    # the client cannot tell "please log in" from "your token went stale".
+    app, _ = authenticated_app
+    client = app.test_client()
+
+    response = client.post('/api/activity', json={'events': []})
+
+    assert response.status_code == 401
+    assert response.get_json()['success'] is False

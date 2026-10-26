@@ -82,6 +82,8 @@
   var artLoadToken = 0;
   var trackPlayReportedFor = '';
   var trackExitReportedFor = '';
+  var consecutivePlayErrors = 0;
+  var PLAY_ERROR_LIMIT = 3;
   var trackInfoTimers = [];
   var pendingTrackTitle = '';
   var pendingTrackMeta = '';
@@ -147,11 +149,21 @@
       isPlaying = false;
       updatePlayIcon();
       updateMotion();
-      reportPlaybackExit('error');
+      var code = audio.error ? audio.error.code : 0;
+      // 只有解码失败 / 格式不支持才是「这首曲子有问题」，网络中断不该扣推荐权重。
+      if (consecutivePlayErrors === 0 && (code === 3 || code === 4)) {
+        reportPlaybackExit('error');
+      }
+      consecutivePlayErrors += 1;
       resetEncore();
+      if (consecutivePlayErrors >= PLAY_ERROR_LIMIT) {
+        showLoadError(new Error('连续 ' + consecutivePlayErrors + ' 首无法播放'));
+        return;
+      }
       playNext(true);
     });
     audio.addEventListener('play', function () {
+      consecutivePlayErrors = 0;
       isPlaying = true;
       setBuffering(false);
       reportTrackPlay();
@@ -343,9 +355,10 @@
     if (!track) return Promise.resolve();
     prepareTrack(track);
     rememberRecent(track.name);
-    return audio.play().catch(function () {
+    return audio.play().catch(function (error) {
+      // 切歌打断（AbortError）不是失败，更不能记到刚选中的那首头上。
+      if (error && error.name === 'AbortError') return;
       isPlaying = false;
-      reportPlaybackExit('error');
       updatePlayIcon();
     });
   }
@@ -762,7 +775,8 @@
   }
 
   function isDarkTheme() {
-    return document.body.getAttribute('data-theme') === 'dark';
+    var scope = document.body.getAttribute('data-theme') || document.documentElement.getAttribute('data-theme');
+    return scope === 'dark';
   }
 
   function applyAtmosphereSource(sourceKey) {
@@ -852,7 +866,15 @@
   }
 
   function updateMediaSession() {
-    if (!('mediaSession' in navigator) || !currentTrack) return;
+    if (!('mediaSession' in navigator)) return;
+    if (!currentTrack) {
+      // 队列耗尽后别让锁屏面板继续显示上一首、按播放键却毫无反应。
+      try {
+        navigator.mediaSession.metadata = null;
+        navigator.mediaSession.playbackState = 'none';
+      } catch (error) {}
+      return;
+    }
     navigator.mediaSession.metadata = new MediaMetadata({
       title: currentTrack.title || 'TikLocal Radio',
       artist: currentTrack.artist || getStationName(),

@@ -41,7 +41,7 @@
     {% block extra_head %}{% endblock %}
     <link rel="stylesheet" type="text/css" href="{{ static_asset('app_navigation.css') }}">
   </head>
-  <body data-theme="{{ theme if theme else 'light' }}" data-nav-context="{{ menu or 'default' }}" class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white min-h-screen transition-colors duration-300">
+  <body data-nav-context="{{ menu or 'default' }}" class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white min-h-screen transition-colors duration-300">
     <header class="mobile-app-header {% if menu not in ['flow', 'radio'] %}is-utility-page{% endif %}" aria-label="{{ t('nav.app_navigation') }}">
       {% if menu in ['flow', 'radio'] %}
       <nav class="mobile-mode-switch" aria-label="{{ t('nav.experience_mode') }}">

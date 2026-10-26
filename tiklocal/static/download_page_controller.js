@@ -342,7 +342,12 @@
 
   function renderJobs(jobs, { force = false } = {}) {
     const signature = jobsSignature(jobs);
-    if (!force && signature === lastJobsSignature) return;
+    const hasActiveJobs = jobs.some((job) => ACTIVE_STATUSES.has(job.status));
+    if (!force && signature === lastJobsSignature) {
+      // 载荷没变也要续期：否则排队中/0% 阶段连续两轮相同就会让轮询链永久中断。
+      schedulePolling(hasActiveJobs);
+      return;
+    }
     lastJobsSignature = signature;
 
     const activeJobs = jobs.filter((job) => ACTIVE_STATUSES.has(job.status));
@@ -577,7 +582,7 @@
     return dependencyMeta.tiktok_downloader || null;
   }
 
-  function selectEngine(engine) {
+  function selectEngine(engine, { retry = true } = {}) {
     selectedEngine = ['gallery-dl', 'tiktok-downloader'].includes(engine) ? engine : 'yt-dlp';
     const switchElement = document.getElementById('media-switch');
     switchElement.dataset.value = selectedEngine;
@@ -606,6 +611,10 @@
       }
     }
     alert.hidden = !unavailable;
+    if (unavailable && retry && selectedEngine === 'gallery-dl') {
+      // 首屏 probe 失败过一次就永远判定「组件未就绪」，选到图片引擎时补一次探测。
+      refreshSetup().then(() => selectEngine('gallery-dl', { retry: false }));
+    }
   }
 
   function selectTab(tab) {
@@ -804,6 +813,15 @@
 
     document.getElementById('url-list-queue')?.addEventListener('click', async (event) => {
       const button = event.currentTarget;
+      if (selectedEngine === 'tiktok-downloader') {
+        // 队列接口只创建不带 payload 的任务，博主引擎走这里必然全失败。
+        TikLocalUI.toast(T('download.error.tiktok_queue_unsupported'), 'error');
+        return;
+      }
+      if (selectedEngine === 'gallery-dl' && !dependencyMeta.gallery_dl_available) {
+        TikLocalUI.toast(T('download.error.image_missing'), 'error');
+        return;
+      }
       button.disabled = true;
       try {
         const data = await api('/api/download/urls/queue', {

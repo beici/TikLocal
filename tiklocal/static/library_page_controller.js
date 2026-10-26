@@ -376,6 +376,9 @@
     for (let i = 0; i < items.length; i += 1) {
       appendIndexToWaterfall(i);
     }
+    // 整表重建会丢掉 .is-selected 类，但 selectedNames 还在：不补这一步，整理模式
+    // 会显示「已选 N 项」却没有任何高亮，批量操作作用在看不见的项上。
+    refreshTileSelection();
     feather.replace();
   }
 
@@ -912,6 +915,11 @@
   });
 
   document.addEventListener('keydown', (event) => {
+    // 「加入合集」等弹层里的输入框是 Quick Viewer 的兄弟节点，不挡住会把空格和方向键
+    // 透给下面的查看器：空格被吞、方向键换掉底层媒体，最后写进合集的是另一张图。
+    if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]')) {
+      return;
+    }
     if (event.key === 'Escape' && organizeSheet?.classList.contains('active')) {
       closeOrganizeSheet();
       return;
@@ -1410,6 +1418,9 @@
   }
 
   retryButton.addEventListener('click', async () => {
+    // 时间线视图的重试由 library_timeline_controller.js 自己接管（它标记了 dataset），
+    // 这里只负责网格视图，避免一次点击同时触发两套加载。
+    if (retryButton.dataset.timelineBound === '1') return;
     setLoadingText(T('library.status.reloading'));
     await loadNextPage();
   });

@@ -519,6 +519,7 @@
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     let pager = null;
     let settling = false;
+    let queuedSwipe = 0;
 
     function setPeek(item, visible) {
       if (!item) return;
@@ -576,6 +577,11 @@
         pager = null;
         settling = false;
         if (moving) showItem(index);
+        if (queuedSwipe) {
+          const queuedDir = queuedSwipe;
+          queuedSwipe = 0;
+          if (feedItems[getCurrentIndex() + queuedDir]) slidePage(queuedDir);
+        }
       }, duration);
     }
 
@@ -881,6 +887,13 @@
       if (prevItem.type === 'video') {
         prevItem.el.pause();
         prevItem.el.muted = true;
+      } else {
+        // 相册（image_group）里的子视频建 DOM 时就自动播了，切走必须一起暂停，
+        // 否则后台会有多路视频持续解码/循环播放。
+        prevItem.el.querySelectorAll('video').forEach((video) => {
+          video.pause();
+          video.muted = true;
+        });
       }
     }
 
@@ -1040,7 +1053,8 @@
             media.playsInline = true;
             media.preload = 'metadata';
             if (entry.thumb_url) media.poster = entry.thumb_url;
-            media.play().catch(() => {});
+            // 不在建 DOM 时自动播放：整页元素在加载时就全建好了，那样会让每个相册的
+            // 子视频都在后台解码循环。真正的播放交给 renderImageGroup（可见时才播）。
           } else {
             media.className = 'image-group-media';
             media.src = force
@@ -1071,6 +1085,14 @@
           if (!force && stage.querySelector('.image-group-media') && safeIndex === previousIndex) {
             // Re-showing the child that is already on stage (e.g. when the page
             // slid in); re-rendering it would replay the slide animation.
+            // 但它可能是被 clearPreviousState 暂停过的子视频，回到这一页要从头续播。
+            if (currentItem()?.el === panel) {
+              const staged = stage.querySelector('.image-group-media');
+              if (staged instanceof HTMLVideoElement) {
+                staged.currentTime = 0;
+                staged.play().catch(() => {});
+              }
+            }
             return;
           }
           const direction = Number.isFinite(previousIndex) && safeIndex < previousIndex ? -1 : 1;
@@ -1099,6 +1121,10 @@
           // Live children start playing when they become the visible child of
           // the current item; off-screen groups keep their cover only.
           if (media._liveVideo && currentItem()?.el === panel) playLiveVideo(media._liveVideo);
+          if (media instanceof HTMLVideoElement && currentItem()?.el === panel) {
+            media.currentTime = 0;
+            media.play().catch(() => {});
+          }
           const revealMedia = () => {
             if (media.dataset.groupGeneration !== String(panel._groupGeneration)) return;
             if (outgoing.length && slideMs) {
@@ -1370,8 +1396,13 @@
         clearTimeout(flowLoadingTimer);
         flowLoadingTimer = null;
         const reachedEnd = getCurrentIndex() >= feedItems.length - 1;
-        if (isInitialLoad || reachedEnd) {
+        if (isInitialLoad || feedItems.length === 0) {
+          // 一条都没有时才用全屏错误页（它是 fixed 覆盖层，会吃掉所有手势）。
           showFlowStatus('error', T('flow.state.error_title'), T('flow.state.error_detail'));
+        } else if (reachedEnd) {
+          // 已经加载了几十条，页尾这一页失败不该把用户锁死在错误页里；
+          // 保留手势可用，用户再上滑一次就会重新触发 loadFeed（即重试）。
+          TikLocalUI.toast(T('flow.state.error_title'), 'error');
         }
         return null;
       }
@@ -1659,8 +1690,35 @@
       return last[0] > first[0] ? (last[1] - first[1]) / (last[0] - first[0]) : 0;
     }
 
+    // 翻页动画期间（settling）手指再来，手势整体被丢弃会让用户觉得「滑了没反应」。
+    // 这里只探测一次方向，等动画结束再补一次翻页，既不打断动画也不丢操作。
+    function queueSwipeWhileSettling(event) {
+      const startY = event.clientY;
+      const startX = event.clientX;
+      const onMove = (moveEvent) => {
+        if (!moveEvent.isPrimary) return;
+        const dy = moveEvent.clientY - startY;
+        const dx = moveEvent.clientX - startX;
+        if (Math.abs(dy) < 24 || Math.abs(dy) < Math.abs(dx)) return;
+        queuedSwipe = dy < 0 ? 1 : -1;
+        cleanup();
+      };
+      const cleanup = () => {
+        document.removeEventListener('pointermove', onMove, true);
+        document.removeEventListener('pointerup', cleanup, true);
+        document.removeEventListener('pointercancel', cleanup, true);
+      };
+      document.addEventListener('pointermove', onMove, true);
+      document.addEventListener('pointerup', cleanup, true);
+      document.addEventListener('pointercancel', cleanup, true);
+    }
+
     overlayLayer.addEventListener('pointerdown', (event) => {
-      if (!event.isPrimary || event.button !== 0 || magnifier.isActive() || settling) return;
+      if (!event.isPrimary || event.button !== 0 || magnifier.isActive()) return;
+      if (settling) {
+        queueSwipeWhileSettling(event);
+        return;
+      }
       overlayLayer.setPointerCapture(event.pointerId);
       gesture = {
         id: event.pointerId,

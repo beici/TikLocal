@@ -7,6 +7,8 @@
   const stream = document.getElementById('timeline-stream');
   const loading = document.getElementById('library-loading');
   const statusText = document.getElementById('library-status-text');
+  const statusActions = document.getElementById('library-status-actions');
+  const retryButton = document.getElementById('library-retry');
   const sentinel = document.getElementById('library-sentinel');
   const currentLabel = document.getElementById('timeline-current-label');
   const currentDateButton = document.getElementById('timeline-current-date');
@@ -222,12 +224,23 @@
       nextBefore = String(data.next_before || '');
       renderMonths(incoming);
       statusText.textContent = hasMore ? T('library.timeline.keep_scrolling') : T('library.timeline.beginning');
+      if (statusActions) statusActions.hidden = true;
       renderYears();
       return true;
     } catch (error) {
       // Report the failure but keep hasMore so the next scroll can retry; the
       // caller only needs to know that this call made no progress.
+      // 底部 sentinel 一直在相交状态，Observer 不会再回调，光靠文案让用户
+      //「向下滚动」是走不通的（他已经在页面最底部），必须给一个可点的重试。
       statusText.textContent = T('library.timeline.load_failed');
+      if (statusActions) statusActions.hidden = false;
+      if (retryButton) {
+        retryButton.hidden = false;
+        if (!retryButton.dataset.timelineBound) {
+          retryButton.dataset.timelineBound = '1';
+          retryButton.addEventListener('click', () => { loadMore(); });
+        }
+      }
       return false;
     } finally {
       loadingMore = false;

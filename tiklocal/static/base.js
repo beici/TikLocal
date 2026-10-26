@@ -5,7 +5,13 @@ class ThemeManager {
   }
   init() {
     this.mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const savedTheme = localStorage.getItem('theme');
+    let savedTheme = null;
+    try {
+      savedTheme = localStorage.getItem('theme');
+    } catch (error) {
+      // 隐私模式/禁用存储时不要让整个初始化回调中断（否则抽屉菜单不会绑定）。
+      savedTheme = null;
+    }
     this.preference = ['light', 'dark', 'system'].includes(savedTheme) ? savedTheme : 'system';
     this.apply();
     const onSystemThemeChange = () => {
@@ -45,10 +51,34 @@ class MoreMenu {
   constructor() {
     this.menu = document.getElementById('app-nav-menu');
     this.trigger = document.getElementById('app-nav-menu-trigger');
+    this.onKeydown = null;
+    if (this.menu) {
+      this.menu.setAttribute('role', 'dialog');
+      this.menu.setAttribute('aria-modal', 'true');
+    }
     this.bindEvents();
   }
   isOpen() {
     return this.menu?.classList.contains('is-open');
+  }
+  focusables() {
+    if (!this.menu) return [];
+    return Array.from(this.menu.querySelectorAll('a[href], button:not([disabled])'))
+      .filter((element) => element.offsetParent !== null || element === document.activeElement);
+  }
+  trapFocus(event) {
+    if (event.key !== 'Tab') return;
+    const focusables = this.focusables();
+    if (!focusables.length) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
   open() {
     if (!this.menu || !this.trigger) return;
@@ -57,6 +87,8 @@ class MoreMenu {
     this.menu.setAttribute('aria-hidden', 'false');
     this.trigger.setAttribute('aria-expanded', 'true');
     document.body.classList.add('app-nav-menu-open');
+    this.onKeydown = (event) => this.trapFocus(event);
+    document.addEventListener('keydown', this.onKeydown, true);
     this.menu.querySelector('a[href], button')?.focus();
   }
   close({ restoreFocus = true } = {}) {
@@ -66,6 +98,10 @@ class MoreMenu {
     this.menu.setAttribute('aria-hidden', 'true');
     this.trigger.setAttribute('aria-expanded', 'false');
     document.body.classList.remove('app-nav-menu-open');
+    if (this.onKeydown) {
+      document.removeEventListener('keydown', this.onKeydown, true);
+      this.onKeydown = null;
+    }
     if (restoreFocus) this.trigger.focus();
   }
   bindEvents() {
@@ -81,5 +117,12 @@ class MoreMenu {
 
 document.addEventListener('DOMContentLoaded', () => {
   window.themeManager = new ThemeManager();
-  new MoreMenu();
+  window.moreMenu = new MoreMenu();
+});
+
+// bfcache 恢复时 DOM/JS 状态原样回来，DOMContentLoaded 不会再触发，抽屉会卡在展开态并锁住滚动。
+window.addEventListener('pageshow', (event) => {
+  if (!event.persisted) return;
+  if (window.moreMenu) window.moreMenu.close({ restoreFocus: false });
+  document.body.classList.remove('app-nav-menu-open');
 });

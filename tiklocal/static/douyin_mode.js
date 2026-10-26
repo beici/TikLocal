@@ -66,9 +66,8 @@
     if (redirect(uri)) event.preventDefault();
   }
 
-  if (enabled()) {
-    document.addEventListener('click', intercept, false);
-  }
+  // 常驻挂载：intercept 自己会查 enabled()，这样在设置页刚打开开关、不刷新也能立刻生效。
+  document.addEventListener('click', intercept, false);
 
   global.TikLocalDouyinMode = {
     enabled: enabled,
