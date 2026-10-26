@@ -321,6 +321,15 @@ body[data-nav-context="download"] {
   background: transparent; color: var(--download-faint); font-size: 10px; cursor: pointer;
 }
 .url-list-remove:hover { color: #a54a43; background: rgba(165,74,67,.07); }
+.url-list-items.is-collapsed .url-list-item:nth-child(n + 6) { display: none; }
+.url-list-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin: 8px 4px 0; padding: 5px 11px; border: 1px solid var(--download-line); border-radius: 999px;
+  background: transparent; color: var(--download-muted); font-size: 11px; font-weight: 620; cursor: pointer;
+}
+.url-list-toggle:hover { color: var(--download-ink); background: var(--download-soft); }
+.url-list-toggle svg { width: 13px; height: 13px; stroke-width: 2; transition: transform .18s ease; }
+.url-list-toggle.is-expanded svg { transform: rotate(180deg); }
 .url-list-empty { margin: 2px 4px 0; color: var(--download-faint); font-size: 11px; }
 .url-list-import { margin: 10px 4px 0; }
 .url-list-import summary { color: var(--download-muted); font-size: 11px; font-weight: 620; cursor: pointer; }

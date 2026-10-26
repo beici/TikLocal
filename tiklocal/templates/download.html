@@ -56,7 +56,10 @@
         <a id="url-list-export" class="download-action" href="/api/download/urls/export" download="download-urls.txt"><i data-feather="upload"></i><span>{{ t('download.urls.export') }}</span></a>
         <button id="url-list-clear" class="download-action is-danger" type="button"><i data-feather="trash-2"></i><span>{{ t('download.urls.clear') }}</span></button>
       </div>
-      <ol id="url-list-items" class="url-list-items"></ol>
+      <ol id="url-list-items" class="url-list-items is-collapsed"></ol>
+      <button id="url-list-toggle" class="url-list-toggle" type="button" hidden aria-expanded="false">
+        <i data-feather="chevron-down"></i><span id="url-list-toggle-text"></span>
+      </button>
       <p id="url-list-empty" class="url-list-empty">{{ t('download.urls.empty') }}</p>
       <details class="url-list-import">
         <summary>{{ t('download.urls.input_label') }}</summary>

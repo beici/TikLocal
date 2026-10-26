@@ -440,6 +440,7 @@ def _merge_page_catalogs() -> None:
         i18n_pages_media,
         i18n_pages_radio,
         i18n_pages_sync,
+        i18n_pages_ui,
     )
 
     for module in (
@@ -449,6 +450,7 @@ def _merge_page_catalogs() -> None:
         i18n_pages_media,
         i18n_pages_radio,
         i18n_pages_sync,
+        i18n_pages_ui,
     ):
         table = getattr(module, 'TRANSLATIONS', {})
         for locale in SUPPORTED_LOCALES:

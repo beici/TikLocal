@@ -342,12 +342,17 @@
     }
   }
 
+  const URL_LIST_COLLAPSED_LIMIT = 5;
+  let urlListExpanded = false;
+
   function urlListElements() {
     return {
       section: document.getElementById('url-list-section'),
       items: document.getElementById('url-list-items'),
       empty: document.getElementById('url-list-empty'),
       count: document.getElementById('url-list-count'),
+      toggle: document.getElementById('url-list-toggle'),
+      toggleText: document.getElementById('url-list-toggle-text'),
       sourcePath: document.getElementById('url-list-source-path'),
       importText: document.getElementById('url-list-import-text'),
     };
@@ -366,6 +371,18 @@
         <button class="url-list-remove" type="button" data-url-remove="${escapeHtml(url)}">${escapeHtml(T('download.urls.remove'))}</button>
       </li>
     `).join('');
+    const overflow = lines.length > URL_LIST_COLLAPSED_LIMIT;
+    if (!overflow) urlListExpanded = false;
+    const collapsed = overflow && !urlListExpanded;
+    els.items.classList.toggle('is-collapsed', collapsed);
+    if (els.toggle && els.toggleText) {
+      els.toggle.hidden = !overflow;
+      els.toggle.setAttribute('aria-expanded', String(overflow && urlListExpanded));
+      els.toggle.classList.toggle('is-expanded', overflow && urlListExpanded);
+      els.toggleText.textContent = collapsed
+        ? T('download.urls.expand', { count: lines.length })
+        : T('download.urls.collapse');
+    }
     if (els.sourcePath && document.activeElement !== els.sourcePath) {
       els.sourcePath.value = data.source_path || '';
     }
@@ -390,6 +407,11 @@
   function initUrlList() {
     const els = urlListElements();
     if (!els.section) return;
+
+    els.toggle?.addEventListener('click', async () => {
+      urlListExpanded = !urlListExpanded;
+      await refreshUrlList();
+    });
 
     els.items?.addEventListener('click', async (event) => {
       const button = event.target.closest('[data-url-remove]');
