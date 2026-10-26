@@ -1080,6 +1080,8 @@ class DownloadManager:
             if not job:
                 return 1, "Job not found.", []
             payload = job.get("download_payload") if isinstance(job.get("download_payload"), dict) else {}
+            timeout = float(self._config.get("job_timeout_sec") or DEFAULT_JOB_TIMEOUT_SEC)
+        deadline = time.monotonic() + max(1.0, timeout)
 
         downloads = [
             str(url).strip()
@@ -1112,6 +1114,7 @@ class DownloadManager:
                     target,
                     on_progress,
                     cancelled=(lambda: bool(cancel_event and cancel_event.is_set())),
+                    deadline=deadline,
                 )
                 if error:
                     return 1, error, []
@@ -1131,6 +1134,7 @@ class DownloadManager:
         target: Path,
         on_progress: Callable[[float], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
+        deadline: float | None = None,
     ) -> str | None:
         """Stream one media file to ``target``; return an error message or None."""
         # The URL comes from a sidecar response, so a rewritten payload must not turn
@@ -1148,6 +1152,14 @@ class DownloadManager:
         tmp_path = target.with_suffix(target.suffix + ".part")
         try:
             with urllib.request.urlopen(request, timeout=DIRECT_DOWNLOAD_TIMEOUT_SEC) as response, tmp_path.open("wb") as fh:
+                # A public URL may redirect to loopback or a cloud metadata endpoint.
+                # The redirect has already happened by now, but refusing to read the
+                # body keeps the response from ever reaching the library.
+                resolved = getattr(response, "geturl", None)
+                final_url = resolved() if callable(resolved) else url
+                if _is_local_host(final_url or url):
+                    tmp_path.unlink(missing_ok=True)
+                    return "The media URL redirected to a local address."
                 total_bytes = int(response.headers.get("Content-Length") or 0)
                 received = 0
                 while True:
@@ -1157,6 +1169,9 @@ class DownloadManager:
                     if cancelled and cancelled():
                         tmp_path.unlink(missing_ok=True)
                         return "Canceled."
+                    if deadline is not None and time.monotonic() > deadline:
+                        tmp_path.unlink(missing_ok=True)
+                        return "Download exceeded the time limit."
                     chunk = response.read(64 * 1024)
                     if not chunk:
                         break

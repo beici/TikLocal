@@ -11,7 +11,11 @@
 
 .image-stage {
   min-height: min(calc(100vh - 140px), 860px);
-  touch-action: none;
+  /* The stage covers most of the screen, so `touch-action: none` made the caption,
+     tags and actions below it unreachable on a phone: a vertical swipe did
+     nothing at all. Let the browser pan vertically and keep horizontal swipes. */
+  touch-action: pan-y;
+  overscroll-behavior-y: contain;
   user-select: none;
 }
 

@@ -34,7 +34,8 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         name = library_service.find_existing_uri(name)
         target = library_service.resolve_path(name)
         if not target or not target.exists():
-            return "File not found", 404
+            return render_template('error.html', status=404,
+                                   message=t('detail.error.file_not_found')), 404
 
         if target.suffix.lower() in IMAGE_EXTENSIONS:
             return redirect(f"/image?uri={quote(name)}")
@@ -81,11 +82,15 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
     @app.route('/image')
     def image_view():
         uri = request.args.get('uri')
-        if not uri: return "Missing uri", 400
+        if not uri:
+            return render_template('error.html', status=400,
+                                   message=t('image.error.missing_uri')), 400
         uri = library_service.find_existing_uri(uri)
 
         target = library_service.resolve_path(uri)
-        if not target or not target.exists(): return "File not found", 404
+        if not target or not target.exists():
+            return render_template('error.html', status=404,
+                                   message=t('image.error.file_not_found')), 404
         source_meta = download_manager.resolve_source_for_file(uri)
         uri_path_encoded = quote(uri, safe='/')
         uri_query_encoded = quote(uri, safe='')
@@ -137,7 +142,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             entry = trash_service.move(name)
         except FileNotFoundError:
             media_index.delete(library_service.canonicalize_uri(name))
-            return ({'error': 'File not found'}, 404) if wants_json else redirect('/library')
+            return ({'error': t('detail.error.file_not_found')}, 404) if wants_json else redirect('/library')
         except OSError as e:
             # A file that is still open (a video being played, on Windows also a
             # locked directory) is a conflict, not a server error, and str(e)
@@ -254,11 +259,11 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
     def api_image_embedded_metadata():
         uri = request.args.get('uri')
         if not uri:
-            return {'success': False, 'error': 'Missing uri'}, 400
+            return {'success': False, 'error': t('image.error.missing_uri')}, 400
         canonical_uri = library_service.find_existing_uri(uri)
         target = library_service.resolve_path(canonical_uri)
         if not target or not target.exists():
-            return {'success': False, 'error': 'File not found'}, 404
+            return {'success': False, 'error': t('image.error.file_not_found')}, 404
         return {'success': True, 'data': {'embedded_generation': read_embedded_generation(target)}}
 
     @app.route('/api/thumbnail/<path:name>', methods=['POST'])

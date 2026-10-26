@@ -112,6 +112,9 @@ class LibraryService:
         self.sources_by_id = {source.id: source for source in self.sources}
         self.default_source_id = 'default' if 'default' in self.sources_by_id else self.sources[0].id
         self.media_root = self.sources_by_id[self.default_source_id].path
+        # Resolving a source root costs a syscall (two on Windows) and the indexer
+        # calls ref_for_path() once per file: resolve each root exactly once.
+        self._resolved_roots = [(source, source.path.resolve()) for source in self.sources]
 
     def scan_source(
         self, source: MediaSource, extensions: set[str] | None = None, *, recursive: bool = True,
@@ -125,6 +128,11 @@ class LibraryService:
         extensions = extensions if extensions is not None else VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS
 
         def skip_unreadable(error: OSError) -> None:
+            # A subfolder we may not read is normal (System Volume Information); the
+            # source itself disappearing must still surface, otherwise the index would
+            # treat "cannot scan" as "everything was deleted" and drop every record.
+            if Path(error.filename or '') == source.path:
+                raise error
             if error.errno in (errno.EACCES, errno.EPERM):
                 return
             raise error
@@ -177,9 +185,9 @@ class LibraryService:
 
     def ref_for_path(self, path: Path) -> MediaRef | None:
         target = path.resolve()
-        for source in self.sources:
+        for source, root in self._resolved_roots:
             try:
-                rel = str(target.relative_to(source.path.resolve())).replace('\\', '/')
+                rel = str(target.relative_to(root)).replace('\\', '/')
                 return MediaRef(source.id, rel)
             except ValueError:
                 continue

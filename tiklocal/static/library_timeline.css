@@ -127,9 +127,18 @@
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
+/* On phones a transparent fixed header floats over the top of the page and its
+   wordmark is the only clickable part. Pinned at top: 0 the sticky bar sat
+   underneath it, so tapping the year button opened the home page instead of the
+   year picker. Keep the bar below the header. */
+@media (max-width: 767px) {
+  .timeline-sticky-bar {
+    top: calc(var(--app-nav-safe-top, 0px) + 46px + 8px);
+  }
+}
+
 .timeline-sticky-bar.is-pinned {
-  border-color: var(--archive-line);
-  box-shadow: 0 12px 30px rgba(40, 35, 25, 0.04);
+  border-color: var(--archive-line);  box-shadow: 0 12px 30px rgba(40, 35, 25, 0.04);
 }
 
 .timeline-current-date {

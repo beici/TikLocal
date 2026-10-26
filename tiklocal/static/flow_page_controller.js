@@ -1924,6 +1924,16 @@
         collectionBtn.click();
       });
 
+      // These are <a role="button">: Enter activates them for free, Space does not,
+      // and Space is the key screen-reader users press for a button.
+      [douyinFavoriteBtn, douyinCollectionBtn].forEach((element) => {
+        element.addEventListener('keydown', (event) => {
+          if (event.key !== ' ' && event.key !== 'Spacebar') return;
+          event.preventDefault();
+          element.click();
+        });
+      });
+
       douyinInfoBtn.addEventListener('click', () => {
         const target = activityTarget(currentItem());
         if (!target) return;

@@ -51,9 +51,47 @@
     return payload.data || {};
   }
 
+  // aria-modal="true" promises that Tab cannot leave the dialog; without this the
+  // second Tab landed on the masked page behind it, so keyboard users operated
+  // controls they could not see.
+  const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  function trapFocus(container) {
+    const onKeydown = (event) => {
+      if (event.key !== 'Tab') return;
+      const items = Array.from(container.querySelectorAll(FOCUSABLE))
+        .filter((element) => element.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    container.addEventListener('keydown', onKeydown);
+    return () => container.removeEventListener('keydown', onKeydown);
+  }
+
+  let releaseCreateTrap = null;
+  let releaseRenameTrap = null;
+  let createTrigger = null;
+  let renameTrigger = null;
+
+  function restoreFocus(element) {
+    if (element && typeof element.focus === 'function' && document.contains(element)) {
+      element.focus();
+    }
+  }
+
   function openCreateModal() {
+    createTrigger = document.activeElement;
     modal.classList.add('active');
     modal.setAttribute('aria-hidden', 'false');
+    releaseCreateTrap = trapFocus(modal);
     nameInput.focus();
   }
 
@@ -62,6 +100,12 @@
     modal.setAttribute('aria-hidden', 'true');
     nameInput.value = '';
     descInput.value = '';
+    if (releaseCreateTrap) {
+      releaseCreateTrap();
+      releaseCreateTrap = null;
+    }
+    restoreFocus(createTrigger);
+    createTrigger = null;
   }
 
   function openRenameModal(collectionId) {
@@ -69,9 +113,11 @@
     const item = collectionsById.get(id);
     if (!id || !item) return;
     renamingCollectionId = id;
+    renameTrigger = document.activeElement;
     renameInput.value = String(item.name || '').trim();
     renameModal.classList.add('active');
     renameModal.setAttribute('aria-hidden', 'false');
+    releaseRenameTrap = trapFocus(renameModal);
     requestAnimationFrame(() => {
       renameInput.focus();
       renameInput.select();
@@ -83,6 +129,12 @@
     renameModal.setAttribute('aria-hidden', 'true');
     renameInput.value = '';
     renamingCollectionId = '';
+    if (releaseRenameTrap) {
+      releaseRenameTrap();
+      releaseRenameTrap = null;
+    }
+    restoreFocus(renameTrigger);
+    renameTrigger = null;
   }
 
   function renderCards(items) {

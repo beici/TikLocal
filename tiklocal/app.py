@@ -4,7 +4,7 @@ import socket
 from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
 
-from flask import Flask, request, send_file, url_for
+from flask import Flask, render_template, request, send_file, url_for
 
 # Service Imports
 from tiklocal.services.library import LibraryService, build_media_sources
@@ -354,8 +354,9 @@ def create_app(test_config=None):
     def _api_error(status, message, error):
         if request.path.startswith('/api/'):
             return {'success': False, 'error': message}, status
-        # Browsers keep Werkzeug's HTML error page; only JSON clients need an envelope.
-        return error
+        # Werkzeug's page is English-only and unstyled; render the app shell instead so
+        # a stale bookmark or a typo does not drop the user on <html lang="en">.
+        return render_template('error.html', status=status, message=message), status
 
     @app.errorhandler(404)
     def handle_not_found(error):

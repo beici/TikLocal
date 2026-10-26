@@ -471,11 +471,17 @@ def build_mix_feed_page(
     page_media = mixed[start:end]
     page_names = {name for _, name in page_media}
     # The forgotten feed stays plain media; cards belong to the everyday Flow.
-    records = [] if forgotten else media_index.records()
+    # Only the page's own URIs are looked up: a full table read cost 400ms per
+    # request on an 8000-file library, and the feed asks for ~24 cards. Lightweight
+    # index stand-ins (tests) may only implement records(), so fall back to that.
+    if forgotten:
+        records = []
+    elif hasattr(media_index, 'records_for_names'):
+        records = media_index.records_for_names(page_names)
+    else:
+        records = [record for record in media_index.records() if record.get('name') in page_names]
     records_by_name = {str(record.get('name') or ''): record for record in records}
-    source_groups = collect_source_media_groups([
-        record for record in records if record['name'] in page_names
-    ], download_source_store) if records else []
+    source_groups = collect_source_media_groups(records, download_source_store) if records else []
     image_group_candidate = None
     image_group_names: set[str] = set()
     for group in source_groups:

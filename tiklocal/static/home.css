@@ -2,7 +2,7 @@
   --home-bg: #eeeae1;
   --home-surface: rgba(255, 253, 247, 0.72);
   --home-ink: #1c1b18;
-  --home-muted: rgba(28, 27, 24, 0.48);
+  --home-muted: rgba(28, 27, 24, 0.66);
   --home-line: rgba(28, 27, 24, 0.105);
   --home-flow: #d9ff52;
   --home-radio: #b9c9bc;
@@ -13,7 +13,7 @@
   --home-bg: #11110f;
   --home-surface: rgba(30, 30, 26, 0.72);
   --home-ink: rgba(249, 247, 239, 0.96);
-  --home-muted: rgba(249, 247, 239, 0.43);
+  --home-muted: rgba(249, 247, 239, 0.52);
   --home-line: rgba(255, 255, 255, 0.1);
   --home-flow: #d8f266;
   --home-radio: #9fb3a6;

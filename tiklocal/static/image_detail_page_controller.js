@@ -100,7 +100,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const dy = event.clientY - swipe.y;
     if (!swipe.axis) {
       if (Math.hypot(dx, dy) < 10) return;
-      swipe.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : (dy > 0 ? 'y' : 'none');
+      // A downward drag only dismisses while the page is still at the top; once the
+      // caption is scrolled into view the same drag scrolls back up instead.
+      const dismissable = dy > 0 && window.scrollY <= 0;
+      swipe.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : (dismissable ? 'y' : 'none');
       if (swipe.axis !== 'none') imageContainer.setPointerCapture(event.pointerId);
     }
     if (swipe.axis === 'x') {

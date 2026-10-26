@@ -22,7 +22,9 @@
 <div id="create-modal" class="modal-mask" aria-hidden="true">
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="create-modal-title">
     <h2 id="create-modal-title" class="modal-title">{{ t('saved.new_collection') }}</h2>
+    <label class="sr-only" for="create-name">{{ t('saved.create.name_label') }}</label>
     <input id="create-name" class="field mb-2" type="text" maxlength="80" placeholder="{{ t('saved.create.name_placeholder') }}" />
+    <label class="sr-only" for="create-description">{{ t('saved.create.description_label') }}</label>
     <textarea id="create-description" class="field" rows="3" maxlength="280" placeholder="{{ t('saved.create.description_placeholder') }}"></textarea>
     <div class="modal-actions">
       <button id="cancel-create" class="ghost-chip" type="button">{{ t('common.cancel') }}</button>
@@ -34,6 +36,7 @@
 <div id="rename-modal" class="modal-mask" aria-hidden="true">
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rename-modal-title">
     <h2 id="rename-modal-title" class="modal-title">{{ t('saved.rename.title') }}</h2>
+    <label class="sr-only" for="rename-name">{{ t('saved.rename.label') }}</label>
     <input id="rename-name" class="field" type="text" maxlength="80" placeholder="{{ t('saved.rename.placeholder') }}" />
     <div class="modal-actions">
       <button id="cancel-rename" class="ghost-chip" type="button">{{ t('common.cancel') }}</button>

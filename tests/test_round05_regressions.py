@@ -140,6 +140,28 @@ def test_scan_does_not_follow_junctions(tmp_path):
         subprocess.run(['cmd', '/c', 'rmdir', str(link)], capture_output=True, text=True)
 
 
+def test_unreadable_source_root_still_fails_the_scan(tmp_path, monkeypatch):
+    import os
+
+    media_root = tmp_path / 'media'
+    media_root.mkdir()
+    (media_root / 'ok.mp4').write_bytes(b'x')
+    library = LibraryService(media_root=media_root)
+    real_walk = os.walk
+    source_path = library.sources[0].path
+
+    def walk(top, onerror=None, **kwargs):
+        # The source itself is gone: swallowing this would let the indexer publish an
+        # empty snapshot and delete every record of the source.
+        if onerror is not None:
+            onerror(PermissionError(13, 'Access is denied', str(source_path)))
+        return real_walk(top, onerror=onerror, **kwargs)
+
+    monkeypatch.setattr(os, 'walk', walk)
+    with pytest.raises(OSError):
+        library.scan_source(library.sources[0])
+
+
 def test_download_config_masks_the_sidecar_token(client):
     manager = client.application.extensions['download_manager']
     manager.update_config({'tiktok_downloader': {'base_url': 'https://tiktok.example.com',
