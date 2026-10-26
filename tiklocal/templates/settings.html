@@ -7,28 +7,28 @@
 {% block content %}
 <main class="settings-page tool-page">
   <header class="settings-header tool-page-header">
-    <p class="tool-page-overline"><i data-feather="sliders"></i><span>Local Preferences</span></p>
-    <h1 class="settings-title">Settings</h1>
-    <p class="tool-page-intro">Manage appearance, the media index, and local services.</p>
+    <p class="tool-page-overline"><i data-feather="sliders"></i><span>{{ t('settings.overline') }}</span></p>
+    <h1 class="settings-title">{{ t('title.settings') }}</h1>
+    <p class="tool-page-intro">{{ t('settings.intro') }}</p>
   </header>
 
   <div class="settings-stack">
     <section aria-labelledby="appearance-title">
-      <h2 id="appearance-title" class="settings-section-title">Appearance</h2>
+      <h2 id="appearance-title" class="settings-section-title">{{ t('settings.section.appearance') }}</h2>
       <div class="settings-card appearance-card">
         <div class="appearance-heading">
-          <div class="settings-row-title">Display Mode</div>
-          <div class="settings-row-copy">Your selection applies to every page immediately.</div>
+          <div class="settings-row-title">{{ t('settings.theme.title') }}</div>
+          <div class="settings-row-copy">{{ t('settings.theme.copy') }}</div>
         </div>
-        <div class="theme-options" role="group" aria-label="Display mode">
+        <div class="theme-options" role="group" aria-label="{{ t('settings.theme.group') }}">
           <button class="theme-option" type="button" data-theme-preference="system" aria-pressed="false">
-            <span class="theme-preview theme-preview-system"><span class="theme-check"><i data-feather="check"></i></span></span><span>System</span>
+            <span class="theme-preview theme-preview-system"><span class="theme-check"><i data-feather="check"></i></span></span><span>{{ t('settings.theme.system') }}</span>
           </button>
           <button class="theme-option" type="button" data-theme-preference="light" aria-pressed="false">
-            <span class="theme-preview theme-preview-light"><span class="theme-check"><i data-feather="check"></i></span></span><span>Light</span>
+            <span class="theme-preview theme-preview-light"><span class="theme-check"><i data-feather="check"></i></span></span><span>{{ t('settings.theme.light') }}</span>
           </button>
           <button class="theme-option" type="button" data-theme-preference="dark" aria-pressed="false">
-            <span class="theme-preview theme-preview-dark"><span class="theme-check"><i data-feather="check"></i></span></span><span>Dark</span>
+            <span class="theme-preview theme-preview-dark"><span class="theme-check"><i data-feather="check"></i></span></span><span>{{ t('settings.theme.dark') }}</span>
           </button>
         </div>
       </div>
@@ -36,8 +36,8 @@
         <div class="settings-row">
           <span class="setting-icon"><i data-feather="film"></i></span>
           <div class="settings-row-main">
-            <div class="settings-row-title">Douyin Feed Style</div>
-            <div class="settings-row-copy">Show the Flow feed with Douyin-style navigation, author, and caption overlays.</div>
+            <div class="settings-row-title">{{ t('settings.douyin.title') }}</div>
+            <div class="settings-row-copy">{{ t('settings.douyin.copy') }}</div>
           </div>
           <label class="settings-switch" for="douyin-mode-toggle">
             <input id="douyin-mode-toggle" type="checkbox" autocomplete="off">
@@ -65,98 +65,98 @@
     </section>
 
     <section aria-labelledby="radio-devices-title">
-      <h2 id="radio-devices-title" class="settings-section-title">Radio Clients</h2>
+      <h2 id="radio-devices-title" class="settings-section-title">{{ t('settings.section.radio_clients') }}</h2>
       <div class="settings-card">
         <div class="settings-row">
           <span class="setting-icon"><i data-feather="link"></i></span>
           <div class="settings-row-main">
-            <div class="settings-row-title">Pair a New Phone</div>
-            <div class="settings-row-copy">Generate a secure, single-use pairing link that expires in two minutes.</div>
+            <div class="settings-row-title">{{ t('settings.radio.pair_title') }}</div>
+            <div class="settings-row-copy">{{ t('settings.radio.pair_copy') }}</div>
           </div>
-          <button id="open-radio-pairing" class="settings-action is-primary" type="button">Generate</button>
+          <button id="open-radio-pairing" class="settings-action is-primary" type="button">{{ t('settings.radio.generate') }}</button>
         </div>
       </div>
       <div id="radio-device-list" class="settings-card radio-device-list">
         <div class="settings-row">
           <span class="setting-icon"><i data-feather="radio"></i></span>
           <div class="settings-row-main">
-            <div class="settings-row-title">Paired Devices</div>
-            <div class="settings-row-copy">Loading device tokens…</div>
+            <div class="settings-row-title">{{ t('settings.radio.paired_title') }}</div>
+            <div class="settings-row-copy">{{ t('settings.radio.loading') }}</div>
           </div>
         </div>
       </div>
     </section>
 
     <section aria-labelledby="library-title">
-      <h2 id="library-title" class="settings-section-title">Media Library</h2>
+      <h2 id="library-title" class="settings-section-title">{{ t('settings.section.library') }}</h2>
       <div class="settings-card">
         <div class="library-summary">
-          <div class="library-total"><span id="media-total">{{ videos + images }}</span><span class="library-total-unit">local media items</span></div>
-          <div class="library-types"><span id="videos-count">{{ videos }}</span> videos · <span id="images-count">{{ images }}</span> images</div>
-          <div id="index-sync-state" class="library-sync-state"><span class="library-sync-dot"></span><span id="index-sync-copy">Loading index status…</span></div>
+          <div class="library-total"><span id="media-total">{{ videos + images }}</span><span class="library-total-unit">{{ t('settings.library.items_unit') }}</span></div>
+          <div class="library-types"><span id="videos-count">{{ videos }}</span> {{ t('settings.library.videos') }} · <span id="images-count">{{ images }}</span> {{ t('settings.library.images') }}</div>
+          <div id="index-sync-state" class="library-sync-state"><span class="library-sync-dot"></span><span id="index-sync-copy">{{ t('settings.library.loading') }}</span></div>
         </div>
         <div class="settings-row">
           <span class="setting-icon"><i data-feather="refresh-cw"></i></span>
           <div class="settings-row-main">
-            <div class="settings-row-title">Rescan Media Library</div>
-            <div class="settings-row-copy">Use after files are added, moved, or deleted outside TikLocal while it is running.</div>
+            <div class="settings-row-title">{{ t('settings.library.rescan_title') }}</div>
+            <div class="settings-row-copy">{{ t('settings.library.rescan_copy') }}</div>
           </div>
-          <button id="refresh-library" class="settings-action" type="button">Scan</button>
+          <button id="refresh-library" class="settings-action" type="button">{{ t('settings.library.scan') }}</button>
         </div>
         <div class="settings-row">
           <span class="setting-icon"><i data-feather="image"></i></span>
           <div class="settings-row-main">
-            <div class="settings-row-title">Thumbnail Cache</div>
-            <div class="settings-row-copy"><span id="cache-size">{{ cache_size_mb }} MB</span>; thumbnails regenerate as needed while browsing.</div>
+            <div class="settings-row-title">{{ t('settings.library.cache_title') }}</div>
+            <div class="settings-row-copy">{{ t('settings.library.cache_copy', size=cache_size_mb ~ ' MB') }}</div>
           </div>
-          <button id="clear-cache" class="settings-action" type="button">Clear</button>
+          <button id="clear-cache" class="settings-action" type="button">{{ t('settings.library.clear') }}</button>
         </div>
       </div>
     </section>
 
     <section aria-labelledby="trash-title">
-      <h2 id="trash-title" class="settings-section-title">Recently Deleted</h2>
+      <h2 id="trash-title" class="settings-section-title">{{ t('settings.section.trash') }}</h2>
       <div id="trash-list" class="settings-card">
         <div class="settings-row">
           <span class="setting-icon"><i data-feather="trash-2"></i></span>
           <div class="settings-row-main">
-            <div class="settings-row-title">Trash</div>
-            <div id="trash-summary" class="settings-row-copy">Loading…</div>
+            <div class="settings-row-title">{{ t('settings.trash.title') }}</div>
+            <div id="trash-summary" class="settings-row-copy">{{ t('common.loading') }}</div>
           </div>
-          <button id="empty-trash" class="settings-action is-danger" type="button" hidden>Empty</button>
+          <button id="empty-trash" class="settings-action is-danger" type="button" hidden>{{ t('settings.trash.empty') }}</button>
         </div>
       </div>
     </section>
 
     <section aria-labelledby="privacy-title">
-      <h2 id="privacy-title" class="settings-section-title">Privacy and Recommendations</h2>
+      <h2 id="privacy-title" class="settings-section-title">{{ t('settings.privacy.title') }}</h2>
       <div class="settings-card settings-row">
         <span class="setting-icon"><i data-feather="clock"></i></span>
         <div class="settings-row-main">
-          <div class="settings-row-title">Local Browsing History</div>
-          <div class="settings-row-copy">Reset views, skips, completions, and resume points without changing favorites or collections.</div>
+          <div class="settings-row-title">{{ t('settings.privacy.history_title') }}</div>
+          <div class="settings-row-copy">{{ t('settings.privacy.history_copy') }}</div>
         </div>
-        <button id="reset-recommendations" class="settings-action is-danger" type="button">Reset</button>
+        <button id="reset-recommendations" class="settings-action is-danger" type="button">{{ t('settings.privacy.reset') }}</button>
       </div>
     </section>
 
     <section id="download" aria-labelledby="download-title">
-      <h2 id="download-title" class="settings-section-title">Downloads</h2>
+      <h2 id="download-title" class="settings-section-title">{{ t('settings.section.downloads') }}</h2>
       <div class="settings-card">
         <div class="settings-row">
           <span class="setting-icon"><i data-feather="activity"></i></span>
           <div class="settings-row-main">
-            <div class="settings-row-title">Download Components</div>
-            <div id="download-dependency-copy" class="settings-row-copy">Checking status…</div>
+            <div class="settings-row-title">{{ t('settings.download.components_title') }}</div>
+            <div id="download-dependency-copy" class="settings-row-copy">{{ t('settings.download.checking') }}</div>
           </div>
         </div>
         <div class="settings-row">
           <span class="setting-icon"><i data-feather="layers"></i></span>
           <div class="settings-row-main">
-            <div class="settings-row-title">Concurrent Downloads</div>
-            <div class="settings-row-copy">Control parallel jobs. Two works well for most devices.</div>
+            <div class="settings-row-title">{{ t('settings.download.concurrent_title') }}</div>
+            <div class="settings-row-copy">{{ t('settings.download.concurrent_copy') }}</div>
           </div>
-          <div id="download-levels" class="download-levels" role="group" aria-label="Concurrent download jobs">
+          <div id="download-levels" class="download-levels" role="group" aria-label="{{ t('settings.download.concurrency_aria') }}">
             <button class="download-level" type="button" data-concurrency="1">1</button>
             <button class="download-level" type="button" data-concurrency="2">2</button>
             <button class="download-level" type="button" data-concurrency="4">4</button>
@@ -165,42 +165,42 @@
         <div class="settings-row">
           <span class="setting-icon"><i data-feather="rss"></i></span>
           <div class="settings-row-main">
-            <div class="settings-row-title">TikTokDownloader 服务</div>
-            <div id="tiktok-downloader-status" class="settings-row-copy">Checking status…</div>
+            <div class="settings-row-title">{{ t('settings.download.tiktok_title') }}</div>
+            <div id="tiktok-downloader-status" class="settings-row-copy">{{ t('settings.download.checking') }}</div>
           </div>
-          <button id="tiktok-downloader-edit" class="settings-action" type="button">Edit</button>
+          <button id="tiktok-downloader-edit" class="settings-action" type="button">{{ t('settings.download.edit') }}</button>
         </div>
         <div class="settings-row">
           <span class="setting-icon"><i data-feather="shield"></i></span>
           <div class="settings-row-main">
-            <div class="settings-row-title">Website Credentials</div>
-            <div id="credential-summary" class="settings-row-copy">Loading…</div>
+            <div class="settings-row-title">{{ t('settings.download.credentials_title') }}</div>
+            <div id="credential-summary" class="settings-row-copy">{{ t('common.loading') }}</div>
           </div>
-          <button id="manage-credentials" class="settings-action" type="button">Manage</button>
+          <button id="manage-credentials" class="settings-action" type="button">{{ t('settings.download.manage') }}</button>
         </div>
       </div>
     </section>
 
     {% if similarity_enabled %}
-    <section aria-label="Experiments">
-      <h2 class="settings-section-title">Experiments</h2>
+    <section aria-label="{{ t('settings.experiments.title') }}">
+      <h2 class="settings-section-title">{{ t('settings.experiments.title') }}</h2>
       <a href="{{ url_for('similarity_view') }}" class="settings-card settings-row">
         <div class="settings-row-main">
-          <div class="settings-row-title">Similar Images</div>
-          <div class="settings-row-copy">View local vector status and similarity groups.</div>
+          <div class="settings-row-title">{{ t('settings.experiments.similarity_title') }}</div>
+          <div class="settings-row-copy">{{ t('settings.experiments.similarity_copy') }}</div>
         </div>
         <span aria-hidden="true">→</span>
       </a>
     </section>
     {% endif %}
 
-    <section aria-label="About">
+    <section aria-label="{{ t('settings.section.about') }}">
       <footer class="about-footer about-card">
         <div class="about-line">
           <span class="about-name">TikLocal</span><span class="about-separator" aria-hidden="true">·</span><span class="about-version">v{{ version }}</span><span class="about-separator" aria-hidden="true">·</span>
           <a class="about-link" href="https://github.com/ChanMo/TikLocal" target="_blank" rel="noopener noreferrer">GitHub</a>
           <span class="about-separator" aria-hidden="true">·</span>
-          <a class="about-link" href="mailto:chan.mo@outlook.com">Contact the Author</a>
+          <a class="about-link" href="mailto:chan.mo@outlook.com">{{ t('settings.about.contact') }}</a>
         </div>
       </footer>
     </section>
@@ -209,15 +209,15 @@
 <div id="credential-mask" class="credential-mask" hidden>
   <section class="credential-dialog" role="dialog" aria-modal="true" aria-labelledby="credential-title">
     <div class="credential-head">
-      <div><h2 id="credential-title" class="credential-title">Website Credentials</h2><p class="credential-copy">Use them for sign-in-only content. Files remain on this device.</p></div>
-      <button id="close-credentials" class="credential-close" type="button" aria-label="Close"><i data-feather="x"></i></button>
+      <div><h2 id="credential-title" class="credential-title">{{ t('settings.download.credentials_title') }}</h2><p class="credential-copy">{{ t('settings.cred.copy') }}</p></div>
+      <button id="close-credentials" class="credential-close" type="button" aria-label="{{ t('common.close') }}"><i data-feather="x"></i></button>
     </div>
-    <div id="credential-list" class="credential-list"><div class="credential-empty">Loading credentials…</div></div>
+    <div id="credential-list" class="credential-list"><div class="credential-empty">{{ t('settings.cred.loading') }}</div></div>
     <div class="credential-upload">
-      <div class="credential-upload-title">Add or Update</div>
-      <p class="credential-upload-copy">Supports .txt and .cookies files. Uploading the same filename replaces it.</p>
+      <div class="credential-upload-title">{{ t('settings.cred.add_title') }}</div>
+      <p class="credential-upload-copy">{{ t('settings.cred.add_copy') }}</p>
       <input id="credential-file" class="credential-file" type="file" accept=".txt,.cookies,text/plain">
-      <div class="credential-upload-actions"><button id="upload-credential" class="settings-action is-primary" type="button">Upload</button></div>
+      <div class="credential-upload-actions"><button id="upload-credential" class="settings-action is-primary" type="button">{{ t('settings.cred.upload') }}</button></div>
     </div>
   </section>
 </div>
@@ -225,28 +225,28 @@
   <section class="pairing-dialog" role="dialog" aria-modal="true" aria-labelledby="pairing-title">
     <div class="credential-head">
       <div>
-        <h2 id="pairing-title" class="credential-title">Pair TikLocal Radio</h2>
-        <p class="credential-copy">The link contains no access password or long-lived device token and expires after two minutes.</p>
+        <h2 id="pairing-title" class="credential-title">{{ t('settings.pairing.title') }}</h2>
+        <p class="credential-copy">{{ t('settings.pairing.copy') }}</p>
       </div>
-      <button id="close-radio-pairing" class="credential-close" type="button" aria-label="Close"><i data-feather="x"></i></button>
+      <button id="close-radio-pairing" class="credential-close" type="button" aria-label="{{ t('common.close') }}"><i data-feather="x"></i></button>
     </div>
     <label class="pairing-field">
-      <span class="pairing-label">Server address reachable from your phone</span>
+      <span class="pairing-label">{{ t('settings.pairing.server_label') }}</span>
       <input id="pairing-server-url" class="pairing-input" type="url" inputmode="url" autocomplete="url">
     </label>
     <p id="pairing-warning" class="pairing-warning"></p>
     <div id="pairing-result" class="pairing-result" hidden>
-      <img id="pairing-qr" class="pairing-qr" alt="Single-use TikLocal Radio pairing QR code">
+      <img id="pairing-qr" class="pairing-qr" alt="{{ t('settings.pairing.qr_alt') }}">
       <label class="pairing-field">
-        <span class="pairing-label">Paste into TikLocal Radio</span>
+        <span class="pairing-label">{{ t('settings.pairing.paste_label') }}</span>
         <textarea id="pairing-link" class="pairing-link" readonly></textarea>
       </label>
       <p id="pairing-expiry" class="pairing-expiry" aria-live="polite"></p>
     </div>
     <div class="pairing-actions">
-      <button id="generate-radio-pairing" class="settings-action is-primary" type="button">Generate Pairing Link</button>
-      <button id="copy-radio-pairing" class="settings-action" type="button" hidden>Copy Link</button>
-      <a id="open-radio-link" class="settings-action pairing-open" href="#" aria-disabled="true" hidden>Open on This Device</a>
+      <button id="generate-radio-pairing" class="settings-action is-primary" type="button">{{ t('settings.pairing.generate') }}</button>
+      <button id="copy-radio-pairing" class="settings-action" type="button" hidden>{{ t('settings.pairing.copy_link') }}</button>
+      <a id="open-radio-link" class="settings-action pairing-open" href="#" aria-disabled="true" hidden>{{ t('settings.pairing.open_here') }}</a>
     </div>
   </section>
 </div>
@@ -254,22 +254,22 @@
   <section class="pairing-dialog" role="dialog" aria-modal="true" aria-labelledby="tiktok-downloader-title">
     <div class="credential-head">
       <div>
-        <h2 id="tiktok-downloader-title" class="credential-title">TikTokDownloader 服务</h2>
-        <p class="credential-copy">按博主批量下载依赖局域网内的 TikTokDownloader Web API（默认端口 5555）。</p>
+        <h2 id="tiktok-downloader-title" class="credential-title">{{ t('settings.download.tiktok_title') }}</h2>
+        <p class="credential-copy">{{ t('settings.tiktok.dialog_copy') }}</p>
       </div>
-      <button id="close-tiktok-downloader" class="credential-close" type="button" aria-label="Close"><i data-feather="x"></i></button>
+      <button id="close-tiktok-downloader" class="credential-close" type="button" aria-label="{{ t('common.close') }}"><i data-feather="x"></i></button>
     </div>
     <label class="pairing-field">
-      <span class="pairing-label">服务地址 base_url</span>
+      <span class="pairing-label">{{ t('settings.tiktok.base_url_label') }}</span>
       <input id="tiktok-downloader-base-url" class="pairing-input" type="url" inputmode="url" autocomplete="url" placeholder="http://192.168.x.x:5555">
     </label>
     <label class="pairing-field">
-      <span class="pairing-label">访问令牌 token（服务未启用鉴权时留空）</span>
+      <span class="pairing-label">{{ t('settings.tiktok.token_label') }}</span>
       <input id="tiktok-downloader-token" class="pairing-input" type="text" autocomplete="off">
     </label>
     <p id="tiktok-downloader-hint" class="pairing-warning" aria-live="polite"></p>
     <div class="pairing-actions">
-      <button id="save-tiktok-downloader" class="settings-action is-primary" type="button">Save</button>
+      <button id="save-tiktok-downloader" class="settings-action is-primary" type="button">{{ t('common.save') }}</button>
     </div>
   </section>
 </div>

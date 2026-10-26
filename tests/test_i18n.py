@@ -52,8 +52,49 @@ def test_translate_falls_back_to_key_and_formats_params():
         del TRANSLATIONS['en']['test.template']
 
 
-def test_js_catalog_is_a_nav_and_common_subset():
+def test_js_catalog_covers_every_key():
     catalog = js_catalog('en')
     assert catalog['nav.home'] == 'Home'
-    assert 'settings.section.about' not in catalog
+    assert catalog['settings.section.about'] == 'About'
+    assert set(catalog) == set(TRANSLATIONS['en'])
     assert js_catalog('zh')['nav.home'] == '首页'
+    assert js_catalog('en') is not TRANSLATIONS['en']
+
+
+def test_page_catalogs_are_merged_into_the_main_table():
+    from tiklocal import i18n_pages_flow, i18n_pages_library, i18n_pages_media, i18n_pages_radio
+
+    for module in (i18n_pages_flow, i18n_pages_library, i18n_pages_media, i18n_pages_radio):
+        for locale in ('zh', 'en'):
+            assert set(module.TRANSLATIONS[locale]) == set(module.TRANSLATIONS['zh']), module.__name__
+            for key in module.TRANSLATIONS[locale]:
+                assert key in TRANSLATIONS[locale], (module.__name__, key)
+
+
+def test_merge_rejects_duplicate_keys():
+    from tiklocal import i18n_pages_flow
+    from tiklocal.i18n import _merge_page_catalogs
+
+    # A key already owned by the main table must not be shadowed by a page
+    # catalog: the merge raises instead of silently overwriting it.
+    i18n_pages_flow.TRANSLATIONS['zh']['nav.home'] = '重复'
+    try:
+        with pytest.raises(ValueError):
+            _merge_page_catalogs()
+    finally:
+        del i18n_pages_flow.TRANSLATIONS['zh']['nav.home']
+
+
+def test_t_follows_the_active_request_locale():
+    from flask import Flask
+
+    from tiklocal.i18n import t
+
+    assert t('nav.home') == '首页'
+    app = Flask(__name__)
+    with app.test_request_context(headers={'Accept-Language': 'en-US,en;q=0.9'}):
+        assert t('nav.home') == 'Home'
+    with app.test_request_context(headers={'Cookie': 'lang=en'}):
+        assert t('nav.home') == 'Home'
+    with app.test_request_context(headers={'Cookie': 'lang=zh'}):
+        assert t('nav.home') == '首页'

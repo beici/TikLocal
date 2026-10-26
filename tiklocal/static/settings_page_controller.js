@@ -1,4 +1,5 @@
 (() => {
+  const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
   const themeButtons = Array.from(document.querySelectorAll('[data-theme-preference]'));
   const refreshButton = document.getElementById('refresh-library');
   const clearCacheButton = document.getElementById('clear-cache');
@@ -14,6 +15,15 @@
   const openRadioLink = document.getElementById('open-radio-link');
   const radioDeviceList = document.getElementById('radio-device-list');
   let pairingTimer = 0;
+
+  function formatDateTime(date) {
+    const locale = document.documentElement.lang === 'en' ? 'en' : 'zh-CN';
+    try {
+      return date.toLocaleString(locale);
+    } catch (_) {
+      return date.toISOString();
+    }
+  }
 
   function currentThemePreference() {
     const saved = localStorage.getItem('theme');
@@ -47,7 +57,7 @@
     const payload = await response.json();
     if (!response.ok || payload.success === false) {
       const message = typeof payload.error === 'object' ? payload.error?.message : payload.error;
-      throw new Error(message || 'Request failed');
+      throw new Error(message || T('settings.request_failed'));
     }
     return payload;
   }
@@ -55,15 +65,15 @@
   async function requestForm(url, formData) {
     const response = await fetch(url, { method: 'POST', body: formData });
     const payload = await response.json();
-    if (!response.ok || payload.success === false) throw new Error(payload.error || 'Request failed');
+    if (!response.ok || payload.success === false) throw new Error(payload.error || T('settings.request_failed'));
     return payload;
   }
 
   function formatSyncTime(value) {
-    if (!value) return 'No scan completed yet';
+    if (!value) return T('settings.sync.no_scan');
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return 'A scan completed recently';
-    return `Last scanned: ${date.toLocaleString('en')}`;
+    if (Number.isNaN(date.getTime())) return T('settings.sync.recent');
+    return T('settings.sync.last', { time: formatDateTime(date) });
   }
 
   async function loadStats() {
@@ -78,14 +88,14 @@
       document.getElementById('index-sync-copy').textContent = formatSyncTime(payload.last_synced_at);
       document.getElementById('index-sync-state').classList.remove('is-error');
     } catch (error) {
-      document.getElementById('index-sync-copy').textContent = 'Index status is unavailable';
+      document.getElementById('index-sync-copy').textContent = T('settings.sync.unavailable');
       document.getElementById('index-sync-state').classList.add('is-error');
     }
   }
 
   function formatDeviceTime(value) {
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? 'Pairing time unknown' : `Paired ${date.toLocaleString('en')}`;
+    return Number.isNaN(date.getTime()) ? T('settings.device.pair_unknown') : T('settings.device.paired', { time: formatDateTime(date) });
   }
 
   function renderRadioDevices(devices = []) {
@@ -93,7 +103,9 @@
     if (!devices.length) {
       const row = document.createElement('div');
       row.className = 'settings-row';
-      row.innerHTML = '<span class="setting-icon"><i data-feather="radio"></i></span><div class="settings-row-main"><div class="settings-row-title">No Radio clients yet</div><div class="settings-row-copy">Enter this server address and access password in TikLocal Radio to pair.</div></div>';
+      row.innerHTML = `<span class="setting-icon"><i data-feather="radio"></i></span><div class="settings-row-main"><div class="settings-row-title"></div><div class="settings-row-copy"></div></div>`;
+      row.querySelector('.settings-row-title').textContent = T('settings.device.none_title');
+      row.querySelector('.settings-row-copy').textContent = T('settings.device.none_copy');
       radioDeviceList.appendChild(row);
       feather.replace();
       return;
@@ -112,23 +124,23 @@
       title.textContent = device.name || 'TikLocal Radio';
       const copy = document.createElement('div');
       copy.className = `settings-row-copy radio-device-state${device.active ? '' : ' is-expired'}`;
-      copy.textContent = `${device.active ? 'Token active' : 'Invalidated by password change'} · ${formatDeviceTime(device.created_at)}`;
+      copy.textContent = `${device.active ? T('settings.device.token_active') : T('settings.device.invalidated')} · ${formatDeviceTime(device.created_at)}`;
       const revoke = document.createElement('button');
       revoke.className = 'settings-action is-danger';
       revoke.type = 'button';
-      revoke.textContent = 'Revoke';
+      revoke.textContent = T('settings.device.revoke');
       revoke.addEventListener('click', () => {
         confirmAction(
-          'Revoke this Radio client?',
-          `${device.name || 'This device'} will lose media access and must pair again with the access password.`,
-          'Revoke Client',
+          T('settings.device.revoke_title'),
+          T('settings.device.revoke_copy', { name: device.name || T('settings.device.this_device') }),
+          T('settings.device.revoke_action'),
           'danger',
           () => {
-            runButton(revoke, 'Revoking…', async () => {
+            runButton(revoke, T('settings.device.revoking'), async () => {
               await requestJson(`/api/radio/devices/${encodeURIComponent(device.id)}`, { method: 'DELETE' });
               await loadRadioDevices();
-              TikLocalUI.toast('Radio client revoked');
-            }).catch(() => TikLocalUI.toast('Failed to revoke the client. Please try again later.', 'error'));
+              TikLocalUI.toast(T('settings.device.revoked_toast'));
+            }).catch(() => TikLocalUI.toast(T('settings.device.revoke_failed'), 'error'));
           },
         );
       });
@@ -144,7 +156,7 @@
       const payload = await requestJson('/api/radio/devices');
       renderRadioDevices(payload.data?.devices || []);
     } catch (_) {
-      radioDeviceList.querySelector('.settings-row-copy').textContent = 'Paired devices are unavailable.';
+      radioDeviceList.querySelector('.settings-row-copy').textContent = T('settings.device.unavailable');
     }
   }
 
@@ -161,9 +173,12 @@
 
   function renderCredentials(files = []) {
     const list = document.getElementById('credential-list');
-    document.getElementById('credential-summary').textContent = files.length ? `${files.length} credential files saved and matched to websites automatically.` : 'None added. Public content can still be downloaded.';
+    document.getElementById('credential-summary').textContent = files.length
+      ? T('settings.cred.saved_summary', { count: files.length })
+      : T('settings.cred.none_summary');
     if (!files.length) {
-      list.innerHTML = '<div class="credential-empty">No credentials saved</div>';
+      list.innerHTML = '<div class="credential-empty"></div>';
+      list.querySelector('.credential-empty').textContent = T('settings.cred.none');
     } else {
       list.innerHTML = files.map((name) => `
         <div class="credential-item"><span class="credential-mark"><i data-feather="key"></i></span><span class="credential-name"></span></div>`).join('');
@@ -180,15 +195,21 @@
         requestJson('/api/download/cookies'),
       ]);
       const probe = probePayload.data || {};
-      const missing = [!probe.yt_dlp_available ? 'video' : '', !probe.gallery_dl_available ? 'image' : '', !probe.ffmpeg_available ? 'media merging' : ''].filter(Boolean);
-      document.getElementById('download-dependency-copy').textContent = missing.length ? `${missing.join(', ')} components are not ready.` : 'Image and video downloads are ready.';
+      const missing = [
+        !probe.yt_dlp_available ? T('settings.dl.part_video') : '',
+        !probe.gallery_dl_available ? T('settings.dl.part_image') : '',
+        !probe.ffmpeg_available ? T('settings.dl.part_merge') : '',
+      ].filter(Boolean);
+      document.getElementById('download-dependency-copy').textContent = missing.length
+        ? T('settings.dl.not_ready', { parts: missing.join(', ') })
+        : T('settings.dl.ready');
       const configured = Number(configPayload.data?.effective?.max_concurrent ?? 2);
       const shown = [1, 2, 4].includes(configured) ? configured : 2;
       document.querySelectorAll('[data-concurrency]').forEach((button) => button.classList.toggle('is-active', Number(button.dataset.concurrency) === shown));
       renderCredentials(cookiePayload.data?.files || []);
     } catch (_) {
-      document.getElementById('download-dependency-copy').textContent = 'Download status is unavailable.';
-      document.getElementById('credential-summary').textContent = 'Credentials are unavailable.';
+      document.getElementById('download-dependency-copy').textContent = T('settings.dl.status_unavailable');
+      document.getElementById('credential-summary').textContent = T('settings.dl.cred_unavailable');
     }
   }
 
@@ -204,12 +225,12 @@
     const copy = document.getElementById('tiktok-downloader-status');
     if (!copy) return;
     if (!status || !status.configured) {
-      copy.textContent = '未配置服务地址，按博主批量下载不可用。';
+      copy.textContent = T('settings.tiktok.not_configured');
       return;
     }
     copy.textContent = status.reachable
-      ? `已连接 ${status.base_url}`
-      : `无法连接 ${status.base_url}，请确认服务已启动。`;
+      ? T('settings.tiktok.connected', { url: status.base_url })
+      : T('settings.tiktok.unreachable', { url: status.base_url });
   }
 
   async function loadTikTokDownloaderStatus() {
@@ -251,10 +272,10 @@
     try {
       const hostname = new URL(pairingServerUrl.value).hostname;
       if (['localhost', '127.0.0.1', '::1'].includes(hostname)) {
-        warning = 'This address only reaches the current computer. Use a LAN IP, .local hostname, or HTTPS address your phone can reach.';
+        warning = T('settings.pairing.lan_warning');
       }
     } catch (_) {
-      warning = 'Enter a complete http:// or https:// address.';
+      warning = T('settings.pairing.incomplete');
     }
     document.getElementById('pairing-warning').textContent = warning;
   }
@@ -271,8 +292,8 @@
       const seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
       const minutes = Math.floor(seconds / 60);
       pairingExpiry.textContent = seconds
-        ? `This single-use link expires in ${minutes}:${String(seconds % 60).padStart(2, '0')}.`
-        : 'This link has expired. Generate a new one.';
+        ? T('settings.pairing.expires', { time: `${minutes}:${String(seconds % 60).padStart(2, '0')}` })
+        : T('settings.pairing.expired');
       copyPairingButton.disabled = !seconds;
       openRadioLink.setAttribute('aria-disabled', String(!seconds));
       if (!seconds) stopPairingTimer();
@@ -310,7 +331,7 @@
       pairingLink.select();
       document.execCommand('copy');
     }
-    TikLocalUI.toast('Pairing link copied');
+    TikLocalUI.toast(T('settings.pairing.copied'));
   }
 
   themeButtons.forEach((button) => button.addEventListener('click', () => setThemePreference(button.dataset.themePreference)));
@@ -322,7 +343,7 @@
     douyinModeToggle.checked = window.localStorage.getItem('douyin_mode') === '1';
     douyinModeToggle.addEventListener('change', () => {
       window.localStorage.setItem('douyin_mode', douyinModeToggle.checked ? '1' : '0');
-      TikLocalUI.toast(douyinModeToggle.checked ? 'Douyin feed style enabled' : 'Douyin feed style disabled');
+      TikLocalUI.toast(douyinModeToggle.checked ? T('settings.douyin.enabled') : T('settings.douyin.disabled'));
     });
   }
 
@@ -346,31 +367,31 @@
   syncLanguageButtons();
 
   refreshButton.addEventListener('click', () => {
-    confirmAction('Rescan the media library?', 'The scan will reconcile files added, moved, or deleted while TikLocal was running.', 'Start Scan', 'primary', () => {
-      runButton(refreshButton, 'Scanning…', async () => {
+    confirmAction(T('settings.scan.confirm_title'), T('settings.scan.confirm_copy'), T('settings.scan.action'), 'primary', () => {
+      runButton(refreshButton, T('settings.scan.busy'), async () => {
         const payload = await requestJson('/api/library/sync', { method: 'POST' });
         await loadStats();
-        TikLocalUI.toast(`Scan complete. Indexed ${Number(payload.data?.indexed || 0)} media items.`);
-      }).catch(() => TikLocalUI.toast('Scan failed. Please try again later.', 'error'));
+        TikLocalUI.toast(T('settings.scan.done', { count: Number(payload.data?.indexed || 0) }));
+      }).catch(() => TikLocalUI.toast(T('settings.scan.failed'), 'error'));
     });
   });
 
   clearCacheButton.addEventListener('click', () => {
-    confirmAction('Clear the thumbnail cache?', 'Original media will be kept. Thumbnails regenerate as needed while browsing.', 'Clear Cache', 'warning', () => {
-      runButton(clearCacheButton, 'Clearing…', async () => {
+    confirmAction(T('settings.cache.confirm_title'), T('settings.cache.confirm_copy'), T('settings.cache.action'), 'warning', () => {
+      runButton(clearCacheButton, T('settings.cache.busy'), async () => {
         const payload = await requestJson('/api/cache/clear', { method: 'POST' });
         await loadStats();
-        TikLocalUI.toast(`Freed ${Number(payload.freed_mb || 0)} MB`);
-      }).catch(() => TikLocalUI.toast('Cleanup failed. Please try again later.', 'error'));
+        TikLocalUI.toast(T('settings.cache.freed', { size: Number(payload.freed_mb || 0) }));
+      }).catch(() => TikLocalUI.toast(T('settings.cache.failed'), 'error'));
     });
   });
 
   resetButton.addEventListener('click', () => {
-    confirmAction('Reset recommendation history?', 'Views, skips, completions, and resume points will be cleared. Favorites and collections remain unchanged.', 'Reset History', 'danger', () => {
-      runButton(resetButton, 'Resetting…', async () => {
+    confirmAction(T('settings.reset.confirm_title'), T('settings.reset.confirm_copy'), T('settings.reset.action'), 'danger', () => {
+      runButton(resetButton, T('settings.reset.busy'), async () => {
         await requestJson('/api/activity', { method: 'DELETE' });
-        TikLocalUI.toast('Recommendation history reset');
-      }).catch(() => TikLocalUI.toast('Reset failed. Please try again later.', 'error'));
+        TikLocalUI.toast(T('settings.reset.done'));
+      }).catch(() => TikLocalUI.toast(T('settings.reset.failed'), 'error'));
     });
   });
 
@@ -385,8 +406,8 @@
         body: JSON.stringify({ max_concurrent: maxConcurrent }),
       });
       document.querySelectorAll('[data-concurrency]').forEach((item) => item.classList.toggle('is-active', item === button));
-      TikLocalUI.toast(`Concurrent downloads set to ${maxConcurrent}`);
-    } catch (_) { TikLocalUI.toast('Failed to save download settings', 'error'); }
+      TikLocalUI.toast(T('settings.conc.set', { n: maxConcurrent }));
+    } catch (_) { TikLocalUI.toast(T('settings.conc.failed'), 'error'); }
   });
 
   document.getElementById('manage-credentials').addEventListener('click', openCredentials);
@@ -402,10 +423,10 @@
     const token = document.getElementById('tiktok-downloader-token').value.trim();
     const hint = document.getElementById('tiktok-downloader-hint');
     if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
-      hint.textContent = '服务地址需以 http:// 或 https:// 开头。';
+      hint.textContent = T('settings.tiktok.bad_url');
       return;
     }
-    runButton(event.currentTarget, 'Saving…', async () => {
+    runButton(event.currentTarget, T('settings.tiktok.saving'), async () => {
       const payload = await requestJson('/api/download/tiktok/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -417,9 +438,9 @@
         reachable: false,
       });
       await loadTikTokDownloaderStatus();
-      TikLocalUI.toast('TikTokDownloader 设置已保存');
+      TikLocalUI.toast(T('settings.tiktok.saved'));
     }).catch((error) => {
-      document.getElementById('tiktok-downloader-hint').textContent = error.message || '保存失败，请稍后再试。';
+      document.getElementById('tiktok-downloader-hint').textContent = error.message || T('settings.tiktok.save_failed');
     });
   });
   document.getElementById('open-radio-pairing').addEventListener('click', openRadioPairing);
@@ -429,7 +450,7 @@
   pairingServerUrl.addEventListener('input', updatePairingWarning);
   copyPairingButton.addEventListener('click', () => void copyPairingLink());
   document.getElementById('generate-radio-pairing').addEventListener('click', (event) => {
-    runButton(event.currentTarget, 'Generating…', async () => {
+    runButton(event.currentTarget, T('settings.pairing.generating'), async () => {
       const payload = await requestJson('/api/radio/pairing-grants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -444,21 +465,21 @@
       openRadioLink.href = pairingLink.value;
       openRadioLink.setAttribute('aria-disabled', 'false');
       startPairingTimer(data.expires_in);
-    }).catch((error) => TikLocalUI.toast(error.message || 'Failed to generate pairing link', 'error'));
+    }).catch((error) => TikLocalUI.toast(error.message || T('settings.pairing.failed'), 'error'));
   });
   document.getElementById('upload-credential').addEventListener('click', (event) => {
     const input = document.getElementById('credential-file');
     const file = input.files?.[0];
-    if (!file) { TikLocalUI.toast('Select a credential file first', 'error'); return; }
-    runButton(event.currentTarget, 'Uploading…', async () => {
+    if (!file) { TikLocalUI.toast(T('settings.cred.select_file'), 'error'); return; }
+    runButton(event.currentTarget, T('settings.cred.uploading'), async () => {
       const formData = new FormData();
       formData.append('file', file);
       await requestForm('/api/download/cookies/upload', formData);
       input.value = '';
       const payload = await requestJson('/api/download/cookies');
       renderCredentials(payload.data?.files || []);
-      TikLocalUI.toast('Credentials updated');
-    }).catch(() => TikLocalUI.toast('Failed to upload credentials', 'error'));
+      TikLocalUI.toast(T('settings.cred.updated'));
+    }).catch(() => TikLocalUI.toast(T('settings.cred.upload_failed'), 'error'));
   });
 
   function formatBytes(bytes) {
@@ -470,8 +491,12 @@
     const list = document.getElementById('trash-list');
     const total = items.reduce((sum, item) => sum + Number(item.size || 0), 0);
     document.getElementById('trash-summary').textContent = items.length
-      ? `${items.length} ${items.length === 1 ? 'item' : 'items'} · ${formatBytes(total)}. Kept for ${retentionDays} days, then removed.`
-      : `Deleted media stays here for ${retentionDays} days.`;
+      ? T(items.length === 1 ? 'settings.trash.summary_one' : 'settings.trash.summary_other', {
+        count: items.length,
+        size: formatBytes(total),
+        days: retentionDays,
+      })
+      : T('settings.trash.retention', { days: retentionDays });
     document.getElementById('empty-trash').hidden = !items.length;
     list.querySelectorAll('.trash-item').forEach((row) => row.remove());
     items.forEach((item) => {
@@ -480,28 +505,28 @@
       row.className = 'settings-row trash-item';
       row.innerHTML = `<span class="setting-icon"><i data-feather="${/\.(jpe?g|png|gif|webp|bmp)$/i.test(item.name) ? 'image' : 'film'}"></i></span><div class="settings-row-main"><div class="settings-row-title trash-name"></div><div class="settings-row-copy"></div></div>`;
       row.querySelector('.trash-name').textContent = item.name;
-      row.querySelector('.settings-row-copy').textContent = `${formatBytes(item.size)} · ${days} days left`;
+      row.querySelector('.settings-row-copy').textContent = `${formatBytes(item.size)} · ${T('settings.trash.days_left', { days })}`;
       const restore = document.createElement('button');
       restore.className = 'settings-action';
       restore.type = 'button';
-      restore.textContent = 'Restore';
+      restore.textContent = T('settings.trash.restore');
       restore.addEventListener('click', () => {
-        runButton(restore, 'Restoring…', async () => {
+        runButton(restore, T('settings.trash.restoring'), async () => {
           const data = await requestJson(`/api/trash/${encodeURIComponent(item.id)}/restore`, { method: 'POST' });
           await Promise.all([loadTrash(), loadStats()]);
-          TikLocalUI.toast(`Restored ${item.name}`, 'success', { label: 'Open', run: () => { location.href = data.url; } });
-        }).catch((error) => TikLocalUI.toast(error.message || 'Restore failed. Please try again.', 'error'));
+          TikLocalUI.toast(T('settings.trash.restored', { name: item.name }), 'success', { label: T('settings.trash.open'), run: () => { location.href = data.url; } });
+        }).catch((error) => TikLocalUI.toast(error.message || T('settings.trash.restore_failed'), 'error'));
       });
       const purge = document.createElement('button');
       purge.className = 'settings-action is-danger';
       purge.type = 'button';
-      purge.textContent = 'Delete';
+      purge.textContent = T('common.delete');
       purge.addEventListener('click', () => {
-        confirmAction(`Delete ${item.name} permanently?`, 'The file is removed from disk and cannot be restored.', 'Delete', 'danger', () => {
-          runButton(purge, 'Deleting…', async () => {
+        confirmAction(T('settings.trash.delete_title', { name: item.name }), T('settings.trash.delete_copy'), T('common.delete'), 'danger', () => {
+          runButton(purge, T('settings.trash.deleting'), async () => {
             await requestJson(`/api/trash/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
             await loadTrash();
-          }).catch(() => TikLocalUI.toast('Delete failed. Please try again.', 'error'));
+          }).catch(() => TikLocalUI.toast(T('settings.trash.delete_failed'), 'error'));
         });
       });
       row.querySelector('.settings-row-main').after(restore, purge);
@@ -515,18 +540,18 @@
       const data = await requestJson('/api/trash');
       renderTrash(data.items || [], data.retention_days || 30);
     } catch (_) {
-      document.getElementById('trash-summary').textContent = 'Trash is unavailable.';
+      document.getElementById('trash-summary').textContent = T('settings.trash.unavailable');
     }
   }
 
   document.getElementById('empty-trash').addEventListener('click', (event) => {
     const button = event.currentTarget;
-    confirmAction('Empty the trash?', 'Every file in the trash is removed from disk and cannot be restored.', 'Empty Trash', 'danger', () => {
-      runButton(button, 'Emptying…', async () => {
+    confirmAction(T('settings.trash.empty_title'), T('settings.trash.empty_copy'), T('settings.trash.empty_action'), 'danger', () => {
+      runButton(button, T('settings.trash.emptying'), async () => {
         const data = await requestJson('/api/trash', { method: 'DELETE' });
         await loadTrash();
-        TikLocalUI.toast(`Deleted ${data.purged} items permanently`);
-      }).catch(() => TikLocalUI.toast('Failed to empty the trash. Please try again.', 'error'));
+        TikLocalUI.toast(T('settings.trash.emptied', { count: data.purged }));
+      }).catch(() => TikLocalUI.toast(T('settings.trash.empty_failed'), 'error'));
     });
   });
 

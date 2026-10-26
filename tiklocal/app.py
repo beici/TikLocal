@@ -33,7 +33,7 @@ from tiklocal.services.auth import AuthStore
 from tiklocal.services.device_auth import DeviceAuthStore
 from tiklocal.services.pairing_grants import PairingGrantStore
 from tiklocal.auth import configure_auth
-from tiklocal.i18n import detect_locale, js_catalog, translate
+from tiklocal.i18n import current_locale, js_catalog, translate
 from tiklocal.radio_client import register_radio_client_routes
 from tiklocal.paths import (
     get_metadata_path,
@@ -154,7 +154,7 @@ def create_app(test_config=None):
 
     @app.context_processor
     def app_identity_context():
-        locale = detect_locale(request.cookies.get, request.headers.get('Accept-Language'))
+        locale = current_locale()
 
         def t(key: str, **params: object) -> str:
             return translate(locale, key, **params)
@@ -170,7 +170,7 @@ def create_app(test_config=None):
 
     @app.template_filter('timestamp_to_date')
     def timestamp_to_date(timestamp):
-        locale = detect_locale(request.cookies.get, request.headers.get('Accept-Language'))
+        locale = current_locale()
         try:
             moment = datetime.datetime.fromtimestamp(timestamp)
         except (ValueError, OSError):
