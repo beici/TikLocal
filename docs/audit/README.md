@@ -32,6 +32,8 @@
 
 第 05 轮结束后：`pytest -q` = **2 failed / 394 passed / 6 skipped**，失败项不变（新增 13 个回归用例：`tests/test_round05_regressions.py`）。
 
+第 05 轮收尾（2026-10-27）：把那两个 `stat.S_IMODE(...) == 0o600` 断言改为仅在非 Windows 上执行（Windows 的 `os.chmod` 只切换只读位，模式位恒为 `0o666`，属平台差异而非产品缺陷）。当前基线：**398 passed / 6 skipped / 0 failed**，此后任何失败都是回归。
+
 ## 目录
 
 - `round-NN.md`：每轮审查报告（发现、复现、处置、检索、修复、验证）

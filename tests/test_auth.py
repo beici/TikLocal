@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import stat
 
@@ -59,7 +60,9 @@ def test_auth_store_hashes_password_and_increments_revision(tmp_path):
     assert data['created_at'].endswith('+00:00')
     assert data['updated_at'].endswith('+00:00')
     assert store.verify(PASSWORD)
-    assert stat.S_IMODE(auth_path.stat().st_mode) == 0o600
+    if os.name != 'nt':
+        # Windows keeps only the read-only flag, so POSIX mode bits cannot be asserted there.
+        assert stat.S_IMODE(auth_path.stat().st_mode) == 0o600
 
     previous_secret = store.secret_key
     store.set_password('another-private-password')

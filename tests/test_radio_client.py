@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import stat
 from concurrent.futures import ThreadPoolExecutor
@@ -74,7 +75,9 @@ def test_device_auth_store_only_persists_token_hash(tmp_path):
     assert payload["devices"][0]["auth_revision"] == 3
     assert store.verify(credential.token, auth_revision=3)
     assert not store.verify(credential.token, auth_revision=4)
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name != "nt":
+        # Windows keeps only the read-only flag, so POSIX mode bits cannot be asserted there.
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
     assert store.revoke(credential.device_id)
     assert not store.verify(credential.token, auth_revision=3)
