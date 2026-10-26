@@ -51,8 +51,8 @@
     <a class="author-tile" href="{{ tile.detail_url }}"
        aria-label="{{ t('author.tile.video') if tile.plays else t('author.tile.image') }}">
       {% if tile.plays %}
-      <video class="author-tile-media author-tile-video" src="{{ tile.media_url }}#t=0.1"
-             muted playsinline preload="metadata" aria-hidden="true" tabindex="-1"></video>
+      <img class="author-tile-media author-tile-image" src="{{ tile.thumb_url }}" alt=""
+           loading="lazy" decoding="async">
       <span class="author-tile-play" aria-hidden="true">
         <svg viewBox="0 0 24 24" width="15" height="15" focusable="false">
           <path d="M8 5.2v13.6L19 12z" fill="currentColor"/>
@@ -78,6 +78,15 @@
     <section class="author-picker-card" role="dialog" aria-modal="true"
              aria-labelledby="author-picker-title">
       <h2 class="author-picker-title" id="author-picker-title">{{ t('author.picker.title') }}</h2>
+      <div class="author-picker-url">
+        <label class="author-picker-label" for="author-profile-url">{{ t('author.sync.url_label') }}</label>
+        <input class="author-picker-input" id="author-profile-url" type="url" inputmode="url"
+               data-author-profile-url placeholder="{{ t('author.sync.url_placeholder') }}"
+               aria-label="{{ t('author.sync.url_label') }}" autocomplete="off" spellcheck="false">
+        <p class="author-picker-copy">{{ t('author.sync.url_copy') }}</p>
+        <button class="author-picker-action" type="button" data-author-url-sync>{{ t('author.sync.url_run') }}</button>
+      </div>
+      <p class="author-picker-divider">{{ t('author.sync.or_search') }}</p>
       <form class="author-picker-form" data-author-search-form>
         <input class="author-picker-input" type="search" name="keyword" data-author-keyword
                value="{{ search_default }}" placeholder="{{ t('author.picker.placeholder') }}"

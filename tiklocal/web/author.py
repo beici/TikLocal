@@ -12,7 +12,11 @@ The refresh endpoint is a thin wrapper over
 ``TikTokDownloadService.refresh_author_profile``; it is only reachable while a
 sidecar base URL is configured. Douyin nicknames are not unique, so the search
 endpoint feeds a picker and the refresh endpoint reports an ambiguous keyword as
-HTTP 409 with the matching accounts instead of guessing one.
+HTTP 409 with the matching accounts instead of guessing one. The sync endpoints
+take the exact route instead: an author home-page link yields the ``sec_uid``,
+the account timeline yields a work id, and that work's detail payload carries
+the real ``unique_id`` plus the numeric ``uid`` that has to match the export
+folder before anything is cached.
 """
 
 from __future__ import annotations
@@ -61,6 +65,26 @@ def format_count(value) -> str:
     if count < COMPACT_COUNT_THRESHOLD:
         return str(count)
     return f'{count / TEN_THOUSAND:.1f}{t("author.unit.ten_thousand")}'
+
+
+def parse_sync_text(text) -> list[dict]:
+    """Parse pasted sync lines into ``{source_id, profile_url}`` entries.
+
+    One author per line, either ``<source_id>|<profile_url>`` or a bare
+    home-page link (matched later through the UID inside the author block).
+    Blank lines and ``#`` comments are skipped.
+    """
+    entries = []
+    for raw_line in str(text or '').splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+        source_id, separator, rest = line.partition('|')
+        if separator:
+            entries.append({'source_id': source_id.strip(), 'profile_url': rest.strip()})
+        else:
+            entries.append({'source_id': '', 'profile_url': line})
+    return entries
 
 
 def build_tiles(records) -> list[dict]:
@@ -194,3 +218,100 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         except Exception as exc:
             return jsonify({'ok': False, 'error': str(exc) or t('author.refresh.error')}), 502
         return jsonify({'ok': True, 'candidates': candidates})
+
+    def _uid_index() -> dict:
+        """Export-folder UID → source id, so a bare profile link can be matched."""
+        index = {}
+        for source_id, source in (library_service.sources_by_id or {}).items():
+            folder_uid = author_profiles.douyin_id_from_folder(folder_name_for(source))
+            if folder_uid:
+                index.setdefault(folder_uid, str(source_id))
+        return index
+
+    @app.get('/api/author/sources')
+    def author_sources():
+        """Every media source as an author row, for the settings sync card."""
+        items = []
+        for source_id, source in (library_service.sources_by_id or {}).items():
+            folder_name = folder_name_for(source)
+            profile = author_profiles.resolve_profile(source_id, folder_name=folder_name)
+            items.append({
+                'source_id': str(source_id),
+                'folder_name': folder_name,
+                'display_name': display_name(source_id, folder_name, profile),
+                'douyin_id': str(profile.get('douyin_id') or ''),
+                'nickname': str(profile.get('name') or ''),
+                'has_profile': bool(author_profiles.load_profile(source_id)),
+                'avatar_url': f'/author/{quote(str(source_id))}/avatar',
+            })
+        items.sort(key=lambda item: (item['display_name'].lower(), item['source_id']))
+        return jsonify({'ok': True, 'items': items})
+
+    @app.post('/api/author/sync')
+    def author_sync():
+        """Sync author profiles from home-page links, one line per author.
+
+        Accepts ``{items: [{source_id?, profile_url?, aweme_id?}]}`` or ``{text:
+        "<source_id>|<profile_url>"}``. A line without a source id is matched to
+        its export folder through the numeric UID inside the author block, which
+        is the only identity proof a bare link carries.
+        """
+        if not _sidecar_base_url():
+            return jsonify({'ok': False, 'error': t('author.sync.error.unconfigured')}), 400
+        payload = _json_body()
+        entries = []
+        raw_items = payload.get('items')
+        if isinstance(raw_items, list):
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                entries.append({
+                    'source_id': str(item.get('source_id') or '').strip(),
+                    'profile_url': str(item.get('profile_url') or '').strip(),
+                    'aweme_id': str(item.get('aweme_id') or '').strip(),
+                })
+        else:
+            entries = parse_sync_text(payload.get('text'))
+        if not entries:
+            return jsonify({'ok': False, 'error': t('settings.sync.author_need_input')}), 400
+
+        index = _uid_index()
+        results = []
+        try:
+            for entry in entries:
+                source_id = entry.get('source_id') or ''
+                source = _source(source_id) if source_id else None
+                if source_id and source is None:
+                    results.append({
+                        'ok': False,
+                        'source_id': source_id,
+                        'error': t('author.sync.error.unknown_source_id', id=source_id),
+                    })
+                    continue
+                entry['folder_uid'] = (
+                    author_profiles.douyin_id_from_folder(folder_name_for(source)) if source else ''
+                )
+                results.extend(tiktok_service.sync_author_profiles([entry], source_lookup=index.get))
+        except TikTokDownloaderError as exc:
+            # The batch stopped early: keep the authors that already synced.
+            synced = len([item for item in results if item.get('ok')])
+            return jsonify({'ok': False, 'error': str(exc), 'items': results, 'synced': synced}), 502
+        except Exception as exc:  # a sidecar hiccup must never become a 500 page
+            synced = len([item for item in results if item.get('ok')])
+            return jsonify({
+                'ok': False,
+                'error': str(exc) or t('author.sync.error.unknown'),
+                'items': results,
+                'synced': synced,
+            }), 502
+
+        synced = [item for item in results if item.get('ok')]
+        if results and not synced:
+            return jsonify({
+                'ok': False,
+                'error': str(results[0].get('error') or t('author.sync.error.unknown')),
+                'items': results,
+                'synced': 0,
+            }), 502
+        return jsonify({'ok': True, 'items': results, 'synced': len(synced)})
+

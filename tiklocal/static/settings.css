@@ -247,3 +247,26 @@ body[data-nav-context="settings"] {
 @media (prefers-reduced-motion: reduce) {
   .theme-option, .settings-action { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* Author profile sync: paste links, then review the per-author result list. */
+.author-sync-card { display: grid; gap: 14px; }
+.author-sync-form { display: grid; gap: 8px; padding: 0 14px 14px; }
+.author-sync-label { color: var(--settings-muted); font-size: 10px; font-weight: 650; letter-spacing: .02em; }
+.author-sync-input { width: 100%; min-height: 84px; resize: vertical; border: 1px solid var(--settings-line); border-radius: 12px; padding: 11px 12px; color: var(--settings-ink); background: var(--settings-soft); font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.author-sync-input:focus-visible { outline: 2px solid var(--settings-ink); outline-offset: 1px; }
+.author-sync-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.author-sync-result { border: 1px solid var(--settings-line); border-radius: 12px; padding: 10px 12px; background: var(--settings-soft); }
+.author-sync-result[hidden] { display: none; }
+.author-sync-result-copy { margin: 0 0 6px; color: var(--settings-ink); font-size: 11px; font-weight: 650; }
+.author-sync-result-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.author-sync-result-item { color: var(--settings-muted); font-size: 10px; line-height: 1.45; word-break: break-word; }
+.author-sync-result-item.is-error { color: #b4433b; }
+[data-theme="dark"] .author-sync-result-item.is-error { color: #e69a93; }
+.author-sync-sources { display: grid; gap: 6px; padding: 0 14px 14px; }
+.author-sync-sources-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.author-sync-count { color: var(--settings-muted); font-size: 10px; }
+.author-sync-list { display: grid; gap: 6px; }
+.author-sync-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; border: 1px solid var(--settings-line); border-radius: 12px; padding: 8px 10px; background: var(--settings-soft); }
+.author-sync-avatar { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; background: var(--settings-soft); }
+.author-sync-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.author-sync-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

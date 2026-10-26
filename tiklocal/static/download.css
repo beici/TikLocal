@@ -296,3 +296,47 @@ body[data-nav-context="download"] {
   .media-switch { width: 100%; }
   .download-tiktok-options { flex-wrap: wrap; }
 }
+
+/* URL list: import/export plus a server-side text file to share with TikTokDownloader. */
+.download-urls { padding-bottom: 14px; }
+.url-list-toolbar { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 4px 10px; }
+.download-action.is-primary { color: #7a5c14; border-color: rgba(178,139,54,.32); background: rgba(178,139,54,.12); }
+[data-theme="dark"] .download-action.is-primary { color: #e2c07a; border-color: rgba(226,192,122,.28); background: rgba(226,192,122,.12); }
+.url-list-items { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.url-list-item {
+  display: flex; align-items: center; gap: 9px; padding: 8px 10px;
+  border: 1px solid var(--download-line); border-radius: 11px; background: var(--download-card);
+}
+.url-list-mark {
+  flex: 0 0 auto; min-width: 26px; padding: 2px 5px; border-radius: 6px;
+  background: var(--download-soft); color: var(--download-muted);
+  font-size: 9px; font-weight: 700; letter-spacing: .04em; text-align: center;
+}
+.url-list-url {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  color: var(--download-ink); font-size: 11px;
+}
+.url-list-remove {
+  flex: 0 0 auto; padding: 3px 7px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--download-faint); font-size: 10px; cursor: pointer;
+}
+.url-list-remove:hover { color: #a54a43; background: rgba(165,74,67,.07); }
+.url-list-empty { margin: 2px 4px 0; color: var(--download-faint); font-size: 11px; }
+.url-list-import { margin: 10px 4px 0; }
+.url-list-import summary { color: var(--download-muted); font-size: 11px; font-weight: 620; cursor: pointer; }
+.url-list-textarea {
+  width: 100%; margin-top: 7px; padding: 9px 10px; resize: vertical;
+  border: 1px solid var(--download-line); border-radius: 11px; background: var(--download-card);
+  color: var(--download-ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px; line-height: 1.5;
+}
+.url-list-import .download-action { margin-top: 7px; }
+.url-list-source { margin: 14px 4px 0; padding-top: 12px; border-top: 1px solid var(--download-line); }
+.url-list-source-label { display: block; margin-bottom: 6px; color: var(--download-muted); font-size: 11px; font-weight: 620; }
+.url-list-source-input {
+  width: 100%; min-height: 34px; padding: 0 10px;
+  border: 1px solid var(--download-line); border-radius: 11px; background: var(--download-card);
+  color: var(--download-ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+}
+.url-list-source-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 7px; }
+.url-list-source-copy { margin: 8px 0 0; color: var(--download-faint); font-size: 10px; line-height: 1.5; }

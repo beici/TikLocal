@@ -46,6 +46,35 @@
   </div>
 
   <div class="download-stack">
+    <section id="url-list-section" class="download-section download-urls" aria-labelledby="url-list-title">
+      <div class="download-section-head">
+        <h2 id="url-list-title" class="download-section-title">{{ t('download.urls.title') }}</h2>
+        <span id="url-list-count" class="download-section-count"></span>
+      </div>
+      <div class="url-list-toolbar">
+        <button id="url-list-queue" class="download-action is-primary" type="button"><i data-feather="download-cloud"></i><span>{{ t('download.urls.queue') }}</span></button>
+        <a id="url-list-export" class="download-action" href="/api/download/urls/export" download="download-urls.txt"><i data-feather="upload"></i><span>{{ t('download.urls.export') }}</span></a>
+        <button id="url-list-clear" class="download-action is-danger" type="button"><i data-feather="trash-2"></i><span>{{ t('download.urls.clear') }}</span></button>
+      </div>
+      <ol id="url-list-items" class="url-list-items"></ol>
+      <p id="url-list-empty" class="url-list-empty">{{ t('download.urls.empty') }}</p>
+      <details class="url-list-import">
+        <summary>{{ t('download.urls.input_label') }}</summary>
+        <textarea id="url-list-import-text" class="url-list-textarea" rows="5" spellcheck="false" placeholder="{{ t('download.urls.input_placeholder') }}"></textarea>
+        <button id="url-list-import" class="download-action" type="button">{{ t('download.urls.import') }}</button>
+      </details>
+      <div class="url-list-source">
+        <label class="url-list-source-label" for="url-list-source-path">{{ t('download.urls.source_label') }}</label>
+        <input id="url-list-source-path" class="url-list-source-input" type="text" spellcheck="false" placeholder="{{ t('download.urls.source_placeholder') }}">
+        <div class="url-list-source-actions">
+          <button id="url-list-save-path" class="download-action" type="button">{{ t('download.urls.save_path') }}</button>
+          <button id="url-list-pull" class="download-action" type="button">{{ t('download.urls.pull') }}</button>
+          <button id="url-list-push" class="download-action" type="button">{{ t('download.urls.push') }}</button>
+        </div>
+        <p class="url-list-source-copy">{{ t('download.urls.source_copy') }}</p>
+      </div>
+    </section>
+
     <section id="active-section" class="download-section" hidden aria-labelledby="active-title">
       <div class="download-section-head">
         <h2 id="active-title" class="download-section-title">{{ t('download.active_title') }}</h2>

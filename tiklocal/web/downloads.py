@@ -5,6 +5,7 @@ from tiklocal.services.downloader import (
     DEFAULT_DOWNLOAD_CONFIG, validate_download_config, validate_download_url,
 )
 from tiklocal.services.tiktok_downloader import TikTokDownloaderError
+from tiklocal.services.url_list import UrlListStore, format_text, parse_text
 
 
 def register_download_routes(app, download_manager, library_service, tiktok_service=None):
@@ -77,6 +78,89 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         except ValueError as exc:
             return {'success': False, 'error': str(exc)}, 400
         return {'success': True, 'data': data}
+
+    def url_list_store():
+        return UrlListStore()
+
+    @app.route('/api/download/urls', methods=['GET', 'POST'])
+    def api_download_urls():
+        store = url_list_store()
+        if request.method == 'GET':
+            return {'success': True, 'data': store.snapshot()}
+
+        payload = request.get_json(silent=True) or {}
+        action = str(payload.get('action') or 'replace')
+        text = str(payload.get('text') or '')
+        raw_lines = payload.get('lines')
+        lines = [str(item) for item in raw_lines] if isinstance(raw_lines, list) else parse_text(text)
+        try:
+            if action == 'replace':
+                store.replace(lines)
+            elif action == 'add':
+                store.add(lines)
+            elif action == 'remove':
+                store.remove(str(payload.get('url') or ''))
+            elif action == 'clear':
+                store.clear()
+            elif action == 'source':
+                store.set_source_path(str(payload.get('source_path') or ''))
+            else:
+                return {'success': False, 'error': t('download.urls.error')}, 400
+        except ValueError as exc:
+            return {'success': False, 'error': str(exc)}, 400
+        except OSError as exc:
+            return {'success': False, 'error': str(exc)}, 400
+
+        return {'success': True, 'data': store.snapshot()}
+
+    @app.route('/api/download/urls/export')
+    def api_download_urls_export():
+        body = format_text(url_list_store().lines())
+        response = app.response_class(body, mimetype='text/plain; charset=utf-8')
+        response.headers['Content-Disposition'] = 'attachment; filename="download-urls.txt"'
+        return response
+
+    @app.route('/api/download/urls/sync', methods=['POST'])
+    def api_download_urls_sync():
+        payload = request.get_json(silent=True) or {}
+        direction = str(payload.get('direction') or 'pull')
+        store = url_list_store()
+        try:
+            if 'source_path' in payload:
+                store.set_source_path(str(payload.get('source_path') or ''))
+            if direction == 'pull':
+                result = store.pull()
+            elif direction == 'push':
+                result = store.push()
+            else:
+                return {'success': False, 'error': t('download.urls.error')}, 400
+        except ValueError as exc:
+            return {'success': False, 'error': str(exc)}, 400
+        except OSError as exc:
+            return {'success': False, 'error': str(exc)}, 400
+
+        data = store.snapshot()
+        data['result'] = result
+        return {'success': True, 'data': data}
+
+    @app.route('/api/download/urls/queue', methods=['POST'])
+    def api_download_urls_queue():
+        payload = request.get_json(silent=True) or {}
+        engine = str(payload.get('engine') or 'yt-dlp')
+        save_mode = str(payload.get('save_mode') or 'root')
+        store = url_list_store()
+
+        queued: list[dict] = []
+        failed: list[dict] = []
+        for url in store.lines():
+            try:
+                job = download_manager.enqueue(url, save_mode=save_mode, engine=engine)
+            except (RuntimeError, ValueError) as exc:
+                failed.append({'url': url, 'error': str(exc)})
+                continue
+            queued.append({'url': url, 'job_id': job.get('id', '')})
+
+        return {'success': True, 'data': {'queued': len(queued), 'failed': failed, 'items': queued}}
 
     @app.route('/api/download/jobs', methods=['GET', 'POST'])
     def api_download_jobs():

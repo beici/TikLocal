@@ -12,7 +12,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from tiklocal.i18n import t
@@ -28,6 +28,10 @@ DEFAULT_TIKTOK_DOWNLOADER_CONFIG: dict[str, Any] = {
 
 TIKTOK_DOWNLOADER_TABS = {"post", "favorite", "collection"}
 
+# Walking an author timeline makes the sidecar scrape the whole post list, which
+# routinely takes well over a minute, so that single hop gets its own budget.
+AUTHOR_ACCOUNT_TIMEOUT_SEC = 150
+
 # Keys that mark a single-object response as one work item (the sidecar answers
 # ``/douyin/detail`` with an object, but every other endpoint with a list).
 _WORK_ITEM_KEYS = frozenset({"aweme_id", "id", "desc", "downloads", "author", "video", "images"})
@@ -39,6 +43,15 @@ _DOUYIN_DETAIL_SHARE_PATTERN = re.compile(r"https?://www\.iesdouyin\.com/share/(
 _DOUYIN_DETAIL_MODAL_PATTERN = re.compile(r"modal_id=(\d{15,21})\b")
 _DOUYIN_ACCOUNT_LINK_PATTERN = re.compile(r"https?://(?:www\.)?douyin\.com/user/([A-Za-z0-9_\-]+)")
 _DOUYIN_ACCOUNT_SHARE_PATTERN = re.compile(r"https?://www\.iesdouyin\.com/share/user/([A-Za-z0-9_=\-]+)")
+# Author home page links and bare ``sec_uid`` values, used by the profile sync
+# that proves identity through the account timeline instead of a name search.
+_DOUYIN_PROFILE_URL_PATTERN = re.compile(r"https?://(?:www\.|m\.)?douyin\.com/user/([A-Za-z0-9_=\-]+)")
+_DOUYIN_PROFILE_PATH_PATTERN = re.compile(r"(?:^|/)user/([A-Za-z0-9_=\-]+)")
+_SEC_UID_PATTERN = re.compile(r"^[A-Za-z0-9_=\-]{8,200}$")
+# A work link resolves an author in one request, so the sync prefers it over
+# walking the whole account timeline.
+_AWEME_ID_PATTERN = re.compile(r"/(?:video|note|slides)/(\d{15,21})")
+_BARE_AWEME_ID_PATTERN = re.compile(r"^\d{15,21}$")
 _DOUYIN_MIX_LINK_PATTERN = re.compile(r"https?://www\.douyin\.com/collection/(\d{15,21})")
 _DOUYIN_MIX_SHARE_PATTERN = re.compile(r"https?://www\.iesdouyin\.com/share/mix/detail/(\d{15,21})")
 _DOUYIN_SHORT_LINK_PATTERN = re.compile(r"https?://v\.douyin\.com/[A-Za-z0-9_\-]+")
@@ -150,6 +163,49 @@ def parse_platform_link(text: str) -> dict[str, Any] | None:
     return None
 
 
+def parse_profile_sec_uid(text: str) -> str:
+    """Extract the ``sec_uid`` of a Douyin author home page.
+
+    Accepts ``https://www.douyin.com/user/<sec_uid>?...``, a bare
+    ``/user/<sec_uid>`` path and a naked ``sec_uid``. Anything else raises
+    ``ValueError`` so the caller can report a per-line problem instead of
+    guessing which account was meant.
+    """
+    if not isinstance(text, str):
+        raise ValueError(t('author.sync.error.profile_url'))
+    candidate = text.strip()
+    if not candidate:
+        raise ValueError(t('author.sync.error.profile_url'))
+
+    for pattern in (_DOUYIN_PROFILE_URL_PATTERN, _DOUYIN_PROFILE_PATH_PATTERN):
+        match = pattern.search(candidate)
+        if match:
+            return match.group(1)
+
+    if _SEC_UID_PATTERN.match(candidate):
+        return candidate
+    raise ValueError(t('author.sync.error.profile_url'))
+
+
+def parse_aweme_id(text: str) -> str:
+    """Extract a work id from a Douyin work link, or from a bare id.
+
+    Reading one work is far faster than reading an author timeline, so the
+    sync prefers this path when the user pastes a ``/video/<id>`` link.
+    """
+    if not isinstance(text, str):
+        return ""
+    candidate = text.strip()
+    if not candidate:
+        return ""
+    match = _AWEME_ID_PATTERN.search(candidate)
+    if match:
+        return match.group(1)
+    if _BARE_AWEME_ID_PATTERN.match(candidate):
+        return candidate
+    return ""
+
+
 class TikTokDownloaderClient:
     """Minimal HTTP client for the TikTokDownloader Web API."""
 
@@ -241,13 +297,17 @@ class TikTokDownloaderClient:
 
     def fetch_account(
         self, sec_user_id: str, tab: str = "post", count: int = 18,
-        platform: str = "douyin", *, source: bool = False,
+        platform: str = "douyin", *, source: bool = False, pages: int = 0,
     ) -> list[dict[str, Any]]:
         if tab not in TIKTOK_DOWNLOADER_TABS:
             raise ValueError(t('download.error.tiktok_tab'))
         payload: dict[str, Any] = {"sec_user_id": str(sec_user_id), "tab": tab, "count": int(count)}
         if source:
             payload["source"] = True
+        if pages:
+            # The sidecar pages the timeline itself; one page is enough to reach
+            # the newest work id for the author-profile sync.
+            payload["pages"] = int(pages)
         return self._fetch_items(f"/{platform}/account", payload)
 
     def fetch_mix(self, mix_id: str, count: int = 18, platform: str = "douyin", *, source: bool = False) -> list[dict[str, Any]]:
@@ -448,6 +508,29 @@ def _pick_search_match(users: list[dict[str, Any]], keyword: str) -> dict[str, A
     return matches[0] if matches else {}
 
 
+def _author_from_items(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return the first non-empty ``author`` block of a sidecar item list."""
+    for item in items or ():
+        if not isinstance(item, dict):
+            continue
+        author = item.get("author")
+        if isinstance(author, dict) and author:
+            return author
+    return {}
+
+
+def _first_aweme_id(items: list[dict[str, Any]]) -> str:
+    """Return the first work id of an account timeline, '' when there is none."""
+    for item in items or ():
+        if not isinstance(item, dict):
+            continue
+        for key in ("aweme_id", "id"):
+            value = str(item.get(key) or "").strip()
+            if value.isdigit():
+                return value
+    return ""
+
+
 class TikTokDownloadService:
     """Resolves links through the sidecar and enqueues direct download jobs."""
 
@@ -467,9 +550,13 @@ class TikTokDownloadService:
                     merged[key] = section.get(key)
         return merged
 
-    def _client(self) -> TikTokDownloaderClient:
+    def _client(self, *, timeout_sec: float | None = None) -> TikTokDownloaderClient:
         config = self.get_config()
-        return TikTokDownloaderClient(config["base_url"], token=config["token"], timeout_sec=config["timeout_sec"])
+        return TikTokDownloaderClient(
+            config["base_url"],
+            token=config["token"],
+            timeout_sec=timeout_sec or config["timeout_sec"],
+        )
 
     def status(self) -> dict[str, Any]:
         """Return the sidecar connection status for the download page."""
@@ -559,6 +646,132 @@ class TikTokDownloadService:
             raise AuthorAmbiguousError(t('download.error.author_ambiguous'), candidates)
         author_profiles.store_author_from_payload(source_id, matches[0])
         return author_profiles.resolve_profile(source_id)
+
+    def fetch_author_profile(self, *, profile_url: str = "", aweme_id: str = "") -> dict[str, Any]:
+        """Resolve an author home page (or a known work id) to the raw author block.
+
+        Douyin nicknames are ambiguous and ``/douyin/search/user`` matches them
+        fuzzily, so identity is proven through the account timeline instead: the
+        profile link yields a ``sec_uid``, ``/douyin/account`` with ``source:
+        true`` yields the newest ``aweme_id``, and ``/douyin/detail`` with
+        ``source: true`` yields the ``author`` block that carries the real
+        ``unique_id`` and the numeric ``uid``. A file name that already contains
+        the work id skips the account hop.
+        """
+        config = self.get_config()
+        if not config["base_url"]:
+            raise TikTokDownloaderError(t('author.sync.error.unconfigured'))
+        client = self._client()
+        work_id = str(aweme_id or "").strip() or parse_aweme_id(profile_url)
+        if not work_id:
+            sec_user_id = parse_profile_sec_uid(profile_url)
+            # The sidecar validates ``count`` with ``ge=5``; one page is enough
+            # to reach the newest work of the author. Reading a timeline is the
+            # slow hop (tens of seconds), so it gets its own generous timeout.
+            timeline_client = self._client(
+                timeout_sec=max(int(config["timeout_sec"] or 0), AUTHOR_ACCOUNT_TIMEOUT_SEC),
+            )
+            try:
+                works = timeline_client.fetch_account(
+                    sec_user_id, count=5, platform="douyin", source=True, pages=1,
+                )
+            except TikTokDownloaderError as exc:
+                raise TikTokDownloaderError(t('author.sync.error.profile_slow')) from exc
+            work_id = _first_aweme_id(works)
+            if not work_id:
+                raise TikTokDownloaderError(t('author.sync.error.no_works'))
+        author = _author_from_items(client.fetch_detail(work_id, platform="douyin", source=True))
+        if not author:
+            raise TikTokDownloaderError(t('author.sync.error.no_author'))
+        return author
+
+    def store_author_block(
+        self, source_id: str, author: dict[str, Any], *, folder_uid: str = "",
+    ) -> dict[str, Any]:
+        """Verify the author owns the source folder, then cache and describe it.
+
+        The export folder is named ``UID<uid>_...`` and the author block carries
+        the same numeric ``uid``, so a mismatch means the pasted link points at
+        a different account and nothing is written.
+        """
+        block = author if isinstance(author, dict) else {}
+        uid = str(block.get("uid") or "").strip()
+        expected = str(folder_uid or "").strip()
+        if expected and uid and uid != expected:
+            raise TikTokDownloaderError(t('author.sync.error.uid_mismatch', uid=uid, folder=expected))
+        profile = author_profiles.store_author_from_payload(source_id, {"author": block})
+        return {
+            "source_id": str(source_id or ""),
+            "nickname": str(block.get("nickname") or profile.get("name") or ""),
+            "unique_id": str(block.get("unique_id") or profile.get("douyin_id") or ""),
+            "short_id": str(block.get("short_id") or ""),
+            "uid": uid,
+            "follower_count": block.get("follower_count"),
+            "total_favorited": block.get("total_favorited"),
+            "avatar_saved": bool(profile.get("avatar_cached")),
+        }
+
+    def sync_author_profile(
+        self,
+        source_id: str,
+        *,
+        profile_url: str = "",
+        aweme_id: str = "",
+        folder_uid: str = "",
+    ) -> dict[str, Any]:
+        """Sync one author's nickname, Douyin id and avatar into the profile cache."""
+        author = self.fetch_author_profile(profile_url=profile_url, aweme_id=aweme_id)
+        return self.store_author_block(source_id, author, folder_uid=folder_uid)
+
+    def sync_author_profiles(
+        self,
+        entries: list[dict[str, Any]],
+        *,
+        source_lookup: Callable[[str], str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Sync several authors; one failure never aborts the rest of the batch.
+
+        Each entry is ``{source_id?, profile_url?, aweme_id?, folder_uid?}``. An
+        entry without a ``source_id`` is matched to its media folder through the
+        ``uid`` inside the author block (``source_lookup(uid) -> source_id``),
+        which is everything a pasted home-page link alone can tell us.
+        """
+        results: list[dict[str, Any]] = []
+        for entry in entries or ():
+            if not isinstance(entry, dict):
+                continue
+            source_id = str(entry.get("source_id") or "").strip()
+            try:
+                profile_url = str(entry.get("profile_url") or "").strip()
+                aweme_id = str(entry.get("aweme_id") or "").strip()
+                folder_uid = str(entry.get("folder_uid") or "").strip()
+                author: dict[str, Any] | None = None
+                if not source_id:
+                    if not callable(source_lookup):
+                        raise ValueError(t('author.sync.error.source_required'))
+                    author = self.fetch_author_profile(profile_url=profile_url, aweme_id=aweme_id)
+                    uid = str(author.get("uid") or "").strip()
+                    source_id = str(source_lookup(uid) or "").strip()
+                    if not source_id:
+                        raise TikTokDownloaderError(t('author.sync.error.unknown_source', uid=uid or "?"))
+                    folder_uid = uid
+                if author is None:
+                    result = self.sync_author_profile(
+                        source_id, profile_url=profile_url, aweme_id=aweme_id, folder_uid=folder_uid,
+                    )
+                else:
+                    result = self.store_author_block(source_id, author, folder_uid=folder_uid)
+            except (TikTokDownloaderError, ValueError) as exc:
+                results.append({"ok": False, "source_id": source_id, "error": str(exc)})
+            except Exception as exc:  # a broken sidecar reply must not kill the batch
+                results.append({
+                    "ok": False,
+                    "source_id": source_id,
+                    "error": str(exc) or t('author.sync.error.unknown'),
+                })
+            else:
+                results.append({"ok": True, **result})
+        return results
 
     def enqueue_from_url(self, url: str, tab: str = "post", count: int = 18) -> dict[str, Any]:
         """Resolve a link into works and enqueue one direct-download job per work."""

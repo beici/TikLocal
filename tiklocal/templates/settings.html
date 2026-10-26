@@ -181,6 +181,36 @@
       </div>
     </section>
 
+    <section aria-labelledby="author-sync-title">
+      <h2 id="author-sync-title" class="settings-section-title">{{ t('settings.sync.author_section') }}</h2>
+      <div class="settings-card author-sync-card">
+        <div class="settings-row">
+          <span class="setting-icon"><i data-feather="user-check"></i></span>
+          <div class="settings-row-main">
+            <div class="settings-row-title">{{ t('settings.sync.author_title') }}</div>
+            <div id="author-sync-summary" class="settings-row-copy">{{ t('common.loading') }}</div>
+          </div>
+          <button id="author-sync-reload" class="settings-action" type="button">{{ t('settings.sync.author_reload') }}</button>
+        </div>
+        <div class="author-sync-form">
+          <label class="author-sync-label" for="author-sync-links">{{ t('settings.sync.author_input_label') }}</label>
+          <textarea id="author-sync-links" class="author-sync-input" rows="4" spellcheck="false" autocomplete="off" placeholder="{{ t('settings.sync.author_placeholder') }}"></textarea>
+          <p class="settings-row-copy">{{ t('settings.sync.author_input_copy') }}</p>
+          <div class="author-sync-actions">
+            <button id="author-sync-run" class="settings-action is-primary" type="button">{{ t('settings.sync.author_run') }}</button>
+          </div>
+          <div id="author-sync-result" class="author-sync-result" aria-live="polite" hidden></div>
+        </div>
+        <div class="author-sync-sources">
+          <div class="author-sync-sources-head">
+            <span class="settings-row-title">{{ t('settings.sync.author_sources_title') }}</span>
+            <span id="author-sync-count" class="author-sync-count"></span>
+          </div>
+          <div id="author-sync-source-list" class="author-sync-list"><div class="settings-row-copy">{{ t('common.loading') }}</div></div>
+        </div>
+      </div>
+    </section>
+
     {% if similarity_enabled %}
     <section aria-label="{{ t('settings.experiments.title') }}">
       <h2 class="settings-section-title">{{ t('settings.experiments.title') }}</h2>

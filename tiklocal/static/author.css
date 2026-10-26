@@ -255,6 +255,52 @@ body.author-picker-open { overflow: hidden; }
   font-size: 15px;
   font-weight: 600;
 }
+.author-picker-url {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+.author-picker-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.62);
+}
+.author-picker-copy {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.42);
+}
+.author-picker-action {
+  justify-self: start;
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  background: #fe2c55;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.18s ease;
+}
+.author-picker-action:hover { filter: brightness(1.08); }
+.author-picker-action[disabled] { opacity: 0.6; cursor: progress; }
+.author-picker-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 10px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.36);
+}
+.author-picker-divider::before,
+.author-picker-divider::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.12);
+}
 .author-picker-form {
   display: flex;
   gap: 8px;

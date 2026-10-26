@@ -57,6 +57,14 @@ def get_download_sources_path() -> Path:
     return get_data_dir() / 'download_sources.json'
 
 
+def get_download_urls_path() -> Path:
+    return get_data_dir() / 'download-urls.txt'
+
+
+def get_download_urls_config_path() -> Path:
+    return get_data_dir() / 'download-urls.json'
+
+
 def get_collections_path() -> Path:
     return get_data_dir() / 'collections.json'
 

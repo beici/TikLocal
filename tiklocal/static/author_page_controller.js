@@ -29,6 +29,8 @@
   const form = picker.querySelector('[data-author-search-form]');
   const input = picker.querySelector('[data-author-keyword]');
   const searchButton = picker.querySelector('.author-picker-search');
+  const urlInput = picker.querySelector('[data-author-profile-url]');
+  const urlButton = picker.querySelector('[data-author-url-sync]');
   const list = picker.querySelector('[data-author-candidates]');
   const hint = picker.querySelector('[data-author-hint]');
   let busy = false;
@@ -37,6 +39,8 @@
     busy = value;
     if (searchButton) searchButton.disabled = value;
     if (input) input.disabled = value;
+    if (urlButton) urlButton.disabled = value;
+    if (urlInput) urlInput.disabled = value;
     list?.classList.toggle('is-busy', value);
   }
 
@@ -180,14 +184,48 @@
     }
   }
 
+  async function syncWithUrl() {
+    if (busy) return;
+    const profileUrl = (urlInput?.value || '').trim();
+    if (!profileUrl) {
+      showHint(T('author.sync.error.profile_url'));
+      urlInput?.focus();
+      return;
+    }
+    setBusy(true);
+    showHint(T('author.sync.busy'));
+    try {
+      // The exact chain: link → sec_uid → account → work → author block, and
+      // the author uid has to match this export folder before anything is saved.
+      const response = await fetch('/api/author/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: [{ source_id: sourceId, profile_url: profileUrl }] }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      const result = Array.isArray(payload.items) ? payload.items[0] : null;
+      if (payload.ok && result && result.ok) {
+        window.location.reload();
+        return;
+      }
+      showHint((result && result.error) || payload.error || T('author.sync.error.unknown'));
+    } catch (error) {
+      showHint(T('author.sync.error.unknown'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function openPicker() {
     picker.hidden = false;
     document.body.classList.add('author-picker-open');
     const fallback = page.dataset.authorName || '';
     if (input && !input.value.trim() && fallback) input.value = fallback;
-    if (input) {
-      input.focus();
-      input.select();
+    // The home-page link is the exact route; the nickname search is the fallback.
+    const target = urlInput || input;
+    if (target) {
+      target.focus();
+      target.select();
     }
   }
 
@@ -199,6 +237,12 @@
   }
 
   syncButton.addEventListener('click', openPicker);
+  urlButton?.addEventListener('click', syncWithUrl);
+  urlInput?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    syncWithUrl();
+  });
   form?.addEventListener('submit', (event) => {
     event.preventDefault();
     search();

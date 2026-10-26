@@ -342,6 +342,159 @@
     }
   }
 
+  function urlListElements() {
+    return {
+      section: document.getElementById('url-list-section'),
+      items: document.getElementById('url-list-items'),
+      empty: document.getElementById('url-list-empty'),
+      count: document.getElementById('url-list-count'),
+      sourcePath: document.getElementById('url-list-source-path'),
+      importText: document.getElementById('url-list-import-text'),
+    };
+  }
+
+  function renderUrlList(data) {
+    const els = urlListElements();
+    if (!els.items) return;
+    const lines = Array.isArray(data.lines) ? data.lines : [];
+    els.count.textContent = T('download.urls.summary', { count: lines.length });
+    els.empty.hidden = lines.length > 0;
+    els.items.innerHTML = lines.map((url) => `
+      <li class="url-list-item">
+        <span class="url-list-mark">${escapeHtml(platformMark(url))}</span>
+        <span class="url-list-url" title="${escapeHtml(url)}">${escapeHtml(url)}</span>
+        <button class="url-list-remove" type="button" data-url-remove="${escapeHtml(url)}">${escapeHtml(T('download.urls.remove'))}</button>
+      </li>
+    `).join('');
+    if (els.sourcePath && document.activeElement !== els.sourcePath) {
+      els.sourcePath.value = data.source_path || '';
+    }
+  }
+
+  async function refreshUrlList() {
+    try {
+      const data = await api('/api/download/urls');
+      renderUrlList(data);
+      return data;
+    } catch (error) {
+      TikLocalUI.toast(error.message, 'error');
+      return null;
+    }
+  }
+
+  function urlListSourcePath() {
+    const els = urlListElements();
+    return els.sourcePath ? els.sourcePath.value.trim() : '';
+  }
+
+  function initUrlList() {
+    const els = urlListElements();
+    if (!els.section) return;
+
+    els.items?.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-url-remove]');
+      if (!button) return;
+      button.disabled = true;
+      try {
+        const data = await api('/api/download/urls', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'remove', url: button.dataset.urlRemove }),
+        });
+        renderUrlList(data);
+      } catch (error) {
+        TikLocalUI.toast(error.message, 'error');
+        button.disabled = false;
+      }
+    });
+
+    document.getElementById('url-list-import')?.addEventListener('click', async () => {
+      const text = els.importText ? els.importText.value : '';
+      if (!text.trim()) return;
+      try {
+        const data = await api('/api/download/urls', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'add', text }),
+        });
+        renderUrlList(data);
+        if (els.importText) els.importText.value = '';
+        const added = Array.isArray(data.lines) ? data.lines.length : 0;
+        TikLocalUI.toast(added ? T('download.urls.imported', { count: added }) : T('download.urls.imported_none'));
+      } catch (error) {
+        TikLocalUI.toast(error.message, 'error');
+      }
+    });
+
+    document.getElementById('url-list-clear')?.addEventListener('click', async () => {
+      const confirmed = await confirmClear({
+        title: T('download.urls.confirm_clear_title'),
+        copy: T('download.urls.confirm_clear_copy'),
+      });
+      if (!confirmed) return;
+      try {
+        const data = await api('/api/download/urls', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'clear' }),
+        });
+        renderUrlList(data);
+        TikLocalUI.toast(T('download.urls.cleared'));
+      } catch (error) {
+        TikLocalUI.toast(error.message, 'error');
+      }
+    });
+
+    document.getElementById('url-list-queue')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        const data = await api('/api/download/urls/queue', {
+          method: 'POST',
+          body: JSON.stringify({ engine: selectedEngine, save_mode: 'root' }),
+        });
+        const failed = Array.isArray(data.failed) ? data.failed.length : 0;
+        TikLocalUI.toast(failed
+          ? T('download.urls.queued_partial', { count: data.queued || 0, failed })
+          : T('download.urls.queued', { count: data.queued || 0 }));
+        lastJobsSignature = '';
+        await refreshJobs({ force: true });
+      } catch (error) {
+        TikLocalUI.toast(error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    const syncWithServer = async (direction) => {
+      try {
+        const data = await api('/api/download/urls/sync', {
+          method: 'POST',
+          body: JSON.stringify({ direction, source_path: urlListSourcePath() }),
+        });
+        renderUrlList(data);
+        const count = Array.isArray(data.lines) ? data.lines.length : 0;
+        TikLocalUI.toast(direction === 'push'
+          ? T('download.urls.pushed', { count })
+          : T('download.urls.pulled', { count }));
+      } catch (error) {
+        TikLocalUI.toast(error.message, 'error');
+      }
+    };
+
+    document.getElementById('url-list-save-path')?.addEventListener('click', async () => {
+      try {
+        const data = await api('/api/download/urls', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'source', source_path: urlListSourcePath() }),
+        });
+        renderUrlList(data);
+        TikLocalUI.toast(T('download.urls.path_saved'));
+      } catch (error) {
+        TikLocalUI.toast(error.message, 'error');
+      }
+    });
+    document.getElementById('url-list-pull')?.addEventListener('click', () => syncWithServer('pull'));
+    document.getElementById('url-list-push')?.addEventListener('click', () => syncWithServer('push'));
+  }
+
   document.addEventListener('DOMContentLoaded', async () => {
     const form = document.getElementById('download-form');
     const urlInput = document.getElementById('download-url');
@@ -431,6 +584,8 @@
     ));
 
     await Promise.all([refreshSetup(), refreshJobs({ force: true })]);
+    initUrlList();
+    await refreshUrlList();
     selectEngine(selectedEngine);
     urlInput?.focus({ preventScroll: true });
   });

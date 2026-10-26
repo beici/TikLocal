@@ -555,6 +555,127 @@
     });
   });
 
+  // Author profile sync: paste one author home page link per line, or
+  // "source id|link" when the folder name carries no UID to match on.
+  const authorSyncInput = document.getElementById('author-sync-links');
+  const authorSyncResult = document.getElementById('author-sync-result');
+  const authorSyncList = document.getElementById('author-sync-source-list');
+
+  function authorSyncSummaryText(items) {
+    const total = items.length;
+    const synced = items.filter((item) => item.has_profile).length;
+    return total
+      ? T('settings.sync.author_summary', { total, synced })
+      : T('settings.sync.author_summary_empty');
+  }
+
+  function renderAuthorSources(items) {
+    document.getElementById('author-sync-summary').textContent = authorSyncSummaryText(items);
+    document.getElementById('author-sync-count').textContent = items.length ? authorSyncSummaryText(items) : '';
+    if (!items.length) {
+      authorSyncList.innerHTML = '<div class="settings-row-copy author-sync-empty"></div>';
+      authorSyncList.querySelector('.author-sync-empty').textContent = T('settings.sync.author_sources_empty');
+      return;
+    }
+    authorSyncList.innerHTML = items.map(() => `
+      <div class="author-sync-row">
+        <img class="author-sync-avatar" src="" alt="">
+        <div class="settings-row-main">
+          <div class="settings-row-title author-sync-name"></div>
+          <div class="settings-row-copy author-sync-meta"></div>
+        </div>
+        <button class="settings-action author-sync-fill" type="button"></button>
+      </div>`).join('');
+    authorSyncList.querySelectorAll('.author-sync-row').forEach((row, index) => {
+      const item = items[index];
+      const avatar = row.querySelector('.author-sync-avatar');
+      avatar.src = item.avatar_url || '';
+      avatar.alt = item.display_name || '';
+      avatar.loading = 'lazy';
+      row.querySelector('.author-sync-name').textContent = item.display_name || item.folder_name || item.source_id;
+      row.querySelector('.author-sync-meta').textContent = [
+        item.douyin_id ? T('author.douyin_id', { id: item.douyin_id }) : '',
+        item.has_profile ? T('settings.sync.author_synced') : T('settings.sync.author_unsynced'),
+      ].filter(Boolean).join(' · ');
+      const fill = row.querySelector('.author-sync-fill');
+      fill.textContent = T('settings.sync.author_sources_fill');
+      fill.addEventListener('click', () => {
+        const line = `${item.source_id}|`;
+        const current = authorSyncInput.value.trim();
+        authorSyncInput.value = current ? `${current}\n${line}` : line;
+        authorSyncInput.focus();
+        authorSyncInput.setSelectionRange(authorSyncInput.value.length, authorSyncInput.value.length);
+      });
+    });
+    feather.replace();
+  }
+
+  function renderAuthorSyncResult(items, synced) {
+    if (!items.length) {
+      authorSyncResult.hidden = true;
+      return;
+    }
+    const failed = items.filter((item) => !item.ok).length;
+    authorSyncResult.hidden = false;
+    authorSyncResult.innerHTML = '<p class="author-sync-result-copy"></p><ul class="author-sync-result-list"></ul>';
+    authorSyncResult.querySelector('.author-sync-result-copy').textContent = failed
+      ? T('settings.sync.author_done', { synced: Number(synced || 0), failed })
+      : T('settings.sync.author_done_clean', { synced: Number(synced || items.length) });
+    const list = authorSyncResult.querySelector('.author-sync-result-list');
+    list.innerHTML = items.map(() => '<li class="author-sync-result-item"></li>').join('');
+    list.querySelectorAll('.author-sync-result-item').forEach((row, index) => {
+      const item = items[index];
+      row.textContent = item.ok
+        ? [item.nickname || item.source_id, item.unique_id].filter(Boolean).join(' · ')
+        : [item.source_id, item.error].filter(Boolean).join(' · ');
+      row.classList.toggle('is-error', !item.ok);
+    });
+  }
+
+  async function loadAuthorSources() {
+    try {
+      const payload = await requestJson('/api/author/sources');
+      renderAuthorSources(payload.items || []);
+    } catch (_) {
+      document.getElementById('author-sync-summary').textContent = T('settings.sync.author_summary_failed');
+      authorSyncList.innerHTML = '<div class="settings-row-copy author-sync-empty"></div>';
+      authorSyncList.querySelector('.author-sync-empty').textContent = T('settings.sync.author_sources_empty');
+    }
+  }
+
+  async function runAuthorSync() {
+    const text = authorSyncInput.value.trim();
+    if (!text) {
+      TikLocalUI.toast(T('settings.sync.author_need_input'), 'error');
+      authorSyncInput.focus();
+      return;
+    }
+    const button = document.getElementById('author-sync-run');
+    await runButton(button, T('settings.sync.author_busy'), async () => {
+      // A partial batch answers 502 while still listing the authors that synced,
+      // so read the body instead of letting requestJson drop it.
+      let payload = {};
+      try {
+        const response = await fetch('/api/author/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        payload = await response.json();
+      } catch (_) {
+        payload = { ok: false, error: T('settings.sync.author_failed') };
+      }
+      renderAuthorSyncResult(payload.items || [], payload.synced);
+      if (!payload.ok) TikLocalUI.toast(payload.error || T('settings.sync.author_failed'), 'error');
+      await loadAuthorSources();
+    });
+  }
+
+  document.getElementById('author-sync-run').addEventListener('click', () => void runAuthorSync());
+  document.getElementById('author-sync-reload').addEventListener('click', (event) => {
+    runButton(event.currentTarget, T('settings.sync.author_busy'), loadAuthorSources).catch(() => {});
+  });
+
   loadStats();
   loadRadioDevices();
   loadTrash();
