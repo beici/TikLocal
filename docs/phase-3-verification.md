@@ -33,13 +33,28 @@ poetry run tiklocal serve --port 8000 --media-source "blogger=E:\path\to\<博主
 - 首次访问会要求设置访问密码，之后用该密码登录。
 - 挂载为 `blogger` 的媒体源，其文件 URI 形如 `@blogger/<文件名>`，界面上的作者名取自源目录名，文案取自文件名。
 
+### 1.1 可选外部工具（缩略图与下载引擎）
+
+```bash
+pip install imageio-ffmpeg gallery-dl yt-dlp   # 或：poetry add imageio-ffmpeg gallery-dl yt-dlp
+```
+
+- `imageio-ffmpeg` 自带一份 ffmpeg 二进制，视频缩略图（作者主页网格、图集封面、收藏页）靠它抓帧；
+  缺失时 `/thumb` 只能返回 1×1 占位图，界面会出现黑块。
+- `gallery-dl`（图片下载）与 `yt-dlp`（视频下载）用于 `/download` 的两个引擎；缺失时页面会显示
+  “组件未就绪”，博主下载（TikTokDownloader）不受影响。
+- 程序不依赖 PATH：`tiklocal/services/download_tools.py:resolve_tool()` 依次尝试
+  环境变量（`TIKLOCAL_FFMPEG` / `TIKLOCAL_GALLERY_DL` / `TIKLOCAL_YT_DLP`）、`PATH`、
+  当前解释器同目录与 `Scripts`/`bin`、`imageio_ffmpeg.get_ffmpeg_exe()`、最后
+  `python -m yt_dlp` / `python -m gallery_dl`。
+
 ## 2. 自动化测试
 
 ```bash
 poetry run pytest -q
 ```
 
-第三阶段结束时的基线：**6 failed / 236 passed / 6 skipped**。这 6 个失败在本阶段之前就存在，与本阶段四个功能无关：
+第三阶段结束时的基线：**6 failed / 323 passed / 6 skipped**。这 6 个失败在本阶段之前就存在，与本阶段四个功能无关：
 
 - `tests/test_auth.py::test_auth_store_hashes_password_and_increments_revision`
 - `tests/test_library_upgrade.py::test_library_images_use_bounded_cached_thumbnails`
@@ -53,6 +68,8 @@ poetry run pytest -q
 ```bash
 poetry run pytest tests/test_feed_mix.py tests/test_douyin_features.py -q   # 抖音模式
 poetry run pytest tests/test_tiktok_downloader.py tests/test_download.py -q # 博主批量下载
+poetry run pytest tests/test_download_urls.py -q                           # 下载链接清单
+poetry run pytest tests/test_author_page.py tests/test_author_sync.py -q    # 作者主页与资料同步
 poetry run pytest tests/test_collections.py -q                             # 合集筛选与整理
 poetry run pytest tests/test_i18n.py -q                                    # 中英文界面
 ```
@@ -79,23 +96,34 @@ Get-ChildItem tiklocal\static\*.js | ForEach-Object { node --check $_.FullName }
    - 点击星形打开合集选择弹窗，勾选后星形变为已收藏，取消后恢复。
    - 点击信息按钮进入详情页。
    - 长文案出现“展开”，点开后为全屏文案层，可用“收起”、Esc 或点击空白处关闭。
+   - 上下滑动切换作品时，右栏心形/星形先复位再同步，不会残留上一个作品的选中态（`is-syncing` 期间关闭过渡与爆裂动画）。
 4. 话题流：点击文案里的任意 `#话题` → 地址变为 `/flow?tag=<话题>`，顶部只显示
    `# 话题 N 个作品` 与返回箭头，列表只剩文案含该话题的作品；点返回回到推荐流。
    不存在的标签显示“这个话题下还没有作品。”与“打开媒体库”入口。
 5. 作者主页：点击右栏头像或 `@作者名` → `/author/<source_id>`，页面为深色抖音风：
-   圆形头像（有缓存用真实头像，否则内置默认头像）、昵称、`抖音号:` 数字、`作品 N`
-   统计、单 `作品` 标签页、三列方形网格（视频显示首帧与播放角标）。无关注/私聊按钮。
+   圆形头像（有缓存用真实头像，否则内置默认头像）、昵称、`抖音号:`、`作品 N` 统计、
+   单 `作品` 标签页、三列方形网格。无关注/私聊按钮。
+   - 网格封面全部走 `/thumb` 缩略图（视频由 ffmpeg 抓帧，图集取首图），滚动到底不应出现黑块；
+     视频格右下角有播放角标。
+   - 未同步资料时 `抖音号:` 显示目录里的数字 UID（本地回退）；同步后显示真实抖音号。
 6. 关闭开关后刷新 `/flow`，旧布局恢复，抖音层消失。
 
 数据来源校验：`GET /api/feed/mix` 的条目应带 `author_name`、`author_url`、`caption_text`；作者名来自媒体源目录名，文案来自文件名。话题流用 `GET /api/feed/mix?tag=<话题>`，返回体多一个 `tag` 字段。
 
-### 3.1 作者资料同步（可选，需要 sidecar）
+### 3.1 作者资料同步（需要 sidecar）
 
-1. 在 `/settings/` → 下载 → TikTokDownloader 填好服务地址后，`/author/<source_id>` 出现“同步资料”按钮（未配置时按钮不出现，页面保持目录名派生的纯本地形态）。
-2. 点“同步资料”弹出账号选择框，输入昵称或抖音号后回车/点搜索；列表显示候选账号的头像、昵称、`抖音号:`、粉丝/获赞。
-3. 抖音昵称不唯一，**必须自己点选**正确账号；点选后页面刷新，昵称、抖音号、粉丝/获赞与头像变成真实数据。
-4. 头像落在 `instance/authors/<source_id>.jpg`，资料落在 `instance/authors/<source_id>.json`；删掉这两个文件即回到默认头像 + 目录名派生。
-5. 服务不可达时给出“无法连接”类错误，不影响页面其它部分。
+前置：`/settings/` → 下载 → TikTokDownloader 填好服务地址（可选 token）。未配置时设置卡片与作者页按钮都不出现，页面保持目录名派生的纯本地形态。
+
+1. 打开 `/settings/`，在「作者资料」卡片里点「刷新」，列出全部媒体源：头像、显示名、`抖音号:`（未同步时是目录里的数字 UID）与同步状态。
+2. 在文本框粘贴链接，每行一个，支持两种写法：
+   - `作品链接`，例如 `https://www.douyin.com/video/<作品ID>` —— **推荐**，一次请求约 5~8 秒；
+   - `媒体源ID|作者主页链接`，例如 `blogger|https://www.douyin.com/user/<sec_uid>` —— 慢路径，需要先读作者作品列表（可能 20 秒以上，超时上限 150 秒）。
+   - 也可以只粘贴作者主页链接（不带媒体源 ID），程序会用返回资料里的数字 UID 反查目录。
+3. 点「同步」，逐条显示结果；成功后该行的 `抖音号:` 变成真实抖音号（例如 `demo0001`）、头像换成真实头像，状态变为「已同步」。
+4. 安全校验：返回资料里的 `uid` 必须与目录名里的数字 UID 完全一致，不一致直接报错并且**不写入任何文件**。
+5. 作者页同样可以同步：`/author/<source_id>` → 「同步资料」，弹窗里优先填「作者主页链接」，昵称搜索仅作兜底。
+6. 头像落在 `instance/authors/<source_id>.jpg`，资料落在 `instance/authors/<source_id>.json`；删掉这两个文件即回到默认头像 + 目录名派生。
+7. 服务不可达 / 主页读取超时时给出对应提示（超时会建议改用作品链接），不影响页面其它部分。
 
 ## 4. 功能二：TikTokDownloader 博主批量下载
 
@@ -106,6 +134,21 @@ Get-ChildItem tiklocal\static\*.js | ForEach-Object { node --check $_.FullName }
 5. 粘贴博主主页链接提交，任务进入下载列表；完成后文件按 `日期-类型-作者-标题` 命名，类型取 `视频` / `图集` / `实况`，多文件作品追加 `_序号`，使实况视频与图片能重新配对。
 6. 失败路径：服务不可达、链接不合法、数量越界都应给出可读错误，且不影响其它任务。
 7. 该功能的真实设备联调（局域网 sidecar 真机）本阶段未完成，留待统一测试。
+
+### 4.1 下载链接清单（导入 / 导出 / 与服务器文件同步）
+
+1. `/download` 顶部出现「链接清单」卡片：标题旁显示 `N 个链接`，工具栏为「全部下载」「导出」「清空」。
+2. 展开「导入链接」，粘贴多行文本后点「导入」：
+   - 空行与 `#` 开头的注释被忽略；非 http(s)、缺主机、超长（>2048）的链接被丢弃；
+   - 重复链接自动去重，顺序保留，上限 5000 行；
+   - 成功后提示「已导入 N 个链接。」，列表每行显示平台徽标（`DY` / `TT`）与「移除」按钮。
+3. 「导出」直接下载 `download-urls.txt`（`text/plain` 附件），内容与清单一致。
+4. 「与服务器文件同步」：填入服务器上的清单路径（例如 `/volume5/data/tiktok/TikTokDownloader-master/download/user-url.txt`），
+   点「保存路径」记住它；「写回文件」把本地清单原子写入该文件，「从文件读取」把文件内容拉回本地清单。
+   - 只接受绝对路径，且不能是目录；文件超过 2 MB 会拒绝读取。
+   - 外部编辑器改完该文件后点「从文件读取」即可看到变化（与 TikTokDownloader 共用同一个 user-url.txt）。
+5. 「全部下载」把清单里每个链接按当前引擎逐个入队，返回入队成功/失败数量；「清空」需二次确认（弹窗提示只清链接、不删已下载文件）。
+6. 接口层同样可用：`GET/POST /api/download/urls`、`GET /api/download/urls/export`、`POST /api/download/urls/sync`、`POST /api/download/urls/queue`。
 
 ## 5. 功能三：合集筛选与批量整理
 
@@ -140,13 +183,17 @@ curl -s -X POST http://127.0.0.1:8000/api/download/jobs -H 'Content-Type: applic
 - 后台 worker 线程里产生的 cookie 相关报错没有请求上下文，固定输出中文；它们会写进下载历史，英文用户可能看到中英混排的一行。
 - 下载历史的 `error_message` 是持久化字段，历史记录不会随语言切换重译。
 - 少数内部状态文案（如“The download manager is closed.”）保留英文，因为已有测试按字面匹配。
-- 6 个既有测试失败见第 2 节，属既有问题。
+- 6 个既有测试失败见第 2 节，属既有问题。其中 `test_thumbnails` 两个用例现在的失败点是
+  `cache_count == 2`（`delete_thumbnail` 按规范化 key 删除，与 `generate_thumbnail` 实际写入的文件名不一致），
+  与阶段三功能无关。
+- 作者资料同步的主页链接路径依赖 sidecar 的 `/douyin/account`，实测该接口可能 20 秒以上甚至超时；
+  优先用作品链接（`/video/<id>`）走快路径。
 - `docs/` 下除本文件与 `docs/tiktok-downloader.md` 外仍为英文，留待统一翻译。
 
 ## 8. 一键回归
 
 ```bash
-poetry run pytest -q                     # 期望 6 failed / 236 passed / 6 skipped
+poetry run pytest -q                     # 期望 6 failed / 323 passed / 6 skipped
 poetry run pytest tests/test_i18n.py -q  # 期望全绿
 ```
 

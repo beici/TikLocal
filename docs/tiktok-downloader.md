@@ -154,3 +154,50 @@ sidecar 不写盘，TikLocal 拿到直链后用自己的下载管线落盘，因
    `/author/<source_id>`，点进去就是本地作者主页。
 
 sidecar 未配置 `base_url` 时按钮不出现，页面保持目录名派生的纯本地形态。
+
+### 精确同步：按链接 + UID 校验（推荐）
+
+实测结论（DouK-Downloader 5.8.stable）：
+
+- `/douyin/search/user` 用**抖音号**当关键字并不精确，返回的仍是同名的模糊结果，
+  所以不能用「抖音号搜索」认领账号；
+- `/douyin/account`（`source: true`）返回的 author 块被**脱敏**：只有
+  `uid` / `nickname` / `avatar_thumb` / `sec_uid`，`unique_id`、`short_id`、
+  `follower_count`、`total_favorited` 全是 `None`，而且经常要 20 秒以上甚至超时；
+- `/douyin/detail`（`source: true`）返回的 `data.author` 才是完整资料：
+  `unique_id`（真实抖音号）、`short_id`、`uid`（等于目录名里的数字 UID）、
+  `follower_count`、`total_favorited`、`signature`、`avatar_larger/medium/thumb`。
+
+因此同步按「链接 → 作品 → 作者块」走，并强制 UID 校验：
+
+1. **快路径（推荐）**：直接给作品链接 `/video/<id>`、`/note/<id>`、`/slides/<id>`
+   或裸作品 ID。`parse_aweme_id()` 取出 ID 后只调一次 `/douyin/detail`，
+   实测约 5~8 秒。
+2. **慢路径**：给作者主页链接 `/user/<sec_user_id>`。`parse_profile_sec_uid()`
+   取出 sec_uid，先 `/douyin/account`（`pages: 1`）拿第一条作品的 `aweme_id`，
+   再走 `/douyin/detail`。该路径超时上限 `AUTHOR_ACCOUNT_TIMEOUT_SEC = 150`，
+   失败时提示改用作品链接。
+3. 拿到 author 块后，`store_author_block()` 会校验 `author.uid` 与目录名里的
+   数字 UID 完全一致；不一致直接报错并且**不写任何文件**，避免把别人的头像
+   和抖音号记到本地作者上。
+4. 批量入口：`POST /api/author/sync`，body 支持
+   `{items: [{source_id?, profile_url?, aweme_id?}]}` 或
+   `{text: "source_id|<链接>"}`（`#` 开头为注释）。不带 `source_id` 时用返回的
+   UID 反查媒体源。设置页「作者资料」卡片就是它的界面：
+   点「刷新」列出媒体源，粘贴若干链接后点「同步」逐条显示结果。
+
+## 下载链接清单（与 TikTokDownloader 共用 user-url.txt）
+
+`tiklocal/services/url_list.py` 维护一份本地清单 `instance/download-urls.txt`
+（每行一个链接，`#` 开头为注释），并记住一个可选的「服务器文件路径」
+（`instance/download-urls.json`），用于和 sidecar 所在的机器共用同一个清单：
+
+- `GET /api/download/urls` 取快照；`POST /api/download/urls` 支持
+  `replace` / `add` / `remove` / `clear` / `source`（设置同步文件路径）；
+- `GET /api/download/urls/export` 导出 `download-urls.txt` 附件；
+- `POST /api/download/urls/sync` 的 `direction` 为 `pull`（从文件读回）
+  或 `push`（原子写回文件）；
+- `POST /api/download/urls/queue` 把清单里每个链接按指定引擎逐个入队。
+
+约束：只接受 http/https、长度 ≤ 2048、最多 5000 行、去重保序；同步文件必须是
+绝对路径且不是目录，读取上限 2 MB。写入使用临时文件 + `os.replace` 的原子替换。
