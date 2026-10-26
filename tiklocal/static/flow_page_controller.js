@@ -1,5 +1,8 @@
   (async () => {
     document.body.classList.add('immersive');
+    // Douyin-style chrome follows the settings toggle; the class gates flow.css.
+    const douyinModeOn = window.localStorage.getItem('douyin_mode') === '1';
+    if (douyinModeOn) document.body.classList.add('douyin');
 
     const feedContainer = document.getElementById('feed-container');
     const videoStartCover = document.getElementById('video-start-cover');
@@ -13,6 +16,20 @@
     const favoriteBtn = document.getElementById('favorite-btn');
     const collectionBtn = document.getElementById('collection-btn');
     const infoBtn = document.getElementById('info-btn');
+
+    const douyinAvatar = document.getElementById('douyin-avatar');
+    const douyinAvatarImg = document.getElementById('douyin-avatar-img');
+    const douyinAvatarChar = document.getElementById('douyin-avatar-char');
+    const douyinFavoriteBtn = document.getElementById('douyin-favorite-btn');
+    const douyinCollectionBtn = document.getElementById('douyin-collection-btn');
+    const douyinInfoBtn = document.getElementById('douyin-info-btn');
+    const douyinAuthor = document.getElementById('douyin-author');
+    const douyinCaption = document.getElementById('douyin-caption');
+    const douyinCaptionText = document.getElementById('douyin-caption-text');
+    const douyinCaptionExpand = document.getElementById('douyin-caption-expand');
+    const douyinCaptionFull = document.getElementById('douyin-caption-full');
+    const douyinCaptionFullText = document.getElementById('douyin-caption-full-text');
+    const douyinCaptionCollapse = document.getElementById('douyin-caption-collapse');
 
     const playStatusIcon = document.getElementById('play-status-icon');
     const customControls = document.getElementById('custom-controls');
@@ -316,6 +333,71 @@
         .replace(/'/g, '&#39;');
     }
 
+    // --- Douyin-style chrome helpers ---
+
+    function douyinCaptionHtml(text) {
+      // Hashtags render in the Douyin topic blue inside otherwise plain text.
+      return escapeHtml(text).replace(/#[^\s#]+/g, (tag) => `<span class="douyin-tag">${tag}</span>`);
+    }
+
+    function mirrorDouyinActions() {
+      if (!douyinFavoriteBtn) return;
+      const liked = favoriteBtn.classList.contains('is-active');
+      douyinFavoriteBtn.classList.toggle('is-active', liked);
+      douyinFavoriteBtn.setAttribute('aria-pressed', String(liked));
+      const collected = collectionBtn.classList.contains('has-collection');
+      douyinCollectionBtn.classList.toggle('is-active', collected);
+      douyinCollectionBtn.setAttribute('aria-pressed', String(collected));
+    }
+
+    function closeDouyinCaptionFull() {
+      if (!douyinCaptionFull) return;
+      douyinCaptionFull.classList.remove('is-open');
+      douyinCaptionFull.hidden = true;
+    }
+
+    function syncDouyinChrome(item) {
+      if (!douyinModeOn || !douyinAuthor) return;
+      const entry = item || {};
+      const author = String(entry.author_name || '');
+      const caption = String(entry.caption_text || '');
+      const authorUrl = String(entry.author_url || '/flow');
+
+      douyinAuthor.hidden = !author;
+      douyinAvatar.hidden = !author;
+      if (author) {
+        douyinAuthor.textContent = `@${author}`;
+        douyinAuthor.href = authorUrl;
+        douyinAvatar.href = authorUrl;
+        douyinAvatarChar.textContent = Array.from(author)[0]?.toUpperCase() || '?';
+      }
+
+      const displayEntry = currentDisplayEntry();
+      const avatarUrl = String(displayEntry?.thumb_url || entry.thumb_url || '');
+      if (author && avatarUrl && douyinAvatarImg.dataset.src !== avatarUrl) {
+        douyinAvatarImg.dataset.src = avatarUrl;
+        douyinAvatarImg.src = avatarUrl;
+        douyinAvatarImg.hidden = false;
+      } else if (!author || !avatarUrl) {
+        douyinAvatarImg.hidden = true;
+      }
+
+      douyinCaption.hidden = !caption;
+      if (caption) {
+        douyinCaptionText.innerHTML = douyinCaptionHtml(caption);
+        douyinCaptionFullText.innerHTML = douyinCaptionHtml(caption);
+        // Whether the two-line clamp truncated only settles after layout.
+        requestAnimationFrame(() => {
+          douyinCaptionExpand.hidden = douyinCaptionText.scrollHeight <= douyinCaptionText.clientHeight + 2;
+        });
+      } else {
+        douyinCaptionExpand.hidden = true;
+        closeDouyinCaptionFull();
+      }
+
+      douyinInfoBtn.href = infoBtn.href;
+    }
+
     async function goNext() {
       if (getCurrentIndex() >= feedItems.length - 1 && flowSession.hasMore()) {
         await loadFeed();
@@ -561,6 +643,8 @@
         playStatusIcon.classList.add('hidden');
         playStatusIcon.classList.remove('visible');
       }
+
+      syncDouyinChrome(item);
     }
 
     function ensureVideoSrc(videoEl) {
@@ -832,6 +916,10 @@
             video.playsInline = true;
             media.appendChild(cover);
             media.appendChild(video);
+            const badge = document.createElement('div');
+            badge.className = 'image-group-live-badge';
+            badge.textContent = '实况';
+            media.appendChild(badge);
             media._liveVideo = video;
             media._loadImage = cover;
           } else if (media instanceof HTMLVideoElement) {
@@ -1121,6 +1209,9 @@
               media_url: item.media_url || '',
               detail_url: item.detail_url || '#',
               thumb_url: item.thumb_url || '',
+              author_name: item.author_name || '',
+              author_url: item.author_url || '',
+              caption_text: item.caption_text || '',
               items: Array.isArray(item.items) ? item.items : [],
               renderChild: typeof mediaEl._renderImageGroup === 'function' ? (index, force = false) => {
                 mediaEl._renderImageGroup(index, force);
@@ -1638,9 +1729,60 @@
       }]);
     });
 
+    if (douyinModeOn && douyinFavoriteBtn) {
+      // The Douyin chrome mirrors the existing controls, whose favorite and
+      // collection state also flips asynchronously, so react to class changes
+      // instead of wiring every producer.
+      new MutationObserver(mirrorDouyinActions).observe(favoriteBtn, { attributes: true, attributeFilter: ['class'] });
+      new MutationObserver(mirrorDouyinActions).observe(collectionBtn, { attributes: true, attributeFilter: ['class'] });
+
+      douyinFavoriteBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        favoriteBtn.click();
+      });
+
+      douyinCollectionBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        collectionBtn.click();
+      });
+
+      douyinInfoBtn.addEventListener('click', () => {
+        const target = activityTarget(currentItem());
+        if (!target) return;
+        postActivity([{
+          session_id: activitySessionId,
+          uri: target.uri,
+          media_type: target.type,
+          surface: 'flow',
+          event: 'open_detail',
+        }]);
+      });
+
+      douyinCaptionExpand.addEventListener('click', (e) => {
+        e.preventDefault();
+        douyinCaptionFull.hidden = false;
+        douyinCaptionFull.classList.add('is-open');
+      });
+
+      douyinCaptionCollapse.addEventListener('click', closeDouyinCaptionFull);
+
+      douyinCaptionFull.addEventListener('click', (event) => {
+        if (event.target === douyinCaptionFull) closeDouyinCaptionFull();
+      });
+
+      // A missing thumbnail falls back to the first-character avatar.
+      douyinAvatarImg.addEventListener('error', () => {
+        douyinAvatarImg.hidden = true;
+      });
+    }
+
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && collections.isOpen()) {
         collections.close();
+        return;
+      }
+      if (event.key === 'Escape' && douyinCaptionFull?.classList.contains('is-open')) {
+        closeDouyinCaptionFull();
         return;
       }
       const target = event.target;

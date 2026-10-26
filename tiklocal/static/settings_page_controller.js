@@ -275,6 +275,15 @@
   window.addEventListener('tiklocal:theme-changed', (event) => syncThemeButtons(event.detail?.preference));
   syncThemeButtons();
 
+  const douyinModeToggle = document.getElementById('douyin-mode-toggle');
+  if (douyinModeToggle) {
+    douyinModeToggle.checked = window.localStorage.getItem('douyin_mode') === '1';
+    douyinModeToggle.addEventListener('change', () => {
+      window.localStorage.setItem('douyin_mode', douyinModeToggle.checked ? '1' : '0');
+      TikLocalUI.toast(douyinModeToggle.checked ? 'Douyin feed style enabled' : 'Douyin feed style disabled');
+    });
+  }
+
   refreshButton.addEventListener('click', () => {
     confirmAction('Rescan the media library?', 'The scan will reconcile files added, moved, or deleted while TikLocal was running.', 'Start Scan', 'primary', () => {
       runButton(refreshButton, 'Scanning…', async () => {

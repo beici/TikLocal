@@ -193,3 +193,42 @@ def test_flow_activity_builds_and_clears_local_profile(client, tmp_path):
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM media_affinity").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM preference_dimensions").fetchone()[0] == 0
+
+
+def test_author_caption_from_blogger_source():
+    from types import SimpleNamespace
+
+    from tiklocal.web.flow import build_author_caption
+
+    sources = {
+        "blogger": SimpleNamespace(
+            path=r"E:\media\UID958392617677856_泡芙_发布作品", name="blogger"
+        )
+    }
+    enriched = build_author_caption(
+        "@blogger/2026-01-01 12.00.00-实况-UID958392617677856_泡芙_发布作品-标题文字.jpg",
+        sources,
+    )
+    assert enriched["author_name"] == "泡芙"
+    assert enriched["author_url"] == "/flow?blog=blogger"
+    assert enriched["caption_text"] == "标题文字"
+
+
+def test_author_caption_skips_loose_root_files():
+    from tiklocal.web.flow import build_author_caption
+
+    assert build_author_caption("@default/v1.mp4") == {}
+
+
+def test_feed_mix_items_carry_author_and_caption(client):
+    res = client.get("/api/feed/mix?page=1&size=12&seed=fixed-seed&snapshot=1")
+    assert res.status_code == 200
+    items = res.get_json()["items"]
+
+    by_name = {item["name"]: item for item in items}
+    nested = by_name["@default/nested/v 3.mp4"]
+    assert nested["author_name"] == "nested"
+    assert nested["author_url"] == "/flow?blog=default"
+
+    root_item = by_name["@default/v1.mp4"]
+    assert "author_name" not in root_item

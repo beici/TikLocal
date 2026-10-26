@@ -268,6 +268,7 @@ def create_app(test_config=None):
         download_source_store=download_source_store,
         activity_store=activity_store,
         related_photo_groups=similarity.photo_groups if similarity else None,
+        library_service=library_service,
     )
 
     register_radio_routes(app, library_service, radio_service, thumbnail_service, RadioEnergyService(library_service))

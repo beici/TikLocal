@@ -2,6 +2,8 @@
 
 import datetime
 import random
+from pathlib import Path
+from urllib.parse import quote
 
 from flask import render_template, request
 
@@ -107,6 +109,53 @@ def collect_source_media_groups(
     return results
 
 
+def build_author_caption(name: str, sources_by_id: dict | None = None) -> dict:
+    """Derive the Douyin-style author handle and post caption from a media URI.
+
+    A media source is normally one blogger export folder, so the source carries
+    the author and the file name carries the post title; blogger folders parked
+    inside a shared default root are recognised by their path segment instead.
+    """
+    text = str(name or '').strip().replace('\\', '/')
+    if not text:
+        return {}
+
+    source_id = ''
+    rel_path = text
+    if text.startswith('@'):
+        source_id, sep, rel_path = text[1:].partition('/')
+        if not sep or not source_id:
+            return {}
+    segments = [segment for segment in rel_path.split('/') if segment]
+    caption = media_naming.post_title(segments[-1]) if segments else ''
+
+    folder = ''
+    if source_id:
+        source = (sources_by_id or {}).get(source_id)
+        if len(segments) > 1:
+            folder = segments[0]
+        elif source is not None:
+            path = str(getattr(source, 'path', '') or '')
+            folder = Path(path).name if path not in {'', '.', '/'} else str(getattr(source, 'name', '') or '')
+        else:
+            folder = source_id
+        if source_id == 'default' and len(segments) <= 1:
+            # Loose files directly under the media root have no author of their own.
+            folder = ''
+    elif len(segments) >= 2:
+        folder = segments[0]
+
+    item: dict = {}
+    if folder:
+        author = media_naming.blogger_display_name(folder)
+        if author:
+            item['author_name'] = author
+            item['author_url'] = f"/flow?blog={quote(source_id or folder, safe='')}"
+    if caption:
+        item['caption_text'] = caption
+    return item
+
+
 def build_memory_card(records: list[dict], profiles: dict, rng: random.Random, now: datetime.datetime) -> dict | None:
     """Images from one past week that have not been shown for a while; callers pass year-old images."""
     weeks: dict[tuple[int, int], list[dict]] = {}
@@ -145,6 +194,7 @@ def build_mix_feed_page(
     related_photo_groups=None,
     mode: str = '',
     blog: str = '',
+    sources_by_id: dict | None = None,
 ) -> dict:
     video_ratio = 4
     image_ratio = 1
@@ -341,7 +391,12 @@ def build_mix_feed_page(
     for entry in mixed_entries:
         item_type = str(entry.get('type') or '')
         if item_type == 'image_group':
-            items.append({**entry, 'items': [dict(child) for child in entry['items']]})
+            group_item = {**entry, 'items': [dict(child) for child in entry['items']]}
+            if str(entry.get('name') or '').startswith('album:'):
+                group_item.update(build_author_caption(
+                    str(entry['name'])[len('album:'):], sources_by_id,
+                ))
+            items.append(group_item)
             continue
 
         name = str(entry.get('name') or '')
@@ -353,6 +408,7 @@ def build_mix_feed_page(
             live_video_uri=str(record.get('live_video_uri') or ''),
         )
         item['recommendation_reason'] = recommendation_reasons.get(name, '')
+        item.update(build_author_caption(name, sources_by_id))
         items.append(item)
 
     return {
@@ -366,6 +422,7 @@ def build_mix_feed_page(
 def register_flow_routes(
     app, *, media_index, recommend_service,
     download_source_store, activity_store, related_photo_groups=None,
+    library_service=None,
 ):
     @app.route('/flow')
     def flow_view():
@@ -384,6 +441,7 @@ def register_flow_routes(
             related_photo_groups=related_photo_groups,
             mode=request.args.get('mode', ''),
             blog=str(request.args.get('blog', '')).strip(),
+            sources_by_id=getattr(library_service, 'sources_by_id', None) or {},
         )
         if request.args.get('snapshot') == '1':
             result['has_more'] = False
