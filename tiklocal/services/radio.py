@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from tiklocal.services.json_storage import write_json_atomic
+from tiklocal.services.json_storage import read_json_file, write_json_atomic
 from tiklocal.services.library import LibraryService
 from tiklocal.services.favorites import FavoriteService
 from tiklocal.services.thumbnail import banner_duration, ffprobe_argv
@@ -71,10 +71,9 @@ class RadioProfileStore:
         self.path = path
 
     def load(self) -> dict[str, dict[str, Any]]:
-        try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
+        # A half-written profile used to read as {} and the next play event saved
+        # over it, losing every score the user had accumulated. Quarantine instead.
+        payload = read_json_file(self.path, {})
         tracks = payload.get("tracks") if isinstance(payload, dict) else None
         return tracks if isinstance(tracks, dict) else {}
 

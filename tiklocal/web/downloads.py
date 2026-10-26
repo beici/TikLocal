@@ -2,7 +2,8 @@ from flask import render_template, request
 
 from tiklocal.i18n import t
 from tiklocal.services.downloader import (
-    DEFAULT_DOWNLOAD_CONFIG, TERMINAL_JOB_STATUS, validate_download_config, validate_download_url,
+    DEFAULT_DOWNLOAD_CONFIG, MASKED_SECRET, TERMINAL_JOB_STATUS, validate_download_config,
+    validate_download_url,
 )
 from tiklocal.services.tiktok_downloader import TikTokDownloaderError
 from tiklocal.services.url_list import UrlListStore, format_text, parse_text
@@ -11,13 +12,28 @@ from tiklocal.web import json_body
 
 def register_download_routes(app, download_manager, library_service, tiktok_service=None,
                              trash_service=None, media_index=None):
+    def mask_secrets(config):
+        """Never ship the sidecar token to the browser; report its presence instead."""
+        if not isinstance(config, dict):
+            return config
+        section = config.get('tiktok_downloader')
+        if not isinstance(section, dict):
+            return config
+        masked = dict(config)
+        masked_section = dict(section)
+        token = masked_section.get('token') or ''
+        masked_section['token'] = MASKED_SECRET if token else ''
+        masked_section['has_token'] = bool(token)
+        masked['tiktok_downloader'] = masked_section
+        return masked
+
     def build_download_config_payload():
         config = download_manager.get_config()
         effective = {key: config.get(key) for key in DEFAULT_DOWNLOAD_CONFIG.keys()}
         payload = {
-            'config': config,
-            'defaults': dict(DEFAULT_DOWNLOAD_CONFIG),
-            'effective': effective,
+            'config': mask_secrets(config),
+            'defaults': mask_secrets(dict(DEFAULT_DOWNLOAD_CONFIG)),
+            'effective': mask_secrets(effective),
         }
         return payload
 
@@ -155,8 +171,17 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         queued: list[dict] = []
         failed: list[dict] = []
         for url in store.lines():
+            # Same checks as a single-URL queue: the list endpoint must not be a
+            # bypass for localhost/metadata targets or non-http schemes.
+            validated, error = validate_download_url({
+                'url': url, 'save_mode': save_mode, 'engine': engine,
+            })
+            if error:
+                failed.append({'url': url, 'error': error})
+                continue
             try:
-                job = download_manager.enqueue(url, save_mode=save_mode, engine=engine)
+                job = download_manager.enqueue(validated['url'], save_mode=validated['save_mode'],
+                                               engine=validated.get('engine', engine))
             except (RuntimeError, ValueError) as exc:
                 failed.append({'url': url, 'error': str(exc)})
                 continue
@@ -224,7 +249,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
     def api_download_tiktok_config():
         if request.method == 'GET':
             section = download_manager.get_config().get('tiktok_downloader') or {}
-            return {'success': True, 'data': {'tiktok_downloader': section}}
+            return {'success': True, 'data': {'tiktok_downloader': mask_secrets({'tiktok_downloader': section})['tiktok_downloader']}}
 
         payload = json_body()
         section = payload.get('tiktok_downloader')
@@ -238,28 +263,30 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         except ValueError as exc:
             return {'success': False, 'error': str(exc)}, 400
         updated = download_manager.get_config().get('tiktok_downloader') or {}
-        return {'success': True, 'data': {'tiktok_downloader': updated}}
+        return {'success': True, 'data': {'tiktok_downloader': mask_secrets({'tiktok_downloader': updated})['tiktok_downloader']}}
 
     @app.route('/api/download/jobs/<job_id>')
     def api_download_job_detail(job_id):
         job = download_manager.get_job(job_id)
         if not job:
-            return {'success': False, 'error': 'Job not found'}, 404
+            return {'success': False, 'error': t('download.error.job_not_found')}, 404
         return {'success': True, 'data': {'job': job}}
 
     @app.route('/api/download/jobs/<job_id>/cancel', methods=['POST'])
     def api_download_job_cancel(job_id):
         job = download_manager.cancel(job_id)
         if not job:
-            return {'success': False, 'error': 'Job not found'}, 404
+            return {'success': False, 'error': t('download.error.job_not_found')}, 404
         return {'success': True, 'data': {'job': job}}
 
     @app.route('/api/download/jobs/<job_id>', methods=['DELETE'])
     def api_download_job_delete(job_id):
+        # Decide 404 by existence, not by comparing an error string: the message is
+        # localized now, and a string match would silently degrade to 400.
+        exists = download_manager.get_job(job_id) is not None
         ok, error = download_manager.delete_job(job_id)
         if not ok:
-            status = 404 if error == 'Job not found' else 400
-            return {'success': False, 'error': error}, status
+            return {'success': False, 'error': error}, (400 if exists else 404)
         return {'success': True, 'data': {'deleted': True}}
 
     @app.route('/api/download/jobs/clear', methods=['POST'])
@@ -332,10 +359,10 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
 
     @app.route('/api/download/jobs/<job_id>/retry', methods=['POST'])
     def api_download_job_retry(job_id):
+        exists = download_manager.get_job(job_id) is not None
         job, error = download_manager.retry_job(job_id)
         if error:
-            status = 404 if error == 'Job not found' else 400
-            return {'success': False, 'error': error}, status
+            return {'success': False, 'error': error}, (400 if exists else 404)
         return {'success': True, 'data': {'job': job}}
 
     @app.route('/api/source')

@@ -68,6 +68,8 @@ class ThumbnailService:
     #: Requests for one URI arrive in bursts (grid, feed, detail). A small lock pool
     #: keeps a single ffmpeg run per URI without holding a lock per cache file.
     _LOCK_POOL_SIZE = 8
+    #: How long a failed generation is remembered before the file is retried.
+    FAILURE_TTL_SEC = 6 * 3600
 
     def __init__(self, media_root: Path, library_service=None):
         self.media_root = media_root
@@ -139,15 +141,50 @@ class ThumbnailService:
         thumbnail = self.cached_thumbnail(uri)
         if thumbnail:
             return thumbnail, 'image/jpeg'
+        if self._failure_is_fresh(uri):
+            # A corrupt or still-copying file used to spawn three ffmpeg runs per
+            # grid refresh; remember the failure and serve the placeholder instead.
+            stale = self._stale_thumbnail(uri)
+            return (stale, 'image/jpeg') if stale else (self.placeholder, 'image/png')
         generated = self.generate_thumbnail(uri)
         if generated:
             return generated, 'image/jpeg'
+        self._mark_failure(uri)
         stale = self._stale_thumbnail(uri)
         if stale:
             # A locked cache file means the previous preview is still valid enough;
             # degrading the whole grid to a 1x1 placeholder is worse.
             return stale, 'image/jpeg'
         return self.placeholder, 'image/png'
+
+    def _failure_path(self, uri: str) -> Path:
+        cache_path = self.cache_path(uri)
+        return cache_path.with_name(cache_path.name + '.fail')
+
+    def _failure_is_fresh(self, uri: str) -> bool:
+        marker = self._failure_path(uri)
+        try:
+            marker_stat = marker.stat()
+        except OSError:
+            return False
+        if time.time() - marker_stat.st_mtime > self.FAILURE_TTL_SEC:
+            return False
+        source_path = self.library.resolve_path(uri)
+        if source_path is None:
+            return True
+        try:
+            # The file was replaced (e.g. a copy finished): give it another chance.
+            return source_path.stat().st_mtime <= marker_stat.st_mtime
+        except OSError:
+            return False
+
+    def _mark_failure(self, uri: str) -> None:
+        marker = self._failure_path(uri)
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(str(int(time.time())), encoding='utf-8')
+        except OSError:
+            pass
 
     def _stale_thumbnail(self, uri: str) -> Path | None:
         for key in self.library.legacy_candidates(self.library.canonicalize_uri(uri)):
@@ -190,6 +227,12 @@ class ThumbnailService:
                 continue
             deleted_count += 1
             freed_bytes += size
+        for marker in self.thumb_dir.glob('*.jpg.fail'):
+            # Clearing the cache is the user's way of saying "try those files again".
+            try:
+                marker.unlink()
+            except OSError:
+                pass
         return {
             'deleted_count': deleted_count,
             'freed_mb': round(freed_bytes / (1024 * 1024), 2),

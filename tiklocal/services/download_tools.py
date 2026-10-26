@@ -95,7 +95,7 @@ def tool_argv(binary: str | list[str] | tuple[str, ...]) -> list[str]:
 
 
 def yt_dlp_command(binary: str | list[str], media_root: Path, url: str, *, allow_playlist: bool,
-                   cookie_path: Path | None) -> list[str]:
+                   cookie_path: Path | None, temp_dir: Path | None = None) -> list[str]:
     cmd = [
         *tool_argv(binary),
         "--newline",
@@ -111,6 +111,10 @@ def yt_dlp_command(binary: str | list[str], media_root: Path, url: str, *, allow
         "--socket-timeout", "30",
         "-o", str(media_root / YT_DLP_OUTPUT_TEMPLATE),
     ]
+    if temp_dir is not None:
+        # Partial files (.part/.ytdl) belong in the job's private folder: a canceled
+        # or timed-out download used to leave them in the library forever.
+        cmd.extend(["--paths", f"temp:{temp_dir}"])
     if not allow_playlist:
         cmd.append("--no-playlist")
     if cookie_path:

@@ -8,7 +8,9 @@ import pytest
 
 from tiklocal.app import create_app
 from tiklocal.services import author_profiles
-from tiklocal.services.downloader import DownloadConfigStore, DownloadManager, validate_download_config
+from tiklocal.services.downloader import (
+    MASKED_SECRET, DownloadConfigStore, DownloadManager, validate_download_config,
+)
 from tiklocal.services.tiktok_downloader import (
     DEFAULT_TIKTOK_DOWNLOADER_CONFIG,
     AuthorAmbiguousError,
@@ -477,7 +479,11 @@ def test_tiktok_config_roundtrip(tiktok_client):
     )
     assert res.status_code == 200
     updated = res.get_json()["data"]["tiktok_downloader"]
-    assert updated["base_url"] == "http://10.0.0.9:5555" and updated["token"] == "abc"
+    # The token never travels back to the browser; only its presence does.
+    assert updated["base_url"] == "http://10.0.0.9:5555"
+    assert updated["token"] == MASKED_SECRET and updated["has_token"] is True
+    stored = tiktok_client.application.extensions["download_manager"].get_config()
+    assert stored["tiktok_downloader"]["token"] == "abc"
 
     res = tiktok_client.post("/api/download/tiktok/config", json={"tiktok_downloader": {"base_url": "ftp://bad"}})
     assert res.status_code == 400

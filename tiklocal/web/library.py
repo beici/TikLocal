@@ -304,6 +304,10 @@ def register_library_routes(
             collection_id = str(request.args.get('collection_id', '')).strip()
             if not collection_id:
                 return {'success': False, 'error': t('library.error.collection_id_required')}, 400
+            # A deleted collection used to fall through to the whole library, so
+            # "load more" in an old tab appended every item into the collection grid.
+            if collection_store.get(collection_id) is None:
+                return {'success': False, 'error': t('library.collection.not_found')}, 404
         page = _build_library_page(
             favorites_only=scope == 'favorite', collection_id=collection_id,
             **_read_page_options(scope),

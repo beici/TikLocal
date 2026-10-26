@@ -119,6 +119,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'image.error.enabled_boolean': 'enabled 必须是布尔值。',
         'image.error.base_url_too_long': 'base_url 不能超过 {limit} 个字符。',
         'image.error.base_url_scheme': 'base_url 必须以 http:// 或 https:// 开头。',
+        'image.error.base_url_private': 'base_url 不能指向本机或局域网地址（该地址会收到 API 密钥与图片）。',
         'image.error.model_too_long': 'model_name 不能超过 {limit} 个字符。',
 
         'download.heading': '下载',
@@ -210,6 +211,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'download.error.retry_state': '只有失败或已取消的任务可以重试。',
         'download.error.register_missing': '下载的文件已不存在，无法登记，请新建下载任务。',
         'download.error.delete_running': '运行中的任务无法删除。',
+        'download.error.job_not_found': '下载任务不存在。',
+        'download.error.url_host_blocked': '不能下载本机或链路本地地址（例如 127.0.0.1、localhost）。',
         'download.error.cookie_dir_missing': '未找到 cookie 目录或文件：{path}',
         'download.error.cookie_file_required_manual': '手动模式需要提供 cookie_file。',
         'download.error.cookie_file_missing': '未找到 cookie 文件：{name}',
@@ -247,6 +250,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'login.help_after': '。',
         'login.error_too_many': '尝试次数过多，请 {minutes} 分钟后再试。',
         'login.error_wrong_password': '访问密码不正确，请重试。',
+        'auth.error.required': '请先登录后再访问。',
+        'auth.error.csrf': '安全校验已过期，请刷新页面后重试。',
     },
     'en': {
         'common.action_failed': 'The action failed. Please try again.',
@@ -357,6 +362,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'image.error.enabled_boolean': 'enabled must be a boolean.',
         'image.error.base_url_too_long': 'base_url cannot exceed {limit} characters.',
         'image.error.base_url_scheme': 'base_url must start with http:// or https://.',
+        'image.error.base_url_private': 'base_url cannot point at this machine or the local network (it receives the API key and images).',
         'image.error.model_too_long': 'model_name cannot exceed {limit} characters.',
 
         'download.heading': 'Download',
@@ -446,6 +452,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'download.error.retry_state': 'Only failed or canceled jobs can be retried',
         'download.error.register_missing': 'The downloaded file no longer exists and cannot be registered. Create a new download job.',
         'download.error.delete_running': 'A running job cannot be deleted',
+        'download.error.job_not_found': 'The download job does not exist.',
+        'download.error.url_host_blocked': 'Local or link-local addresses (for example 127.0.0.1) cannot be downloaded.',
         'download.error.cookie_dir_missing': 'Cookie directory or file not found: {path}',
         'download.error.cookie_file_required_manual': 'Manual mode requires cookie_file.',
         'download.error.cookie_file_missing': 'Cookie file not found: {name}',
@@ -483,5 +491,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'login.help_after': ' on the computer hosting TikLocal.',
         'login.error_too_many': 'Too many attempts. Try again in {minutes} minutes.',
         'login.error_wrong_password': 'The access password is incorrect. Please try again.',
+        'auth.error.required': 'Please sign in before continuing.',
+        'auth.error.csrf': 'The security check expired. Refresh the page and try again.',
     },
 }

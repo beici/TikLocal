@@ -2,13 +2,16 @@ import base64
 import datetime
 import hashlib
 import io
+import ipaddress
 import json
 import mimetypes
 import os
 import re
+import socket
 import requests
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from PIL import Image
 
@@ -144,6 +147,43 @@ def validate_prompt_config(
     return cleaned, None
 
 
+def _local_or_private_host(base_url: str) -> bool:
+    """True when the URL points at this machine or a private/link-local network.
+
+    The caption service sends an API key and image bytes to whatever base_url is
+    configured, so a LAN user who can edit the config must not be able to aim it
+    at the metadata endpoint of the host it runs on. Literal hosts are checked
+    directly; hostnames are resolved so `localhost` and `*.local` aliases fail
+    too. DNS failures are treated as "not private" so offline setups keep working.
+    """
+
+    try:
+        host = (urlsplit(base_url).hostname or "").strip().strip("[]")
+    except ValueError:
+        return True
+    if not host:
+        return True
+    candidates = [host]
+    try:
+        candidates.extend(socket.getaddrinfo(host, None)[i][4][0] for i in range(len(socket.getaddrinfo(host, None))))
+    except OSError:
+        pass
+    for candidate in candidates:
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if (
+            address.is_loopback
+            or address.is_private
+            or address.is_link_local
+            or address.is_unspecified
+            or address.is_reserved
+        ):
+            return True
+    return False
+
+
 def validate_llm_config(
     payload: Any,
     *,
@@ -160,6 +200,8 @@ def validate_llm_config(
             return None, t('image.error.base_url_too_long', limit=LLM_BASE_URL_MAX_LENGTH)
         if base_url and not (base_url.startswith("http://") or base_url.startswith("https://")):
             return None, t('image.error.base_url_scheme')
+        if base_url and _local_or_private_host(base_url):
+            return None, t('image.error.base_url_private')
         cleaned["base_url"] = base_url
 
     if "model_name" in payload or not partial:
@@ -324,6 +366,10 @@ class CaptionService:
             raise CaptionConfigError(t('image.error.model_missing'))
         if self.base_url and "openrouter.ai" in self.base_url and "/api/v1" not in self.base_url:
             raise CaptionConfigError(t('image.error.base_url_path'))
+        # Config files and env vars bypass the API validators, so re-check here:
+        # the request carries an API key and image bytes to base_url.
+        if self.base_url and _local_or_private_host(self.base_url):
+            raise CaptionConfigError(t('image.error.base_url_private'))
 
     def generate(
         self,
@@ -428,8 +474,12 @@ class CaptionService:
                 },
             ],
         }
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        # No redirects: a 302 to a private address would replay the API key and the
+        # image bytes somewhere the base_url check never looked at.
+        response = requests.post(url, headers=headers, json=payload, timeout=60, allow_redirects=False)
         text = response.text or ""
+        if 300 <= response.status_code < 400:
+            raise RuntimeError(t('image.error.provider_failed'))
         if response.status_code >= 400:
             raise RuntimeError(self._parse_error(text) or f"HTTP {response.status_code}")
 

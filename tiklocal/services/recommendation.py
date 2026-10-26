@@ -60,13 +60,15 @@ class RecommendService:
             ]
         elif file_type == 'video':
             candidates = [
-                {'uri': self.library.get_relative_path(path), 'mtime': path.stat().st_mtime}
+                {'uri': uri, 'mtime': path.stat().st_mtime}
                 for path in self.library.scan_videos()
+                if (uri := self.library.get_relative_path(path))
             ]
         else:
             candidates = [
-                {'uri': self.library.get_relative_path(path), 'mtime': path.stat().st_mtime}
+                {'uri': uri, 'mtime': path.stat().st_mtime}
                 for path in self.library.scan_images()
+                if (uri := self.library.get_relative_path(path))
             ]
         if not candidates:
             return []

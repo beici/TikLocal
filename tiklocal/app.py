@@ -34,7 +34,7 @@ from tiklocal.services.auth import AuthStore
 from tiklocal.services.device_auth import DeviceAuthStore
 from tiklocal.services.pairing_grants import PairingGrantStore
 from tiklocal.auth import configure_auth
-from tiklocal.i18n import current_locale, js_catalog, translate
+from tiklocal.i18n import current_locale, js_catalog, t, translate
 from tiklocal.radio_client import register_radio_client_routes
 from tiklocal.paths import (
     get_metadata_path,
@@ -346,5 +346,28 @@ def create_app(test_config=None):
             Path(app.static_folder) / 'service_worker.js',
             mimetype='application/javascript',
         )
+
+    # --- Framework errors for JSON clients ---
+    # Werkzeug's default 404/405/500 pages are HTML; every /api/ consumer calls
+    # response.json() and crashed with "Unexpected token '<'" instead of showing the
+    # real problem (e.g. a sync over an unreadable folder).
+    def _api_error(status, message, error):
+        if request.path.startswith('/api/'):
+            return {'success': False, 'error': message}, status
+        # Browsers keep Werkzeug's HTML error page; only JSON clients need an envelope.
+        return error
+
+    @app.errorhandler(404)
+    def handle_not_found(error):
+        return _api_error(404, t('common.error.not_found'), error)
+
+    @app.errorhandler(405)
+    def handle_method_not_allowed(error):
+        return _api_error(405, t('common.error.method_not_allowed'), error)
+
+    @app.errorhandler(500)
+    def handle_server_error(error):
+        app.logger.exception('Unhandled error on %s', request.path)
+        return _api_error(500, t('common.error.internal'), error)
 
     return app

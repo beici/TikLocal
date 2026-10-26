@@ -99,16 +99,16 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
 
     def unauthorized_response():
         if request.path.startswith('/api/'):
-            return {'success': False, 'error': 'Authentication required'}, 401
+            return {'success': False, 'error': t('auth.error.required')}, 401
         if request.path.startswith('/media') or request.path == '/thumb':
-            return 'Authentication required', 401
+            return t('auth.error.required'), 401
         target = request.full_path.rstrip('?') if request.method == 'GET' else '/'
         return redirect(url_for('login_view', next=target))
 
     def csrf_error_response():
         if request.path.startswith('/api/'):
-            return {'success': False, 'error': 'Invalid CSRF token'}, 403
-        return 'Invalid CSRF token', 403
+            return {'success': False, 'error': t('auth.error.csrf')}, 403
+        return t('auth.error.csrf'), 403
 
     def native_token_is_valid() -> bool:
         authorization = str(request.headers.get('Authorization') or '')

@@ -1,4 +1,6 @@
+import errno
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -9,6 +11,35 @@ from tiklocal.services.trash import TRASH_DIR
 VIDEO_EXTENSIONS = {'.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v'}
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
 AUDIO_EXTENSIONS = {'.mp3', '.flac', '.aac', '.m4a', '.ogg', '.opus', '.wav'}
+
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+def _is_reparse_dir(path: Path) -> bool:
+    """True for junctions/symlinks: os.walk follows junctions but symlinks only if asked."""
+    isjunction = getattr(os.path, 'isjunction', None)
+    if isjunction is not None:
+        try:
+            return bool(isjunction(path))
+        except OSError:
+            return True
+    if path.is_symlink():
+        return True
+    try:
+        info = path.stat(follow_symlinks=False)
+    except OSError:
+        return True
+    return bool(getattr(info, 'st_file_attributes', 0) & _FILE_ATTRIBUTE_REPARSE_POINT) or bool(
+        stat.S_ISLNK(info.st_mode)
+    )
+
+
+def _mtime_desc_key(path: Path) -> float:
+    """Sort key that survives a file disappearing mid-scan (CLI thumbnails)."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 @dataclass(frozen=True)
@@ -85,14 +116,21 @@ class LibraryService:
     def scan_source(
         self, source: MediaSource, extensions: set[str] | None = None, *, recursive: bool = True,
     ) -> list[Path]:
-        """Scan one source, raising on incomplete traversal rather than returning an empty snapshot."""
+        """Scan one source, skipping directories it may not read.
+
+        Raising on the first unreadable folder (System Volume Information at a drive
+        root, an ACL-locked folder) used to fail the whole source, which left the
+        library empty and froze the index: a failed scan never publishes a snapshot.
+        """
         extensions = extensions if extensions is not None else VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS
 
-        def fail(error: OSError) -> None:
+        def skip_unreadable(error: OSError) -> None:
+            if error.errno in (errno.EACCES, errno.EPERM):
+                return
             raise error
 
         paths = []
-        for directory, folders, files in os.walk(source.path, onerror=fail):
+        for directory, folders, files in os.walk(source.path, onerror=skip_unreadable):
             if not recursive:
                 folders.clear()
             else:
@@ -101,6 +139,12 @@ class LibraryService:
                 for skipped in (TRASH_DIR, DOWNLOAD_TMP_DIR):
                     if skipped in folders:
                         folders.remove(skipped)
+                # A junction/symlink can point outside the library (or back into an
+                # ancestor and loop forever); its files would also be indexed under a
+                # host absolute path and never load.
+                folders[:] = [
+                    name for name in folders if not _is_reparse_dir(Path(directory) / name)
+                ]
             paths.extend(
                 Path(directory) / name for name in files
                 if Path(name).suffix.lower() in extensions
@@ -117,17 +161,19 @@ class LibraryService:
         return paths
 
     def scan_videos(self, recursive=True) -> list[Path]:
-        return sorted(self._scan_available_sources(VIDEO_EXTENSIONS, recursive), key=lambda p: p.stat().st_mtime, reverse=True)
+        return sorted(self._scan_available_sources(VIDEO_EXTENSIONS, recursive), key=_mtime_desc_key, reverse=True)
 
     def scan_audios(self, recursive=True) -> list[Path]:
-        return sorted(self._scan_available_sources(AUDIO_EXTENSIONS, recursive), key=lambda p: p.stat().st_mtime, reverse=True)
+        return sorted(self._scan_available_sources(AUDIO_EXTENSIONS, recursive), key=_mtime_desc_key, reverse=True)
 
     def scan_images(self, recursive=True) -> list[Path]:
         return self._scan_available_sources(IMAGE_EXTENSIONS, recursive)
 
     def get_relative_path(self, path: Path) -> str:
         ref = self.ref_for_path(path)
-        return ref.to_uri() if ref else str(path)
+        # Never fall back to a host absolute path: it becomes a URI that 404s on
+        # /media and /thumb, and it leaks local directory names to LAN clients.
+        return ref.to_uri() if ref else ''
 
     def ref_for_path(self, path: Path) -> MediaRef | None:
         target = path.resolve()

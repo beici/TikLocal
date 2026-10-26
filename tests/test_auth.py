@@ -5,6 +5,7 @@ import stat
 import pytest
 
 from tiklocal.app import create_app
+from tiklocal.i18n import t
 from tiklocal.services.auth import AuthStore
 
 
@@ -91,7 +92,7 @@ def test_authentication_protects_pages_apis_and_media(authenticated_app):
     assert page.status_code == 302
     assert page.headers['Location'].endswith('/login?next=/')
     assert api.status_code == 401
-    assert api.get_json()['error'] == 'Authentication required'
+    assert api.get_json()['error'] == t('auth.error.required')
     assert media.status_code == 401
     assert static_asset.status_code == 200
     assert favicon.status_code == 200

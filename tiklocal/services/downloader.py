@@ -1,10 +1,11 @@
-import json
+import ipaddress
 import os
 import queue
 from collections import deque
 import shutil
 import signal
 import subprocess as sp
+import socket
 import threading
 import time
 import urllib.error
@@ -16,6 +17,7 @@ from urllib.parse import urlparse
 
 from tiklocal.i18n import t
 from tiklocal.paths import DOWNLOAD_TMP_DIR
+from tiklocal.services.json_storage import read_json_file, write_json_atomic
 from tiklocal.services.download_sources import (
     DownloadSourceStore,
     normalize_file_rel,
@@ -76,6 +78,24 @@ DEFAULT_DOWNLOAD_CONFIG = {
 }
 
 TERMINAL_JOB_STATUS = {"success", "failed", "canceled"}
+
+# The settings page round-trips the whole download config.  Secrets are replaced by
+# this sentinel before they leave the server; seeing it again means "unchanged".
+MASKED_SECRET = "\u2022\u2022\u2022\u2022\u2022\u2022"
+
+
+def _restore_masked_secrets(patch: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(patch, dict):
+        return patch
+    section = patch.get("tiktok_downloader")
+    if not isinstance(section, dict) or section.get("token") != MASKED_SECRET:
+        return patch
+    restored = dict(patch)
+    restored_section = dict(section)
+    restored_section["token"] = (current.get("tiktok_downloader") or {}).get("token", "")
+    restored["tiktok_downloader"] = restored_section
+    return restored
+
 
 def _to_int(value: Any) -> int | None:
     try:
@@ -171,6 +191,35 @@ def validate_download_config(payload: Any, *, partial: bool = False) -> tuple[di
     return cleaned, None
 
 
+def _is_local_host(url: str) -> bool:
+    """True when the URL targets this machine or a link-local/metadata address.
+
+    yt-dlp runs on the server, so accepting such a URL turns the download queue
+    into a way to reach services that only listen on localhost (including the
+    DSH GUI). Private LAN ranges stay allowed: pointing at a NAS is legitimate.
+    """
+
+    try:
+        host = (urlparse(url).hostname or "").strip().strip("[]")
+    except ValueError:
+        return True
+    if not host:
+        return True
+    candidates = [host]
+    try:
+        candidates.extend(entry[4][0] for entry in socket.getaddrinfo(host, None))
+    except OSError:
+        pass
+    for candidate in candidates:
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if address.is_loopback or address.is_link_local or address.is_unspecified or address.is_reserved:
+            return True
+    return False
+
+
 def validate_download_url(payload: Any) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(payload, dict):
         return None, t('download.error.body_object')
@@ -184,6 +233,8 @@ def validate_download_url(payload: Any) -> tuple[dict[str, Any] | None, str | No
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None, t('download.error.scheme_invalid')
+    if _is_local_host(url):
+        return None, t('download.error.url_host_blocked')
 
     save_mode = str(payload.get("save_mode", "root")).strip() or "root"
     if save_mode != "root":
@@ -255,14 +306,10 @@ class DownloadConfigStore:
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _load(self) -> dict[str, Any]:
-        if not self.store_path.exists():
-            return {}
-        try:
-            with self.store_path.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
+        # A truncated file used to read as {} and the next save overwrote the user's
+        # cookie_dir / archive path with defaults; quarantine it instead.
+        data = read_json_file(self.store_path, {})
+        return data if isinstance(data, dict) else {}
 
     def get(self) -> dict[str, Any]:
         data = self._load()
@@ -290,10 +337,9 @@ class DownloadConfigStore:
         return payload
 
     def _write(self, data: dict[str, Any]) -> None:
-        tmp_path = self.store_path.with_name(self.store_path.name + ".tmp")
-        with tmp_path.open("w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, self.store_path)
+        # write_json_atomic uses a unique temp directory: a fixed "<name>.tmp" let two
+        # concurrent saves collide (PermissionError on Windows) and lose an update.
+        write_json_atomic(self.store_path, data)
 
 
 class DownloadHistoryStore:
@@ -302,22 +348,13 @@ class DownloadHistoryStore:
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
 
     def get(self) -> list[dict[str, Any]]:
-        if not self.store_path.exists():
+        data = read_json_file(self.store_path, [], expected_type=list)
+        if not isinstance(data, list):
             return []
-        try:
-            with self.store_path.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    return [item for item in data if isinstance(item, dict)]
-        except Exception:
-            return []
-        return []
+        return [item for item in data if isinstance(item, dict)]
 
     def save(self, jobs: list[dict[str, Any]]) -> None:
-        tmp_path = self.store_path.with_name(self.store_path.name + ".tmp")
-        with tmp_path.open("w", encoding="utf-8") as f:
-            json.dump(jobs[:DOWNLOAD_HISTORY_LIMIT], f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, self.store_path)
+        write_json_atomic(self.store_path, jobs[:DOWNLOAD_HISTORY_LIMIT])
 
 
 class DownloadManager:
@@ -352,6 +389,28 @@ class DownloadManager:
 
         self._config = self.config_store.get()
         self._load_history()
+        self._cleanup_stale_temp_dirs()
+
+    def _cleanup_stale_temp_dirs(self) -> None:
+        """Drop partial downloads a crash or hard kill left in the temp folder.
+
+        The library scanner ignores .tiklocal-download-tmp, so leftovers were
+        invisible in the UI and never freed; a restart is the only safe moment to
+        clear them (no worker owns a folder yet).
+        """
+        root = self.media_root / DOWNLOAD_TMP_DIR
+        try:
+            entries = list(root.iterdir())
+        except OSError:
+            return
+        for entry in entries:
+            try:
+                if entry.is_dir():
+                    shutil.rmtree(entry, ignore_errors=True)
+                else:
+                    entry.unlink(missing_ok=True)
+            except OSError:
+                continue
 
     def start(self) -> None:
         with self._lock:
@@ -408,14 +467,15 @@ class DownloadManager:
             return dict(self._config)
 
     def update_config(self, patch: dict[str, Any]) -> dict[str, Any]:
+        # The whole read-modify-write stays under the lock: two tabs saving at once
+        # used to overwrite each other's fields and race on the temp file.
         with self._lock:
+            patch = _restore_masked_secrets(patch, self._config)
             merged = _merge_download_config(self._config, patch)
-        validated, error = validate_download_config(merged, partial=False)
-        if error:
-            raise ValueError(error)
-
-        saved = self.config_store.set(validated)
-        with self._lock:
+            validated, error = validate_download_config(merged, partial=False)
+            if error:
+                raise ValueError(error)
+            saved = self.config_store.set(validated)
             self._config = _merge_download_config(DEFAULT_DOWNLOAD_CONFIG, saved)
             self._config["updated_at"] = saved.get("updated_at")
             self._dispatch_locked()
@@ -554,13 +614,14 @@ class DownloadManager:
         with self._lock:
             job = self._jobs.get(job_id)
             if not job:
-                return False, "Job not found"
+                return False, t('download.error.job_not_found')
             if job.get("status") not in TERMINAL_JOB_STATUS:
                 return False, t('download.error.delete_running')
 
             self._jobs.pop(job_id, None)
             self._cancel_events.pop(job_id, None)
             self._processes.pop(job_id, None)
+            self._progress_persist_at.pop(job_id, None)
             self._job_order = [jid for jid in self._job_order if jid != job_id]
             self._persist_locked()
         return True, None
@@ -578,6 +639,7 @@ class DownloadManager:
                     self._jobs.pop(job_id, None)
                     self._cancel_events.pop(job_id, None)
                     self._processes.pop(job_id, None)
+                    self._progress_persist_at.pop(job_id, None)
                 else:
                     keep_ids.append(job_id)
             self._job_order = keep_ids
@@ -598,7 +660,7 @@ class DownloadManager:
             for job_id in job_ids:
                 job = self._jobs.get(job_id)
                 if not job:
-                    skipped.append({"id": job_id, "error": "Job not found"})
+                    skipped.append({"id": job_id, "error": t('download.error.job_not_found')})
                     continue
                 if job.get("status") not in TERMINAL_JOB_STATUS:
                     skipped.append({"id": job_id, "error": t('download.error.delete_running')})
@@ -609,6 +671,7 @@ class DownloadManager:
                 self._jobs.pop(job_id, None)
                 self._cancel_events.pop(job_id, None)
                 self._processes.pop(job_id, None)
+                self._progress_persist_at.pop(job_id, None)
                 deleted += 1
             if deleted:
                 removed = set(outputs)
@@ -622,7 +685,7 @@ class DownloadManager:
                 return None, 'The download manager has not started or is closed.'
             job = self._jobs.get(job_id)
             if not job:
-                return None, "Job not found"
+                return None, t('download.error.job_not_found')
             if job.get("status") not in {"failed", "canceled"}:
                 return None, t('download.error.retry_state')
             index_only = job.get('failure_stage') == 'index'
@@ -954,8 +1017,16 @@ class DownloadManager:
                 self._update_progress(job_id, progress)
             output_path = parse_output_path(line) or output_path
 
-        cmd = yt_dlp_command(yt_dlp_bin, self.media_root, url, allow_playlist=allow_playlist, cookie_path=cookie_path)
-        return_code, error_message = self._run_tool(job_id, cmd, on_line)
+        # yt-dlp writes .part/.ytdl files while downloading; keep them out of the
+        # library so a cancel or timeout cannot leave hidden junk behind.
+        temp_dir = (self.media_root / DOWNLOAD_TMP_DIR / job_id).resolve()
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            cmd = yt_dlp_command(yt_dlp_bin, self.media_root, url, allow_playlist=allow_playlist,
+                                 cookie_path=cookie_path, temp_dir=temp_dir)
+            return_code, error_message = self._run_tool(job_id, cmd, on_line)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
         if not error_message and return_code != 0:
             error_message = f"yt-dlp exited with code {return_code}."
         output_rel = self._to_media_relative(output_path)
@@ -1141,6 +1212,7 @@ class DownloadManager:
         threading.Thread(target=pump, name=f"download-pump-{job_id}", daemon=True).start()
 
         timed_out = False
+        canceled = False
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -1150,7 +1222,8 @@ class DownloadManager:
                 line = lines.get(timeout=min(remaining, 1.0))
             except queue.Empty:
                 if cancel_event and cancel_event.is_set():
-                    self._terminate_process(process)
+                    canceled = True
+                    break
                 continue
             if line is None:
                 break
@@ -1158,11 +1231,18 @@ class DownloadManager:
                 on_line(line)
                 error_message = error_line(line) or error_message
             if cancel_event and cancel_event.is_set():
-                self._terminate_process(process)
+                canceled = True
+                break
 
         if timed_out:
             self._terminate_process(process)
             error_message = f"Download exceeded the {int(timeout)}s time limit."
+        elif canceled:
+            # Return as soon as the tool is gone: a grandchild (ffmpeg) can keep the
+            # stdout pipe open, and waiting for EOF here held a worker slot for up to
+            # the full job timeout, stalling the whole download queue.
+            self._terminate_process(process)
+            error_message = error_message or "Canceled."
         return process.wait(), error_message
 
     def _update_progress(self, job_id: str, progress: dict[str, Any]) -> None:

@@ -20,6 +20,7 @@
 | 02 | 2026-10-27 | 2F/358P/6S | 0/4/12/3（确认 17，驳回 2） | `d11b0fc`，29 文件 `+489/-99` | [round-02](round-02.md) |
 | 03 | 2026-10-27 | 2F/365P/6S | 0/2/10/13（确认 25，修复 21，记录 4） | `fix: harden thumbnail cache…`，30 文件 `+650/-64` | [round-03](round-03.md) |
 | 04 | 2026-10-27 | 2F/381P/6S | 1/3/12/1（确认 17，误报 4，转 backlog 4） | `08fc782`，10 文件 `+184/-18` | [round-04](round-04.md) |
+| 05 | 2026-10-27 | 2F/383P/6S | 0/2/10/5（确认 17，全部修复） | 本轮提交，见 `git log` | [round-05](round-05.md) |
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
 
@@ -28,6 +29,8 @@
 第 03 轮结束后：`pytest -q` = **2 failed / 381 passed / 6 skipped**（新增 16 个用例），失败项不变。
 
 第 04 轮结束后：`pytest -q` = **2 failed / 383 passed / 6 skipped**，失败项不变（本轮修复集中在前端状态机，另新增 2 个认证用例）。
+
+第 05 轮结束后：`pytest -q` = **2 failed / 394 passed / 6 skipped**，失败项不变（新增 13 个回归用例：`tests/test_round05_regressions.py`）。
 
 ## 目录
 
