@@ -16,6 +16,7 @@ This directory records TikLocal's key design decisions, release changes, and imp
 - `docs/openrouter-image-to-video-research.md`: OpenRouter image-to-video research, proof-of-concept flow, and future product constraints.
 - `docs/tiktok-downloader.md`: TikTokDownloader sidecar integration for batch downloads by Douyin blogger — architecture, configuration keys, naming/pairing behavior, and troubleshooting.
 - `docs/i18n.md`: the dependency-free zh/en translation mechanism — locale resolution, per-page catalog modules, key naming rules, and verification.
+- `docs/phase-3-verification.md`: the consolidated verification guide for the phase-3 features — Douyin feed mode, TikTokDownloader batch downloads, collection filtering and batch organize, and the zh/en UI — with commands, expected results, and known limits.
 - `docs/release_notes.md`: release history and unreleased changes.
 
 The design and research documents above retain their original language until they are translated in a dedicated documentation pass.
