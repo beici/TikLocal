@@ -6,6 +6,8 @@ import signal
 import subprocess as sp
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any, Callable
@@ -30,6 +32,12 @@ from tiklocal.services.download_tools import (
     probe_binary,
     yt_dlp_command,
 )
+from tiklocal.services.tiktok_downloader import (
+    DEFAULT_TIKTOK_DOWNLOADER_CONFIG,
+    build_work_filename,
+    guess_download_extension,
+    validate_tiktok_downloader_config,
+)
 
 
 DOWNLOAD_MAX_URL_LENGTH = 2048
@@ -38,8 +46,14 @@ DOWNLOAD_HISTORY_LIMIT = 200
 COOKIE_MAX_UPLOAD_BYTES = 1024 * 1024
 COOKIE_MATCH_MODE = "filename_contains_domain"
 COOKIE_FILE_EXTENSIONS = {".txt", ".cookies"}
-DOWNLOAD_ENGINES = {"yt-dlp", "gallery-dl"}
+DOWNLOAD_ENGINES = {"yt-dlp", "gallery-dl", "tiktok-downloader"}
+USER_DOWNLOAD_ENGINES = {"yt-dlp", "gallery-dl"}
 DEFAULT_DOWNLOAD_ENGINE = "yt-dlp"
+DIRECT_DOWNLOAD_TIMEOUT_SEC = 30
+DIRECT_DOWNLOAD_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
 
 DEFAULT_DOWNLOAD_CONFIG = {
     "enabled": True,
@@ -51,6 +65,7 @@ DEFAULT_DOWNLOAD_CONFIG = {
     "cookie_match_mode": COOKIE_MATCH_MODE,
     "gallery_archive_enabled": True,
     "gallery_archive_file": "~/.tiklocal/gallery-dl-archive.txt",
+    "tiktok_downloader": dict(DEFAULT_TIKTOK_DOWNLOADER_CONFIG),
 }
 
 TERMINAL_JOB_STATUS = {"success", "failed", "canceled"}
@@ -76,6 +91,7 @@ def _merge_download_config(base: dict[str, Any], override: dict[str, Any] | None
         "cookie_match_mode",
         "gallery_archive_enabled",
         "gallery_archive_file",
+        "tiktok_downloader",
     ):
         if key in override:
             merged[key] = override[key]
@@ -137,6 +153,14 @@ def validate_download_config(payload: Any, *, partial: bool = False) -> tuple[di
             return None, "gallery_archive_file cannot be empty."
         cleaned["gallery_archive_file"] = archive_file
 
+    if "tiktok_downloader" in payload or not partial:
+        section, section_error = validate_tiktok_downloader_config(
+            payload.get("tiktok_downloader", defaults["tiktok_downloader"])
+        )
+        if section_error:
+            return None, section_error
+        cleaned["tiktok_downloader"] = section
+
     return cleaned, None
 
 
@@ -159,7 +183,7 @@ def validate_download_url(payload: Any) -> tuple[dict[str, Any] | None, str | No
         return None, "Downloads can only be saved to the media source root."
 
     engine = str(payload.get("engine", DEFAULT_DOWNLOAD_ENGINE)).strip().lower() or DEFAULT_DOWNLOAD_ENGINE
-    if engine not in DOWNLOAD_ENGINES:
+    if engine not in USER_DOWNLOAD_ENGINES:
         return None, "engine must be yt-dlp or gallery-dl."
 
     cookie_mode = str(payload.get("cookie_mode", "")).strip().lower()
@@ -419,10 +443,13 @@ class DownloadManager:
         cookie_file: str = "",
         retry_of: str = "",
         output_token: str = "",
+        payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         engine = (engine or DEFAULT_DOWNLOAD_ENGINE).strip().lower()
         if engine not in DOWNLOAD_ENGINES:
             raise RuntimeError("Unsupported download engine.")
+        if payload is not None and not isinstance(payload, dict):
+            raise RuntimeError("Download payload must be a JSON object.")
 
         chosen_file, chosen_mode, cookie_error = self._resolve_cookie_choice(
             url=url,
@@ -463,6 +490,7 @@ class DownloadManager:
                 "cookie_match_mode": chosen_mode,
                 "retry_of": retry_of.strip(),
                 "output_token": output_token.strip() or now.replace(":", "").replace("-", "").replace("Z", ""),
+                "download_payload": dict(payload) if isinstance(payload, dict) else {},
             }
             self._jobs[job_id] = job
             self._job_order.insert(0, job_id)
@@ -568,6 +596,8 @@ class DownloadManager:
             cookie_file = str(job.get("cookie_file") or "")
             cookie_match_mode = str(job.get("cookie_match_mode") or "none")
             output_token = str(job.get("output_token") or "")
+            download_payload = job.get("download_payload")
+            download_payload = dict(download_payload) if isinstance(download_payload, dict) else {}
 
         if index_only:
             return self.get_job(job_id), None
@@ -585,6 +615,7 @@ class DownloadManager:
                 cookie_file=cookie_file,
                 retry_of=job_id,
                 output_token=output_token,
+                payload=download_payload,
             )
             return new_job, None
         except RuntimeError as exc:
@@ -699,6 +730,9 @@ class DownloadManager:
                         item.get("output_token")
                         or str(item.get("created_at") or now).replace(":", "").replace("-", "").replace("Z", "")
                     ),
+                    "download_payload": dict(item.get("download_payload"))
+                    if isinstance(item.get("download_payload"), dict)
+                    else {},
                 }
                 if not job["file_count"] and job["output_files_rel"]:
                     job["file_count"] = len(job["output_files_rel"])
@@ -846,6 +880,8 @@ class DownloadManager:
 
         if engine == "gallery-dl":
             return self._execute_download_gallery_dl(job_id)
+        if engine == "tiktok-downloader":
+            return self._execute_download_direct(job_id)
         return self._execute_download_yt_dlp(job_id)
 
     def _execute_download_yt_dlp(self, job_id: str) -> tuple[int, str, list[str]]:
@@ -919,6 +955,86 @@ class DownloadManager:
             return 0, "", moved_outputs
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _execute_download_direct(self, job_id: str) -> tuple[int, str, list[str]]:
+        """Download the media URLs attached by TikTokDownloadService into the library."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return 1, "Job not found.", []
+            payload = job.get("download_payload") if isinstance(job.get("download_payload"), dict) else {}
+
+        downloads = [
+            str(url).strip()
+            for url in (payload.get("downloads") or [])
+            if isinstance(url, str) and url.strip()
+        ]
+        if not downloads:
+            return 1, "No media URLs were attached to this job.", []
+        naming = payload.get("naming") if isinstance(payload.get("naming"), dict) else {}
+
+        cancel_event = self._cancel_events.get(job_id)
+        temp_dir = (self.media_root / ".tiklocal-download-tmp" / job_id).resolve()
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        total = len(downloads)
+        try:
+            downloaded: list[Path] = []
+            for index, url in enumerate(downloads, start=1):
+                if cancel_event and cancel_event.is_set():
+                    return 1, "Canceled.", []
+                extension = guess_download_extension(url, str(naming.get("post_type") or "视频"))
+                filename = build_work_filename(naming, index, total, extension)
+                target = temp_dir / filename
+
+                def on_progress(fraction: float, index: int = index) -> None:
+                    percent = ((index - 1) + max(0.0, min(fraction, 1.0))) * 100.0 / total
+                    self._update_progress(job_id, {"percent": round(percent, 1)})
+
+                error = self._direct_fetch(url, target, on_progress)
+                if error:
+                    return 1, error, []
+                downloaded.append(target)
+
+            moved_outputs = [self._move_file_to_media_root(path) for path in downloaded]
+            moved_outputs = [path for path in moved_outputs if path]
+            if not moved_outputs:
+                return 1, "No usable files were downloaded.", []
+            return 0, "", moved_outputs
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _direct_fetch(self, url: str, target: Path, on_progress: Callable[[float], None] | None = None) -> str | None:
+        """Stream one media file to ``target``; return an error message or None."""
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": DIRECT_DOWNLOAD_USER_AGENT,
+                "Referer": "https://www.douyin.com/",
+            },
+        )
+        tmp_path = target.with_suffix(target.suffix + ".part")
+        try:
+            with urllib.request.urlopen(request, timeout=DIRECT_DOWNLOAD_TIMEOUT_SEC) as response, tmp_path.open("wb") as fh:
+                total_bytes = int(response.headers.get("Content-Length") or 0)
+                received = 0
+                while True:
+                    chunk = response.read(64 * 1024)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    received += len(chunk)
+                    if on_progress and total_bytes > 0:
+                        on_progress(received / total_bytes)
+            os.replace(tmp_path, target)
+        except urllib.error.HTTPError as exc:
+            tmp_path.unlink(missing_ok=True)
+            return f"Media download failed with HTTP {exc.code}."
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            tmp_path.unlink(missing_ok=True)
+            return f"Unable to reach the media host: {exc}"
+        if on_progress:
+            on_progress(1.0)
+        return None
 
     def _job_cookie_path(self, job: dict[str, Any]) -> tuple[Path | None, str | None]:
         cookie_file = str(job.get("cookie_file") or "")

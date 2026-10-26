@@ -21,8 +21,24 @@
       <div id="media-switch" class="media-switch" data-value="yt-dlp" role="group" aria-label="Download media type">
         <button class="media-switch-option" type="button" data-engine="yt-dlp" aria-pressed="true"><i data-feather="play"></i><span>Video</span></button>
         <button class="media-switch-option" type="button" data-engine="gallery-dl" aria-pressed="false"><i data-feather="image"></i><span>Images</span></button>
+        <button class="media-switch-option" type="button" data-engine="tiktok-downloader" aria-pressed="false"><i data-feather="users"></i><span>博主</span></button>
       </div>
       <button id="download-submit" class="download-submit" type="submit">Download</button>
+    </div>
+    <div id="download-tiktok-options" class="download-tiktok-options" hidden>
+      <div id="tiktok-tab-switch" class="tiktok-tab-switch" data-value="post" role="group" aria-label="博主内容类型">
+        <button class="tiktok-tab-option" type="button" data-tab="post" aria-pressed="true">作品</button>
+        <button class="tiktok-tab-option" type="button" data-tab="favorite" aria-pressed="false">喜欢</button>
+        <button class="tiktok-tab-option" type="button" data-tab="collection" aria-pressed="false">收藏</button>
+      </div>
+      <label class="tiktok-count-field"><span>数量</span>
+        <select id="tiktok-count" class="tiktok-count-select" aria-label="下载数量">
+          <option value="18" selected>18</option>
+          <option value="36">36</option>
+          <option value="60">60</option>
+          <option value="100">100</option>
+        </select>
+      </label>
     </div>
   </form>
   <div id="download-inline-alert" class="download-inline-alert" hidden>

@@ -3,9 +3,10 @@ from flask import render_template, request
 from tiklocal.services.downloader import (
     DEFAULT_DOWNLOAD_CONFIG, validate_download_config, validate_download_url,
 )
+from tiklocal.services.tiktok_downloader import TikTokDownloaderError
 
 
-def register_download_routes(app, download_manager, library_service):
+def register_download_routes(app, download_manager, library_service, tiktok_service=None):
     def build_download_config_payload():
         config = download_manager.get_config()
         effective = {key: config.get(key) for key in DEFAULT_DOWNLOAD_CONFIG.keys()}
@@ -16,6 +17,16 @@ def register_download_routes(app, download_manager, library_service):
         }
         return payload
 
+    def tiktok_status_snapshot():
+        if tiktok_service is None:
+            return {'configured': False, 'base_url': '', 'reachable': False,
+                    'message': 'TikTokDownloader service is not configured.'}
+        try:
+            return tiktok_service.status()
+        except Exception as exc:  # The download page must still load when probing fails.
+            return {'configured': False, 'base_url': '', 'reachable': False,
+                    'message': f'Unable to check TikTokDownloader: {exc}'}
+
     @app.route('/download')
     def download_view():
         """URL Download Center"""
@@ -23,7 +34,9 @@ def register_download_routes(app, download_manager, library_service):
 
     @app.route('/api/download/probe', methods=['GET', 'POST'])
     def api_download_probe():
-        return {'success': True, 'data': download_manager.probe_dependencies()}
+        data = download_manager.probe_dependencies()
+        data['tiktok_downloader'] = tiktok_status_snapshot()
+        return {'success': True, 'data': data}
 
     @app.route('/api/download/config', methods=['GET', 'POST'])
     def api_download_config():
@@ -92,6 +105,53 @@ def register_download_routes(app, download_manager, library_service):
             return {'success': False, 'error': str(exc)}, 400
 
         return {'success': True, 'data': {'job': job}}
+
+    @app.route('/api/download/tiktok', methods=['POST'])
+    def api_download_tiktok():
+        if tiktok_service is None:
+            return {'success': False, 'error': 'TikTokDownloader service is not configured.'}, 400
+
+        payload = request.get_json(silent=True) or {}
+        url = str(payload.get('url') or '').strip()
+        if not url:
+            return {'success': False, 'error': 'url cannot be empty.'}, 400
+        tab = str(payload.get('tab') or 'post').strip() or 'post'
+        try:
+            count = int(payload.get('count') or 18)
+        except (TypeError, ValueError):
+            count = 18
+
+        try:
+            data = tiktok_service.enqueue_from_url(url, tab=tab, count=count)
+        except ValueError as exc:
+            return {'success': False, 'error': str(exc)}, 400
+        except TikTokDownloaderError as exc:
+            return {'success': False, 'error': str(exc)}, 502
+        return {'success': True, 'data': data}
+
+    @app.route('/api/download/tiktok/status')
+    def api_download_tiktok_status():
+        return {'success': True, 'data': tiktok_status_snapshot()}
+
+    @app.route('/api/download/tiktok/config', methods=['GET', 'POST'])
+    def api_download_tiktok_config():
+        if request.method == 'GET':
+            section = download_manager.get_config().get('tiktok_downloader') or {}
+            return {'success': True, 'data': {'tiktok_downloader': section}}
+
+        payload = request.get_json(silent=True) or {}
+        section = payload.get('tiktok_downloader')
+        if section is None:
+            section = payload
+        if not isinstance(section, dict):
+            return {'success': False, 'error': 'tiktok_downloader must be an object.'}, 400
+
+        try:
+            download_manager.update_config({'tiktok_downloader': section})
+        except ValueError as exc:
+            return {'success': False, 'error': str(exc)}, 400
+        updated = download_manager.get_config().get('tiktok_downloader') or {}
+        return {'success': True, 'data': {'tiktok_downloader': updated}}
 
     @app.route('/api/download/jobs/<job_id>')
     def api_download_job_detail(job_id):

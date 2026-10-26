@@ -299,6 +299,7 @@ Examples:
             "EMBEDDING_CONFIG": embedding_config,
             "EXPERIMENTS": config.get('experiments'),
             "INSTANCE_NAME": args.name or config.get('name') or os.environ.get('TIKLOCAL_NAME'),
+            "TIKTOK_DOWNLOADER": config.get('tiktok_downloader'),
         })
     except ValueError as exc:
         parser.error(str(exc))

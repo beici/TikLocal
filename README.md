@@ -324,6 +324,17 @@ tiklocal serve --port 8000 \
   --media-source b2=/media/UID100000000000002_乙博主_发布作品
 ```
 
+## 按博主批量下载（TikTokDownloader 接入）
+
+`/download` 页第三个开关“博主”接入
+[TikTokDownloader](https://github.com/JoeanAmier/TikTokDownloader) Web API：
+粘贴抖音**博主主页 / 喜欢 / 收藏**链接，或单条**作品 / 合集**链接
+（支持短链与分享文本），TikLocal 通过局域网 sidecar 解析出无水印直链后
+自行下载入库。文件名对齐抖音归档命名，下载完成即自动完成实况/图集配对。
+sidecar 安装、配置键（`tiktok_downloader.base_url/token`）、回退顺序与
+故障排查见
+[`docs/tiktok-downloader.md`](docs/tiktok-downloader.md)。
+
 ## LumaFold for iPhone and Android
 
 `apps/radio` contains **LumaFold**, a local-first native client. It imports photos

@@ -3,8 +3,11 @@
   const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
   let pollTimer = null;
   let lastJobsSignature = '';
-  let dependencyMeta = { yt_dlp_available: false, gallery_dl_available: false, ffmpeg_available: false };
+  let dependencyMeta = { yt_dlp_available: false, gallery_dl_available: false, ffmpeg_available: false, tiktok_downloader: null };
   let selectedEngine = 'yt-dlp';
+  let selectedTab = 'post';
+  const DEFAULT_PLACEHOLDER = 'Paste an image or video URL…';
+  const TIKTOK_PLACEHOLDER = '粘贴抖音博主主页 / 作品 / 合集链接…';
 
   function escapeHtml(value) {
     return String(value ?? '')
@@ -38,7 +41,7 @@
   function platformMark(url) {
     const hostname = safeHostname(url);
     const knownMarks = [
-      ['instagram', 'IG'], ['youtube', 'YT'], ['youtu.be', 'YT'],
+      ['douyin', 'DY'], ['instagram', 'IG'], ['youtube', 'YT'], ['youtu.be', 'YT'],
       ['tiktok', 'TT'], ['x.com', 'X'], ['twitter', 'X'],
       ['pinterest', 'P'],
     ];
@@ -123,7 +126,7 @@
         <div class="download-job-mark" aria-hidden="true">${escapeHtml(platformMark(job.url))}</div>
         <div class="download-job-main">
           <div class="download-job-top">
-            <div class="download-job-identity"><span class="download-job-domain">${escapeHtml(safeHostname(job.url))}</span><span class="download-job-status">${escapeHtml(job.engine === 'gallery-dl' ? 'Images' : 'Video')}</span></div>
+            <div class="download-job-identity"><span class="download-job-domain">${escapeHtml(safeHostname(job.url))}</span><span class="download-job-status">${escapeHtml(engineLabel(job.engine))}</span></div>
             ${time ? `<span class="download-job-time">${escapeHtml(time)}</span>` : ''}
           </div>
           <p class="download-job-copy">${escapeHtml(statusCopy(job))}</p>
@@ -216,17 +219,55 @@
     }
   }
 
+  function engineLabel(engine) {
+    if (engine === 'gallery-dl') return 'Images';
+    if (engine === 'tiktok-downloader') return '博主';
+    return 'Video';
+  }
+
+  function tiktokStatus() {
+    return dependencyMeta.tiktok_downloader || null;
+  }
+
   function selectEngine(engine) {
-    selectedEngine = engine === 'gallery-dl' ? 'gallery-dl' : 'yt-dlp';
+    selectedEngine = ['gallery-dl', 'tiktok-downloader'].includes(engine) ? engine : 'yt-dlp';
     const switchElement = document.getElementById('media-switch');
     switchElement.dataset.value = selectedEngine;
     switchElement.querySelectorAll('[data-engine]').forEach((button) => {
       button.setAttribute('aria-pressed', String(button.dataset.engine === selectedEngine));
     });
+    const optionsRow = document.getElementById('download-tiktok-options');
+    if (optionsRow) optionsRow.hidden = selectedEngine !== 'tiktok-downloader';
+    const urlInput = document.getElementById('download-url');
+    if (urlInput) urlInput.placeholder = selectedEngine === 'tiktok-downloader' ? TIKTOK_PLACEHOLDER : DEFAULT_PLACEHOLDER;
+
     const alert = document.getElementById('download-inline-alert');
-    const unavailable = selectedEngine === 'gallery-dl' && !dependencyMeta.gallery_dl_available;
+    const alertCopy = document.getElementById('download-inline-alert-copy');
+    let unavailable = false;
+    if (selectedEngine === 'gallery-dl' && !dependencyMeta.gallery_dl_available) {
+      unavailable = true;
+      alertCopy.textContent = 'The image download component is not ready';
+    } else if (selectedEngine === 'tiktok-downloader') {
+      const status = tiktokStatus();
+      if (!status || !status.configured) {
+        unavailable = true;
+        alertCopy.textContent = 'TikTokDownloader 未配置，请先在设置中填写服务地址';
+      } else if (!status.reachable) {
+        unavailable = true;
+        alertCopy.textContent = '无法连接 TikTokDownloader 服务，请确认服务已启动';
+      }
+    }
     alert.hidden = !unavailable;
-    if (unavailable) document.getElementById('download-inline-alert-copy').textContent = 'The image download component is not ready';
+  }
+
+  function selectTab(tab) {
+    selectedTab = ['favorite', 'collection'].includes(tab) ? tab : 'post';
+    const switchElement = document.getElementById('tiktok-tab-switch');
+    if (!switchElement) return;
+    switchElement.dataset.value = selectedTab;
+    switchElement.querySelectorAll('[data-tab]').forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset.tab === selectedTab));
+    });
   }
 
   function closeJobMenus(except = null) {
@@ -309,6 +350,10 @@
       const button = event.target.closest('[data-engine]');
       if (button) selectEngine(button.dataset.engine);
     });
+    document.getElementById('tiktok-tab-switch')?.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-tab]');
+      if (button) selectTab(button.dataset.tab);
+    });
 
     form?.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -319,14 +364,34 @@
         TikLocalUI.toast('The image download component is not installed.', 'error');
         return;
       }
+      if (selectedEngine === 'tiktok-downloader') {
+        const status = tiktokStatus();
+        if (!status || !status.configured) {
+          TikLocalUI.toast('TikTokDownloader 未配置，请先在设置中填写服务地址', 'error');
+          return;
+        }
+        if (!status.reachable) {
+          TikLocalUI.toast('无法连接 TikTokDownloader 服务，请确认服务已启动', 'error');
+          return;
+        }
+      }
       submitButton.disabled = true;
       submitButton.textContent = 'Adding…';
       try {
-        const payload = { url, save_mode: 'root', engine: selectedEngine, cookie_mode: 'auto' };
-        await api('/api/download/jobs', { method: 'POST', body: JSON.stringify(payload) });
+        if (selectedEngine === 'tiktok-downloader') {
+          const countSelect = document.getElementById('tiktok-count');
+          const data = await api('/api/download/tiktok', {
+            method: 'POST',
+            body: JSON.stringify({ url, tab: selectedTab, count: Number(countSelect?.value || '18') }),
+          });
+          TikLocalUI.toast(`已加入 ${data.queued || 0} 个下载任务`);
+        } else {
+          const payload = { url, save_mode: 'root', engine: selectedEngine, cookie_mode: 'auto' };
+          await api('/api/download/jobs', { method: 'POST', body: JSON.stringify(payload) });
+          TikLocalUI.toast('Added to the download queue');
+        }
         urlInput.value = '';
         updateDetectedSite(urlInput);
-        TikLocalUI.toast('Added to the download queue');
         lastJobsSignature = '';
         await refreshJobs({ force: true });
       } catch (error) {

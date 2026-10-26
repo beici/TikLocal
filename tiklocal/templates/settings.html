@@ -146,6 +146,14 @@
           </div>
         </div>
         <div class="settings-row">
+          <span class="setting-icon"><i data-feather="rss"></i></span>
+          <div class="settings-row-main">
+            <div class="settings-row-title">TikTokDownloader 服务</div>
+            <div id="tiktok-downloader-status" class="settings-row-copy">Checking status…</div>
+          </div>
+          <button id="tiktok-downloader-edit" class="settings-action" type="button">Edit</button>
+        </div>
+        <div class="settings-row">
           <span class="setting-icon"><i data-feather="shield"></i></span>
           <div class="settings-row-main">
             <div class="settings-row-title">Website Credentials</div>
@@ -222,6 +230,29 @@
       <button id="generate-radio-pairing" class="settings-action is-primary" type="button">Generate Pairing Link</button>
       <button id="copy-radio-pairing" class="settings-action" type="button" hidden>Copy Link</button>
       <a id="open-radio-link" class="settings-action pairing-open" href="#" aria-disabled="true" hidden>Open on This Device</a>
+    </div>
+  </section>
+</div>
+<div id="tiktok-downloader-mask" class="pairing-mask" hidden>
+  <section class="pairing-dialog" role="dialog" aria-modal="true" aria-labelledby="tiktok-downloader-title">
+    <div class="credential-head">
+      <div>
+        <h2 id="tiktok-downloader-title" class="credential-title">TikTokDownloader 服务</h2>
+        <p class="credential-copy">按博主批量下载依赖局域网内的 TikTokDownloader Web API（默认端口 5555）。</p>
+      </div>
+      <button id="close-tiktok-downloader" class="credential-close" type="button" aria-label="Close"><i data-feather="x"></i></button>
+    </div>
+    <label class="pairing-field">
+      <span class="pairing-label">服务地址 base_url</span>
+      <input id="tiktok-downloader-base-url" class="pairing-input" type="url" inputmode="url" autocomplete="url" placeholder="http://192.168.x.x:5555">
+    </label>
+    <label class="pairing-field">
+      <span class="pairing-label">访问令牌 token（服务未启用鉴权时留空）</span>
+      <input id="tiktok-downloader-token" class="pairing-input" type="text" autocomplete="off">
+    </label>
+    <p id="tiktok-downloader-hint" class="pairing-warning" aria-live="polite"></p>
+    <div class="pairing-actions">
+      <button id="save-tiktok-downloader" class="settings-action is-primary" type="button">Save</button>
     </div>
   </section>
 </div>

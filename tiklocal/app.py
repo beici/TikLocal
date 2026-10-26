@@ -25,6 +25,7 @@ from tiklocal.services.downloader import (
     DownloadManager,
 )
 from tiklocal.services.download_sources import DownloadSourceStore
+from tiklocal.services.tiktok_downloader import TikTokDownloadService, seed_tiktok_downloader_config
 from tiklocal.services.collections import CollectionStore
 from tiklocal.services.radio import RadioProfileStore, RadioService
 from tiklocal.services.radio_energy import RadioEnergyService
@@ -245,6 +246,10 @@ def create_app(test_config=None):
     collection_store = CollectionStore(get_collections_path())
     download_source_id = str(app.config.get('DOWNLOAD_SOURCE') or library_service.default_source_id).strip() or library_service.default_source_id
     download_source = library_service.sources_by_id.get(download_source_id) or library_service.sources_by_id[library_service.default_source_id]
+    tiktok_overrides = app.config.get('TIKTOK_DOWNLOADER')
+    if isinstance(tiktok_overrides, dict):
+        # Seed before the manager construction so its cached config includes the section.
+        seed_tiktok_downloader_config(download_config_store, tiktok_overrides)
     download_manager = DownloadManager(
         download_source.path,
         download_config_store,
@@ -255,7 +260,8 @@ def create_app(test_config=None):
     )
 
     app.extensions['download_manager'] = download_manager
-    register_download_routes(app, download_manager, library_service)
+    tiktok_service = TikTokDownloadService(download_config_store, download_manager)
+    register_download_routes(app, download_manager, library_service, tiktok_service=tiktok_service)
     register_library_routes(
         app, library_service=library_service, media_index=media_index,
         library_indexer=library_indexer, favorite_service=favorite_service,

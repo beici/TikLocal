@@ -198,6 +198,48 @@
     document.getElementById('close-credentials').focus();
   }
 
+  const tiktokDownloaderMask = document.getElementById('tiktok-downloader-mask');
+
+  function renderTikTokDownloaderStatus(status) {
+    const copy = document.getElementById('tiktok-downloader-status');
+    if (!copy) return;
+    if (!status || !status.configured) {
+      copy.textContent = '未配置服务地址，按博主批量下载不可用。';
+      return;
+    }
+    copy.textContent = status.reachable
+      ? `已连接 ${status.base_url}`
+      : `无法连接 ${status.base_url}，请确认服务已启动。`;
+  }
+
+  async function loadTikTokDownloaderStatus() {
+    try {
+      const payload = await requestJson('/api/download/tiktok/status');
+      renderTikTokDownloaderStatus(payload.data || {});
+    } catch (_) {
+      renderTikTokDownloaderStatus(null);
+    }
+  }
+
+  async function openTikTokDownloader() {
+    try {
+      const payload = await requestJson('/api/download/tiktok/config');
+      const section = payload.data || {};
+      document.getElementById('tiktok-downloader-base-url').value = section.base_url || '';
+      document.getElementById('tiktok-downloader-token').value = section.token || '';
+    } catch (_) { /* keep the inputs empty when config is unavailable */ }
+    document.getElementById('tiktok-downloader-hint').textContent = '';
+    tiktokDownloaderMask.hidden = false;
+    document.body.style.overflow = 'hidden';
+    document.getElementById('tiktok-downloader-base-url').focus();
+  }
+
+  function closeTikTokDownloader() {
+    tiktokDownloaderMask.hidden = true;
+    document.body.style.overflow = '';
+    document.getElementById('tiktok-downloader-edit').focus();
+  }
+
   function closeCredentials() {
     credentialMask.hidden = true;
     document.body.style.overflow = '';
@@ -332,6 +374,35 @@
   document.getElementById('close-credentials').addEventListener('click', closeCredentials);
   credentialMask.addEventListener('click', (event) => { if (event.target === credentialMask) closeCredentials(); });
   credentialMask.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeCredentials(); });
+  document.getElementById('tiktok-downloader-edit')?.addEventListener('click', () => void openTikTokDownloader());
+  document.getElementById('close-tiktok-downloader')?.addEventListener('click', closeTikTokDownloader);
+  tiktokDownloaderMask?.addEventListener('click', (event) => { if (event.target === tiktokDownloaderMask) closeTikTokDownloader(); });
+  tiktokDownloaderMask?.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeTikTokDownloader(); });
+  document.getElementById('save-tiktok-downloader')?.addEventListener('click', (event) => {
+    const baseUrl = document.getElementById('tiktok-downloader-base-url').value.trim();
+    const token = document.getElementById('tiktok-downloader-token').value.trim();
+    const hint = document.getElementById('tiktok-downloader-hint');
+    if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
+      hint.textContent = '服务地址需以 http:// 或 https:// 开头。';
+      return;
+    }
+    runButton(event.currentTarget, 'Saving…', async () => {
+      const payload = await requestJson('/api/download/tiktok/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tiktok_downloader: { base_url: baseUrl, token } }),
+      });
+      renderTikTokDownloaderStatus({
+        configured: Boolean(payload.data?.base_url),
+        base_url: payload.data?.base_url || '',
+        reachable: false,
+      });
+      await loadTikTokDownloaderStatus();
+      TikLocalUI.toast('TikTokDownloader 设置已保存');
+    }).catch((error) => {
+      document.getElementById('tiktok-downloader-hint').textContent = error.message || '保存失败，请稍后再试。';
+    });
+  });
   document.getElementById('open-radio-pairing').addEventListener('click', openRadioPairing);
   document.getElementById('close-radio-pairing').addEventListener('click', closeRadioPairing);
   pairingMask.addEventListener('click', (event) => { if (event.target === pairingMask) closeRadioPairing(); });
@@ -444,4 +515,5 @@
   loadRadioDevices();
   loadTrash();
   loadDownloadSettings();
+  loadTikTokDownloaderStatus();
 })();
