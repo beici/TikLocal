@@ -91,10 +91,187 @@
     return labels[job.status] || T('download.status.unknown');
   }
 
-  function renderJob(job) {
+  const PAGE_SIZES = [10, 20, 50, 100];
+  // Lists stay un-paginated until they grow past ten rows.
+  const PAGER_THRESHOLD = 10;
+  const HISTORY_PAGE_KEY = 'tiklocal.download.historyPageSize';
+  const URL_LIST_PAGE_KEY = 'tiklocal.download.urlListPageSize';
+
+  let historyJobs = [];
+  let historySelecting = false;
+  const selectedJobIds = new Set();
+  let historyPager = null;
+  let urlListPager = null;
+  let urlListLines = [];
+
+  function readPageSize(key) {
+    try {
+      const stored = Number(window.localStorage.getItem(key));
+      if (PAGE_SIZES.includes(stored)) return stored;
+    } catch (_) {}
+    return PAGE_SIZES[0];
+  }
+
+  function savePageSize(key, size) {
+    try {
+      window.localStorage.setItem(key, String(size));
+    } catch (_) {}
+  }
+
+  function pageWindow(page, pages) {
+    if (pages <= 5) return Array.from({ length: pages }, (_, index) => index + 1);
+    const items = new Set([1, pages, page - 1, page, page + 1]);
+    if (page <= 3) [2, 3, 4].forEach((value) => items.add(value));
+    if (page >= pages - 2) [pages - 1, pages - 2, pages - 3].forEach((value) => items.add(value));
+    const sorted = [...items].filter((value) => value >= 1 && value <= pages).sort((a, b) => a - b);
+    const output = [];
+    sorted.forEach((value, index) => {
+      if (index > 0 && value - sorted[index - 1] > 1) output.push('…');
+      output.push(value);
+    });
+    return output;
+  }
+
+  // One pager instance drives one list: it owns the page size, the current page
+  // and the bar markup, and asks the owner to re-render through `onChange`.
+  function createPager(host, { storageKey, onChange }) {
+    const state = { page: 1, pageSize: readPageSize(storageKey), total: 0 };
+    const totalPages = () => Math.max(1, Math.ceil(state.total / state.pageSize));
+    let renderedKey = '';
+    const stateKey = () => `${state.total}:${state.page}:${state.pageSize}`;
+
+    function render() {
+      const pages = totalPages();
+      renderedKey = stateKey();
+      host.hidden = state.total <= PAGER_THRESHOLD;
+      if (host.hidden) {
+        host.innerHTML = '';
+        return;
+      }
+      host.innerHTML = `
+        <div class="pager-bar">
+          <label class="pager-size">
+            <span class="pager-size-label">${escapeHtml(T('pager.page_size'))}</span>
+            <span class="pager-size-field">
+              <select class="pager-size-select" aria-label="${escapeHtml(T('pager.page_size'))}">
+                ${PAGE_SIZES.map((size) => `<option value="${size}"${size === state.pageSize ? ' selected' : ''}>${escapeHtml(T('pager.size_option', { size }))}</option>`).join('')}
+              </select>
+              <i data-feather="chevron-down"></i>
+            </span>
+          </label>
+          <div class="pager-nav">
+            <button class="pager-btn" type="button" data-pager-step="-1" aria-label="${escapeHtml(T('pager.prev'))}"${state.page <= 1 ? ' disabled' : ''}><i data-feather="chevron-left"></i></button>
+            <div class="pager-pages">
+              ${pageWindow(state.page, pages).map((item) => (item === '…'
+                ? '<span class="pager-ellipsis" aria-hidden="true">…</span>'
+                : `<button class="pager-page${item === state.page ? ' is-current' : ''}" type="button" data-pager-page="${item}" aria-label="${escapeHtml(T('pager.page_aria', { page: item }))}"${item === state.page ? ' aria-current="page"' : ''}>${item}</button>`)).join('')}
+            </div>
+            <button class="pager-btn" type="button" data-pager-step="1" aria-label="${escapeHtml(T('pager.next'))}"${state.page >= pages ? ' disabled' : ''}><i data-feather="chevron-right"></i></button>
+          </div>
+          <div class="pager-jump">
+            <label class="pager-jump-label" for="${host.id}-jump">${escapeHtml(T('pager.jump'))}</label>
+            <input id="${host.id}-jump" class="pager-jump-input" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="${state.page}" aria-label="${escapeHtml(T('pager.jump'))}">
+            <span class="pager-jump-suffix">${escapeHtml(T('pager.jump_suffix'))}</span>
+          </div>
+          <span class="pager-summary">${escapeHtml(T('pager.summary', { page: state.page, pages, total: state.total }))}</span>
+        </div>`;
+      window.feather?.replace();
+    }
+
+    function goToPage(next) {
+      const pages = totalPages();
+      const clamped = Math.max(1, Math.min(pages, Math.trunc(next) || 1));
+      if (clamped === state.page) {
+        render();
+        return;
+      }
+      state.page = clamped;
+      render();
+      onChange(state);
+    }
+
+    host.addEventListener('click', (event) => {
+      const stepButton = event.target.closest('[data-pager-step]');
+      if (stepButton) {
+        goToPage(state.page + Number(stepButton.dataset.pagerStep));
+        return;
+      }
+      const pageButton = event.target.closest('[data-pager-page]');
+      if (pageButton) goToPage(Number(pageButton.dataset.pagerPage));
+    });
+    host.addEventListener('change', (event) => {
+      const select = event.target.closest('.pager-size-select');
+      if (!select) return;
+      const size = Number(select.value);
+      if (!PAGE_SIZES.includes(size) || size === state.pageSize) return;
+      state.pageSize = size;
+      state.page = 1;
+      savePageSize(storageKey, size);
+      render();
+      onChange(state);
+    });
+    host.addEventListener('keydown', (event) => {
+      const input = event.target.closest('.pager-jump-input');
+      if (!input || event.key !== 'Enter') return;
+      event.preventDefault();
+      const value = Number(input.value);
+      if (Number.isFinite(value) && value >= 1) goToPage(value);
+      else render();
+    });
+
+    return {
+      getState: () => ({ ...state }),
+      update(total) {
+        state.total = Math.max(0, Math.trunc(Number(total) || 0));
+        const pages = totalPages();
+        if (state.page > pages) state.page = pages;
+        if (state.page < 1) state.page = 1;
+        if (stateKey() !== renderedKey) render();
+      },
+    };
+  }
+
+  function historyPagerInstance() {
+    if (!historyPager) {
+      const host = document.getElementById('history-pager');
+      if (host) {
+        historyPager = createPager(host, {
+          storageKey: HISTORY_PAGE_KEY,
+          onChange: () => renderHistoryPage(),
+        });
+      }
+    }
+    return historyPager;
+  }
+
+  function urlListPagerInstance() {
+    if (!urlListPager) {
+      const host = document.getElementById('url-list-pager');
+      if (host) {
+        urlListPager = createPager(host, {
+          storageKey: URL_LIST_PAGE_KEY,
+          onChange: () => renderUrlListPage(),
+        });
+      }
+    }
+    return urlListPager;
+  }
+
+  function jobFileCount(job) {
+    const files = outputFiles(job);
+    return Math.max(files.length, Number(job.file_count) || 0);
+  }
+
+  function renderJob(job, { selectable = false } = {}) {
     const files = outputFiles(job);
     const firstFile = files[0] || '';
     const isActive = ACTIVE_STATUSES.has(job.status);
+    const selected = selectable && selectedJobIds.has(job.id);
+    const checkbox = selectable ? `
+        <label class="download-job-check">
+          <input type="checkbox" data-job-select="${escapeHtml(job.id)}"${selected ? ' checked' : ''} aria-label="${escapeHtml(T('download.select.row_aria', { name: safeHostname(job.url) }))}">
+          <span class="download-job-check-box" aria-hidden="true"><i data-feather="check"></i></span>
+        </label>` : '';
     const progress = typeof job.progress_percent === 'number'
       ? Math.max(0, Math.min(100, job.progress_percent))
       : null;
@@ -125,7 +302,8 @@
     }
 
     return `
-      <article class="download-job ${className}" data-job-id="${escapeHtml(job.id)}">
+      <article class="download-job ${className}${selected ? ' is-selected' : ''}${selectable ? ' is-selectable' : ''}" data-job-id="${escapeHtml(job.id)}">
+        ${checkbox}
         <div class="download-job-mark" aria-hidden="true">${escapeHtml(platformMark(job.url))}</div>
         <div class="download-job-main">
           <div class="download-job-top">
@@ -163,20 +341,179 @@
     lastJobsSignature = signature;
 
     const activeJobs = jobs.filter((job) => ACTIVE_STATUSES.has(job.status));
-    const historyJobs = jobs.filter((job) => !ACTIVE_STATUSES.has(job.status));
+    historyJobs = jobs.filter((job) => !ACTIVE_STATUSES.has(job.status));
     const activeSection = document.getElementById('active-section');
     const activeList = document.getElementById('active-list');
-    const historyList = document.getElementById('history-list');
-    const historyFooter = document.getElementById('history-footer');
 
     activeSection.hidden = activeJobs.length === 0;
     document.getElementById('active-count').textContent = activeJobs.length ? T('download.items_count', { n: activeJobs.length }) : '';
-    activeList.innerHTML = activeJobs.map(renderJob).join('');
+    activeList.innerHTML = activeJobs.map((job) => renderJob(job)).join('');
     document.getElementById('history-count').textContent = historyJobs.length ? T('download.items_count', { n: historyJobs.length }) : '';
-    historyList.innerHTML = historyJobs.length ? historyJobs.map(renderJob).join('') : emptyHistory();
-    historyFooter.hidden = historyJobs.length === 0;
-    window.feather?.replace();
+
+    const knownIds = new Set(historyJobs.map((job) => job.id));
+    [...selectedJobIds].forEach((jobId) => {
+      if (!knownIds.has(jobId)) selectedJobIds.delete(jobId);
+    });
+    if (historySelecting && historyJobs.length === 0) exitHistorySelection();
+    renderHistoryPage();
     schedulePolling(activeJobs.length > 0);
+  }
+
+  function visibleHistoryJobs() {
+    const pager = historyPagerInstance();
+    const { page = 1, pageSize = PAGE_SIZES[0] } = pager ? pager.getState() : {};
+    const start = (page - 1) * pageSize;
+    return historyJobs.slice(start, start + pageSize);
+  }
+
+  function renderHistoryPage() {
+    const list = document.getElementById('history-list');
+    if (!list) return;
+    const pager = historyPagerInstance();
+    if (pager) pager.update(historyJobs.length);
+    const visible = visibleHistoryJobs();
+    list.classList.toggle('is-selecting', historySelecting);
+    list.innerHTML = historyJobs.length
+      ? visible.map((job) => renderJob(job, { selectable: historySelecting })).join('')
+      : emptyHistory();
+    const footer = document.getElementById('history-footer');
+    if (footer) footer.hidden = historyJobs.length === 0 || historySelecting;
+    const bar = document.getElementById('history-select-bar');
+    if (bar) bar.hidden = !historySelecting;
+    updateSelectionUI();
+    window.feather?.replace();
+  }
+
+  function updateSelectionUI() {
+    const count = selectedJobIds.size;
+    const countElement = document.getElementById('history-select-count');
+    if (countElement) {
+      countElement.textContent = count
+        ? T('download.select.selected', { n: count })
+        : T('download.select.hint');
+      countElement.classList.toggle('is-empty', count === 0);
+    }
+    const visibleIds = visibleHistoryJobs().map((job) => job.id);
+    const pageSelected = visibleIds.length > 0 && visibleIds.every((jobId) => selectedJobIds.has(jobId));
+    const allIds = historyJobs.map((job) => job.id);
+    const allSelected = allIds.length > 0 && allIds.every((jobId) => selectedJobIds.has(jobId));
+    const allButton = document.getElementById('history-select-all');
+    if (allButton) {
+      // Three steps: pick the current page, then everything, then clear.
+      let label = T('download.select.select_all');
+      if (allSelected) label = T('download.select.clear_all');
+      else if (pageSelected) label = T('download.select.select_all_total', { total: historyJobs.length });
+      allButton.textContent = label;
+      allButton.setAttribute('aria-pressed', String(pageSelected || allSelected));
+    }
+    const deleteButton = document.getElementById('history-select-delete');
+    if (deleteButton) deleteButton.disabled = count === 0;
+  }
+
+  function enterHistorySelection() {
+    if (!historyJobs.length) return;
+    historySelecting = true;
+    selectedJobIds.clear();
+    document.body.classList.add('is-history-selecting');
+    renderHistoryPage();
+  }
+
+  function exitHistorySelection() {
+    historySelecting = false;
+    selectedJobIds.clear();
+    document.body.classList.remove('is-history-selecting');
+    renderHistoryPage();
+  }
+
+  function toggleJobSelection(jobId, checked) {
+    if (!jobId) return;
+    if (checked) selectedJobIds.add(jobId);
+    else selectedJobIds.delete(jobId);
+    const row = document.querySelector(`.download-job[data-job-id="${CSS.escape(jobId)}"]`);
+    if (row) {
+      row.classList.toggle('is-selected', checked);
+      const input = row.querySelector('[data-job-select]');
+      if (input) input.checked = checked;
+    }
+    updateSelectionUI();
+  }
+
+  function chooseHistoryDeleteMode(fileCount) {
+    const sheet = document.getElementById('history-delete-sheet');
+    if (!sheet) return Promise.resolve(null);
+    const copy = document.getElementById('history-sheet-copy');
+    const filesCopy = document.getElementById('history-sheet-files-copy');
+    if (copy) copy.textContent = T('download.select.delete_copy', { n: selectedJobIds.size });
+    if (filesCopy) {
+      filesCopy.textContent = fileCount
+        ? T('download.select.mode_files_copy', { n: fileCount })
+        : T('download.select.mode_files_none');
+    }
+    const modes = [...sheet.querySelectorAll('[data-delete-mode]')];
+    modes.forEach((button) => {
+      button.disabled = button.dataset.deleteMode === 'files' && fileCount === 0;
+    });
+    sheet.hidden = false;
+    document.body.style.overflow = 'hidden';
+    const cancel = sheet.querySelector('[data-sheet-cancel]');
+    cancel?.focus();
+    return new Promise((resolve) => {
+      const finish = (result) => {
+        sheet.hidden = true;
+        document.body.style.overflow = '';
+        modes.forEach((button) => button.removeEventListener('click', onMode));
+        cancel?.removeEventListener('click', onCancel);
+        sheet.removeEventListener('click', onMaskClick);
+        sheet.removeEventListener('keydown', onKeydown);
+        resolve(result);
+      };
+      const onMode = (event) => finish(event.currentTarget.dataset.deleteMode);
+      const onCancel = () => finish(null);
+      const onMaskClick = (event) => {
+        if (event.target === sheet) finish(null);
+      };
+      const onKeydown = (event) => {
+        if (event.key === 'Escape') finish(null);
+      };
+      modes.forEach((button) => button.addEventListener('click', onMode));
+      cancel?.addEventListener('click', onCancel);
+      sheet.addEventListener('click', onMaskClick);
+      sheet.addEventListener('keydown', onKeydown);
+    });
+  }
+
+  async function deleteSelectedJobs() {
+    if (!selectedJobIds.size) {
+      TikLocalUI.toast(T('download.select.none'), 'error');
+      return;
+    }
+    const selected = historyJobs.filter((job) => selectedJobIds.has(job.id));
+    const fileCount = selected.reduce((sum, job) => sum + jobFileCount(job), 0);
+    const mode = await chooseHistoryDeleteMode(fileCount);
+    if (!mode) return;
+
+    const ids = selected.map((job) => job.id);
+    const deleteButton = document.getElementById('history-select-delete');
+    if (deleteButton) deleteButton.disabled = true;
+    try {
+      const data = await api('/api/download/jobs/delete', {
+        method: 'POST',
+        body: JSON.stringify({ ids, delete_files: mode === 'files' }),
+      });
+      const deleted = data.deleted || 0;
+      const moved = (data.files && data.files.moved) || 0;
+      TikLocalUI.toast(mode === 'files'
+        ? T('download.select.done_files', { n: deleted, m: moved })
+        : T('download.select.done', { n: deleted }));
+      const skipped = (data.skipped || []).length;
+      if (skipped) TikLocalUI.toast(T('download.select.skipped', { n: skipped }), 'error');
+      exitHistorySelection();
+      lastJobsSignature = '';
+      await refreshJobs({ force: true });
+    } catch (error) {
+      TikLocalUI.toast(error.message, 'error');
+      if (deleteButton) deleteButton.disabled = selectedJobIds.size === 0;
+    }
   }
 
   async function refreshJobs({ force = false } = {}) {
@@ -325,7 +662,10 @@
       button.setAttribute('aria-expanded', String(willOpen));
       return;
     }
-    if (action === 'delete' && !await confirmClear()) return;
+    if (action === 'delete' && !await confirmClear({
+      title: T('download.remove_record'),
+      copy: T('download.confirm_clear_copy'),
+    })) return;
     button.disabled = true;
     try {
       if (action === 'cancel') await api(`/api/download/jobs/${jobId}/cancel`, { method: 'POST' });
@@ -342,50 +682,45 @@
     }
   }
 
-  const URL_LIST_COLLAPSED_LIMIT = 5;
-  let urlListExpanded = false;
-
   function urlListElements() {
     return {
       section: document.getElementById('url-list-section'),
       items: document.getElementById('url-list-items'),
       empty: document.getElementById('url-list-empty'),
       count: document.getElementById('url-list-count'),
-      toggle: document.getElementById('url-list-toggle'),
-      toggleText: document.getElementById('url-list-toggle-text'),
       sourcePath: document.getElementById('url-list-source-path'),
       importText: document.getElementById('url-list-import-text'),
     };
   }
 
-  function renderUrlList(data) {
+  function renderUrlListPage() {
     const els = urlListElements();
     if (!els.items) return;
-    const lines = Array.isArray(data.lines) ? data.lines : [];
-    els.count.textContent = T('download.urls.summary', { count: lines.length });
-    els.empty.hidden = lines.length > 0;
-    els.items.innerHTML = lines.map((url) => `
+    const pager = urlListPagerInstance();
+    if (pager) pager.update(urlListLines.length);
+    const { page = 1, pageSize = PAGE_SIZES[0] } = pager ? pager.getState() : {};
+    const start = (page - 1) * pageSize;
+    const visible = urlListLines.slice(start, start + pageSize);
+    els.items.innerHTML = visible.map((url) => `
       <li class="url-list-item">
         <span class="url-list-mark">${escapeHtml(platformMark(url))}</span>
         <span class="url-list-url" title="${escapeHtml(url)}">${escapeHtml(url)}</span>
         <button class="url-list-remove" type="button" data-url-remove="${escapeHtml(url)}">${escapeHtml(T('download.urls.remove'))}</button>
       </li>
     `).join('');
-    const overflow = lines.length > URL_LIST_COLLAPSED_LIMIT;
-    if (!overflow) urlListExpanded = false;
-    const collapsed = overflow && !urlListExpanded;
-    els.items.classList.toggle('is-collapsed', collapsed);
-    if (els.toggle && els.toggleText) {
-      els.toggle.hidden = !overflow;
-      els.toggle.setAttribute('aria-expanded', String(overflow && urlListExpanded));
-      els.toggle.classList.toggle('is-expanded', overflow && urlListExpanded);
-      els.toggleText.textContent = collapsed
-        ? T('download.urls.expand', { count: lines.length })
-        : T('download.urls.collapse');
-    }
+    window.feather?.replace();
+  }
+
+  function renderUrlList(data) {
+    const els = urlListElements();
+    if (!els.items) return;
+    urlListLines = Array.isArray(data.lines) ? data.lines : [];
+    els.count.textContent = T('download.urls.summary', { count: urlListLines.length });
+    els.empty.hidden = urlListLines.length > 0;
     if (els.sourcePath && document.activeElement !== els.sourcePath) {
       els.sourcePath.value = data.source_path || '';
     }
+    renderUrlListPage();
   }
 
   async function refreshUrlList() {
@@ -407,11 +742,6 @@
   function initUrlList() {
     const els = urlListElements();
     if (!els.section) return;
-
-    els.toggle?.addEventListener('click', async () => {
-      urlListExpanded = !urlListExpanded;
-      await refreshUrlList();
-    });
 
     els.items?.addEventListener('click', async (event) => {
       const button = event.target.closest('[data-url-remove]');
@@ -589,16 +919,39 @@
       if (!event.target.closest('.download-job-menu')) closeJobMenus();
     });
 
-    document.getElementById('clear-history-btn')?.addEventListener('click', async () => {
-      if (!await confirmClear({ title: T('download.confirm_clear_all_title'), copy: T('download.confirm_clear_all_copy') })) return;
-      try {
-        const data = await api('/api/download/jobs/clear', { method: 'POST' });
-        TikLocalUI.toast(T('download.cleared', { n: data.deleted || 0 }));
-        lastJobsSignature = '';
-        await refreshJobs({ force: true });
-      } catch (error) {
-        TikLocalUI.toast(error.message, 'error');
+    document.getElementById('clear-history-btn')?.addEventListener('click', () => enterHistorySelection());
+    document.getElementById('history-select-all')?.addEventListener('click', () => {
+      const visibleIds = visibleHistoryJobs().map((job) => job.id);
+      const pageSelected = visibleIds.length > 0 && visibleIds.every((jobId) => selectedJobIds.has(jobId));
+      const allIds = historyJobs.map((job) => job.id);
+      const allSelected = allIds.length > 0 && allIds.every((jobId) => selectedJobIds.has(jobId));
+      if (allSelected) {
+        selectedJobIds.clear();
+      } else if (pageSelected) {
+        allIds.forEach((jobId) => selectedJobIds.add(jobId));
+      } else {
+        visibleIds.forEach((jobId) => selectedJobIds.add(jobId));
       }
+      renderHistoryPage();
+    });
+    document.getElementById('history-select-cancel')?.addEventListener('click', () => exitHistorySelection());
+    document.getElementById('history-select-delete')?.addEventListener('click', () => deleteSelectedJobs());
+
+    const historyList = document.getElementById('history-list');
+    historyList?.addEventListener('change', (event) => {
+      const input = event.target.closest('[data-job-select]');
+      if (!input) return;
+      toggleJobSelection(input.dataset.jobSelect, input.checked);
+    });
+    historyList?.addEventListener('click', (event) => {
+      if (!historySelecting) return;
+      if (event.target.closest('a, button, input, label')) return;
+      const row = event.target.closest('.download-job[data-job-id]');
+      if (!row) return;
+      toggleJobSelection(row.dataset.jobId, !selectedJobIds.has(row.dataset.jobId));
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && historySelecting) exitHistorySelection();
     });
 
     document.addEventListener('visibilitychange', () => schedulePolling(

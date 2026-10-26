@@ -572,6 +572,38 @@ class DownloadManager:
             self._persist_locked()
         return deleted
 
+    def delete_jobs(self, job_ids: list[str]) -> dict[str, Any]:
+        """Drop several finished jobs from the history in one step.
+
+        Returns the number of removed records, the ids that were kept together
+        with the reason, and the media files each removed job produced so the
+        caller can move those files to the trash.
+        """
+        deleted = 0
+        skipped: list[dict[str, str]] = []
+        outputs: dict[str, list[str]] = {}
+        with self._lock:
+            for job_id in job_ids:
+                job = self._jobs.get(job_id)
+                if not job:
+                    skipped.append({"id": job_id, "error": "Job not found"})
+                    continue
+                if job.get("status") not in TERMINAL_JOB_STATUS:
+                    skipped.append({"id": job_id, "error": t('download.error.delete_running')})
+                    continue
+                outputs[job_id] = [
+                    str(value) for value in job.get("output_files_rel") or [] if str(value).strip()
+                ]
+                self._jobs.pop(job_id, None)
+                self._cancel_events.pop(job_id, None)
+                self._processes.pop(job_id, None)
+                deleted += 1
+            if deleted:
+                removed = set(outputs)
+                self._job_order = [jid for jid in self._job_order if jid not in removed]
+                self._persist_locked()
+        return {"deleted": deleted, "skipped": skipped, "outputs": outputs}
+
     def retry_job(self, job_id: str) -> tuple[dict[str, Any] | None, str | None]:
         with self._lock:
             if not self._started or self._closed:

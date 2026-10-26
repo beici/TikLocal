@@ -2,13 +2,14 @@ from flask import render_template, request
 
 from tiklocal.i18n import t
 from tiklocal.services.downloader import (
-    DEFAULT_DOWNLOAD_CONFIG, validate_download_config, validate_download_url,
+    DEFAULT_DOWNLOAD_CONFIG, TERMINAL_JOB_STATUS, validate_download_config, validate_download_url,
 )
 from tiklocal.services.tiktok_downloader import TikTokDownloaderError
 from tiklocal.services.url_list import UrlListStore, format_text, parse_text
 
 
-def register_download_routes(app, download_manager, library_service, tiktok_service=None):
+def register_download_routes(app, download_manager, library_service, tiktok_service=None,
+                             trash_service=None, media_index=None):
     def build_download_config_payload():
         config = download_manager.get_config()
         effective = {key: config.get(key) for key in DEFAULT_DOWNLOAD_CONFIG.keys()}
@@ -264,6 +265,69 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
     def api_download_jobs_clear():
         deleted = download_manager.clear_history()
         return {'success': True, 'data': {'deleted': deleted}}
+
+    def delete_downloaded_files(uris):
+        """Move the given media files into the recoverable trash."""
+        moved = 0
+        missing = 0
+        failed = []
+        for uri in dict.fromkeys(uris):
+            if trash_service is None:
+                failed.append({'uri': uri, 'error': 'Trash is not available.'})
+                continue
+            try:
+                entry = trash_service.move(uri)
+            except FileNotFoundError:
+                # The record may outlive the file (manual cleanup, moved media).
+                missing += 1
+                if media_index is not None:
+                    media_index.delete(library_service.canonicalize_uri(uri))
+                continue
+            except (OSError, KeyError) as exc:
+                failed.append({'uri': uri, 'error': str(exc)})
+                continue
+            moved += 1
+            if media_index is not None:
+                media_index.delete(entry['uri'])
+        return {'moved': moved, 'missing': missing, 'failed': failed}
+
+    @app.route('/api/download/jobs/delete', methods=['POST'])
+    def api_download_jobs_delete():
+        payload = request.get_json(silent=True) or {}
+        raw_ids = payload.get('ids')
+        if not isinstance(raw_ids, list):
+            return {'success': False, 'error': t('download.error.ids_array')}, 400
+
+        job_ids = []
+        for item in raw_ids:
+            value = str(item or '').strip()
+            if value and value not in job_ids:
+                job_ids.append(value)
+            if len(job_ids) >= 200:
+                break
+        if not job_ids:
+            return {'success': False, 'error': t('download.error.ids_empty')}, 400
+
+        delete_files = bool(payload.get('delete_files'))
+        file_result = {'moved': 0, 'missing': 0, 'failed': []}
+        if delete_files:
+            uris = []
+            for job_id in job_ids:
+                job = download_manager.get_job(job_id)
+                if not job or job.get('status') not in TERMINAL_JOB_STATUS:
+                    continue
+                uris.extend(
+                    str(value) for value in job.get('output_files_rel') or [] if str(value).strip()
+                )
+            file_result = delete_downloaded_files(uris)
+
+        result = download_manager.delete_jobs(job_ids)
+        data = {
+            'deleted': result['deleted'],
+            'skipped': result['skipped'],
+            'files': file_result,
+        }
+        return {'success': True, 'data': data}
 
     @app.route('/api/download/jobs/<job_id>/retry', methods=['POST'])
     def api_download_job_retry(job_id):

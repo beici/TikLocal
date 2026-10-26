@@ -56,10 +56,8 @@
         <a id="url-list-export" class="download-action" href="/api/download/urls/export" download="download-urls.txt"><i data-feather="upload"></i><span>{{ t('download.urls.export') }}</span></a>
         <button id="url-list-clear" class="download-action is-danger" type="button"><i data-feather="trash-2"></i><span>{{ t('download.urls.clear') }}</span></button>
       </div>
-      <ol id="url-list-items" class="url-list-items is-collapsed"></ol>
-      <button id="url-list-toggle" class="url-list-toggle" type="button" hidden aria-expanded="false">
-        <i data-feather="chevron-down"></i><span id="url-list-toggle-text"></span>
-      </button>
+      <ol id="url-list-items" class="url-list-items"></ol>
+      <div id="url-list-pager" class="list-pager" hidden></div>
       <p id="url-list-empty" class="url-list-empty">{{ t('download.urls.empty') }}</p>
       <details class="url-list-import">
         <summary>{{ t('download.urls.input_label') }}</summary>
@@ -94,8 +92,19 @@
       <div id="history-list" class="download-list" aria-live="polite">
         <div class="download-empty"><div class="download-empty-icon"><i data-feather="loader"></i></div><div class="download-empty-title">{{ t('common.loading') }}</div></div>
       </div>
+      <div id="history-pager" class="list-pager" hidden></div>
       <div id="history-footer" class="download-history-footer" hidden>
-        <button id="clear-history-btn" class="download-clear" type="button">{{ t('download.clear_history') }}</button>
+        <button id="clear-history-btn" class="download-clear" type="button"><i data-feather="check-square"></i><span>{{ t('download.select.enter') }}</span></button>
+      </div>
+      <div id="history-select-bar" class="history-select-bar" hidden>
+        <div class="history-select-info">
+          <button id="history-select-all" class="history-select-all" type="button" aria-pressed="false">{{ t('download.select.select_all') }}</button>
+          <span id="history-select-count" class="history-select-count"></span>
+        </div>
+        <div class="history-select-actions">
+          <button id="history-select-cancel" class="download-action" type="button">{{ t('download.select.cancel') }}</button>
+          <button id="history-select-delete" class="download-action is-danger" type="button"><i data-feather="trash-2"></i><span>{{ t('download.select.delete') }}</span></button>
+        </div>
       </div>
     </section>
   </div>
@@ -109,6 +118,34 @@
     <div class="download-confirm-actions">
       <button class="download-action" type="button" data-confirm-cancel>{{ t('common.cancel') }}</button>
       <button class="download-action is-danger" type="button" data-confirm-accept>{{ t('download.clear_action') }}</button>
+    </div>
+  </section>
+</div>
+
+<div id="history-delete-sheet" class="history-sheet" hidden>
+  <section class="history-sheet-card" role="dialog" aria-modal="true" aria-labelledby="history-sheet-title">
+    <h2 id="history-sheet-title" class="history-sheet-title">{{ t('download.select.delete_title') }}</h2>
+    <p id="history-sheet-copy" class="history-sheet-copy"></p>
+    <div class="history-sheet-options">
+      <button class="history-sheet-option" type="button" data-delete-mode="records">
+        <span class="history-sheet-option-icon"><i data-feather="file-minus"></i></span>
+        <span class="history-sheet-option-body">
+          <strong>{{ t('download.select.mode_records') }}</strong>
+          <small>{{ t('download.select.mode_records_copy') }}</small>
+        </span>
+        <span class="history-sheet-option-chevron"><i data-feather="chevron-right"></i></span>
+      </button>
+      <button class="history-sheet-option is-danger" type="button" data-delete-mode="files">
+        <span class="history-sheet-option-icon"><i data-feather="trash-2"></i></span>
+        <span class="history-sheet-option-body">
+          <strong>{{ t('download.select.mode_files') }}</strong>
+          <small id="history-sheet-files-copy"></small>
+        </span>
+        <span class="history-sheet-option-chevron"><i data-feather="chevron-right"></i></span>
+      </button>
+    </div>
+    <div class="history-sheet-actions">
+      <button class="download-action" type="button" data-sheet-cancel>{{ t('download.select.cancel') }}</button>
     </div>
   </section>
 </div>

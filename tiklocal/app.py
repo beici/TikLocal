@@ -283,7 +283,11 @@ def create_app(test_config=None):
 
     app.extensions['download_manager'] = download_manager
     tiktok_service = TikTokDownloadService(download_config_store, download_manager)
-    register_download_routes(app, download_manager, library_service, tiktok_service=tiktok_service)
+    trash_service = TrashService(library_service)
+    register_download_routes(
+        app, download_manager, library_service, tiktok_service=tiktok_service,
+        trash_service=trash_service, media_index=media_index,
+    )
     register_library_routes(
         app, library_service=library_service, media_index=media_index,
         library_indexer=library_indexer, favorite_service=favorite_service,
@@ -306,7 +310,7 @@ def create_app(test_config=None):
     register_radio_routes(app, library_service, radio_service, thumbnail_service, RadioEnergyService(library_service))
     register_media_routes(
         app, library_service, media_index, thumbnail_service, download_manager,
-        TrashService(library_service), library_indexer, activity_store,
+        trash_service, library_indexer, activity_store,
     )
     register_settings_routes(app, media_index, favorite_service, thumbnail_service, app_version)
 

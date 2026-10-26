@@ -236,6 +236,86 @@ def test_delete_and_clear_history(client):
     assert (client.application.config["MEDIA_ROOT"] / "mock-output.mp4").exists()
 
 
+def test_delete_selected_records_keeps_files(client):
+    ids = []
+    for name in ("a", "b", "c"):
+        job = client.post("/api/download/jobs", json={"url": f"https://example.com/{name}"}).json["data"]["job"]
+        assert _wait_for_job(client, job["id"])["status"] == "success"
+        ids.append(job["id"])
+
+    res = client.post("/api/download/jobs/delete", json={"ids": ids[:2]})
+    data = res.get_json()["data"]
+    assert res.status_code == 200
+    assert data["deleted"] == 2
+    assert data["skipped"] == []
+    assert data["files"] == {"moved": 0, "missing": 0, "failed": []}
+    remaining = [job["id"] for job in client.get("/api/download/jobs").json["data"]["jobs"]]
+    assert remaining == [ids[2]]
+    assert (client.application.config["MEDIA_ROOT"] / "mock-output.mp4").exists()
+
+
+def test_delete_selected_records_moves_files_to_trash(client):
+    job = client.post("/api/download/jobs", json={"url": "https://example.com/one"}).json["data"]["job"]
+    assert _wait_for_job(client, job["id"])["status"] == "success"
+    media = client.application.config["MEDIA_ROOT"] / "mock-output.mp4"
+    assert media.exists()
+
+    data = client.post(
+        "/api/download/jobs/delete", json={"ids": [job["id"]], "delete_files": True},
+    ).get_json()["data"]
+    assert data["deleted"] == 1
+    assert data["files"]["moved"] == 1
+    assert not media.exists()
+    assert [item["name"] for item in client.get("/api/trash").json["items"]] == ["mock-output.mp4"]
+    assert client.get("/api/download/jobs").json["data"]["jobs"] == []
+
+
+def test_delete_selected_records_tolerates_missing_file(client):
+    job = client.post("/api/download/jobs", json={"url": "https://example.com/gone"}).json["data"]["job"]
+    assert _wait_for_job(client, job["id"])["status"] == "success"
+    (client.application.config["MEDIA_ROOT"] / "mock-output.mp4").unlink()
+
+    data = client.post(
+        "/api/download/jobs/delete", json={"ids": [job["id"]], "delete_files": True},
+    ).get_json()["data"]
+    assert data["deleted"] == 1
+    assert data["files"] == {"moved": 0, "missing": 1, "failed": []}
+
+
+def test_delete_selected_records_skips_running_job(client, monkeypatch):
+    started = Event()
+    release = Event()
+
+    def blocking_execute(self, job_id):  # noqa: ARG001
+        started.set()
+        release.wait(3)
+        (self.media_root / "mock-output.mp4").write_bytes(b"video")
+        return 0, "", "mock-output.mp4"
+
+    monkeypatch.setattr("tiklocal.services.downloader.DownloadManager._execute_download", blocking_execute)
+    client.application.extensions["download_manager"].update_config({"max_concurrent": 1})
+    job = client.post("/api/download/jobs", json={"url": "https://example.com/slow"}).json["data"]["job"]
+    assert started.wait(3)
+    try:
+        data = client.post(
+            "/api/download/jobs/delete", json={"ids": [job["id"]], "delete_files": True},
+        ).get_json()["data"]
+        assert data["deleted"] == 0
+        assert [item["id"] for item in data["skipped"]] == [job["id"]]
+        assert data["skipped"][0]["error"]
+        assert data["files"]["moved"] == 0
+    finally:
+        release.set()
+    assert _wait_for_job(client, job["id"])["status"] == "success"
+
+
+@pytest.mark.parametrize('payload', [{"ids": "abc"}, {"ids": []}, {"ids": [""]}, {}])
+def test_delete_selected_records_validation(client, payload):
+    res = client.post("/api/download/jobs/delete", json=payload)
+    assert res.status_code == 400
+    assert res.get_json()["success"] is False
+
+
 def test_source_map_survives_history_clear(client):
     url = 'https://x.com/i/web/status/1234567890123456789?utm_source=test'
     job = client.post('/api/download/jobs', json={'url': url}).json['data']['job']

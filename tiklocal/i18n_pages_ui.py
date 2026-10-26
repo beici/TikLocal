@@ -1,17 +1,71 @@
 """Locale catalog for small shared UI affordances that no single page owns.
 
 Kept in its own module so parallel work on a page catalog never has to touch
-this file, and so a generic control (a "show all" toggle, a filter chip) can be
-reused by several pages without duplicating keys.
+this file, and so a generic control (a pager, a selection bar) can be reused by
+several pages without duplicating keys.
 """
 
 TRANSLATIONS = {
     'zh': {
-        'download.urls.expand': '展开全部（{count} 条）',
-        'download.urls.collapse': '收起',
+        # Shared pager (client-side, one instance per list).
+        'pager.page_size': '每页',
+        'pager.size_option': '{size} 条',
+        'pager.summary': '第 {page} / {pages} 页 · 共 {total} 条',
+        'pager.prev': '上一页',
+        'pager.next': '下一页',
+        'pager.jump': '跳至',
+        'pager.jump_suffix': '页',
+        'pager.page_aria': '第 {page} 页',
+        # Download history multi-select delete.
+        'download.select.enter': '清除',
+        'download.select.hint': '勾选记录后点击删除。',
+        'download.select.select_all': '全选',
+        'download.select.select_all_total': '全选全部 {total} 条',
+        'download.select.clear_all': '取消全选',
+        'download.select.selected': '已选 {n} 项',
+        'download.select.cancel': '取消',
+        'download.select.delete': '删除',
+        'download.select.delete_title': '删除下载记录',
+        'download.select.delete_copy': '已选择 {n} 条记录，请选择删除方式。',
+        'download.select.mode_records': '仅删除记录',
+        'download.select.mode_records_copy': '保留已下载的本地文件。',
+        'download.select.mode_files': '删除记录及文件',
+        'download.select.mode_files_copy': '同时把 {n} 个本地文件移入回收站，30 天内可恢复。',
+        'download.select.mode_files_none': '没有可删除的本地文件。',
+        'download.select.done': '已删除 {n} 条记录',
+        'download.select.done_files': '已删除 {n} 条记录，{m} 个文件已移入回收站',
+        'download.select.skipped': '{n} 条记录正在下载，已跳过',
+        'download.select.none': '请先选择要删除的记录',
+        'download.select.row_aria': '选择 {name}',
     },
     'en': {
-        'download.urls.expand': 'Show all ({count})',
-        'download.urls.collapse': 'Show less',
+        'pager.page_size': 'Per page',
+        'pager.size_option': '{size}',
+        'pager.summary': 'Page {page} of {pages} · {total} items',
+        'pager.prev': 'Previous',
+        'pager.next': 'Next',
+        'pager.jump': 'Go to',
+        'pager.jump_suffix': '',
+        'pager.page_aria': 'Page {page}',
+        'download.select.enter': 'Clear',
+        'download.select.hint': 'Tick the records, then delete.',
+        'download.select.select_all': 'Select all',
+        'download.select.select_all_total': 'Select all {total}',
+        'download.select.clear_all': 'Clear selection',
+        'download.select.selected': '{n} selected',
+        'download.select.cancel': 'Cancel',
+        'download.select.delete': 'Delete',
+        'download.select.delete_title': 'Delete download records',
+        'download.select.delete_copy': '{n} records selected. Choose how to delete them.',
+        'download.select.mode_records': 'Records only',
+        'download.select.mode_records_copy': 'Keep the downloaded files.',
+        'download.select.mode_files': 'Records and files',
+        'download.select.mode_files_copy': 'Also move {n} local files to the trash; recoverable for 30 days.',
+        'download.select.mode_files_none': 'No local files to remove.',
+        'download.select.done': 'Deleted {n} records',
+        'download.select.done_files': 'Deleted {n} records and moved {m} files to the trash',
+        'download.select.skipped': '{n} running records were skipped',
+        'download.select.none': 'Select at least one record first',
+        'download.select.row_aria': 'Select {name}',
     },
 }

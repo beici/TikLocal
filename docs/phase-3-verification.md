@@ -54,7 +54,7 @@ pip install imageio-ffmpeg gallery-dl yt-dlp   # 或：poetry add imageio-ffmpeg
 poetry run pytest -q
 ```
 
-第三阶段结束时的基线：**6 failed / 346 passed / 6 skipped**。这 6 个失败在本阶段之前就存在，与本阶段四个功能无关：
+第三阶段结束时的基线：**6 failed / 354 passed / 6 skipped**。这 6 个失败在本阶段之前就存在，与本阶段四个功能无关：
 
 - `tests/test_auth.py::test_auth_store_hashes_password_and_increments_revision`
 - `tests/test_library_upgrade.py::test_library_images_use_bounded_cached_thumbnails`
@@ -151,8 +151,9 @@ Get-ChildItem tiklocal\static\*.js | ForEach-Object { node --check $_.FullName }
 ### 4.1 下载链接清单（导入 / 导出 / 与服务器文件同步）
 
 1. `/download` 顶部出现「链接清单」卡片：标题旁显示 `N 个链接`，工具栏为「全部下载」「导出」「清空」。
-   - 超过 5 条时列表默认只显示前 5 条，下面出现「展开全部（N 条）」；点开后显示全部并变成「收起」，
-     删到 5 条以内时按钮自动消失、列表恢复完整显示。
+   - 超过 10 条时列表自动分页：底部分页条含「每页 10 / 20 / 50 / 100 条」下拉、上一页 / 下一页、
+     页码按钮与「跳至 N 页」输入框，右侧显示「第 X / Y 页 · 共 N 条」；
+   - 页大小默认 10，选择会记住（`localStorage['tiklocal.download.urlListPageSize']`）；不超过 10 条时分页条整体隐藏。
 2. 展开「导入链接」，粘贴多行文本后点「导入」：
    - 空行与 `#` 开头的注释被忽略；非 http(s)、缺主机、超长（>2048）的链接被丢弃；
    - 重复链接自动去重，顺序保留，上限 5000 行；
@@ -164,6 +165,23 @@ Get-ChildItem tiklocal\static\*.js | ForEach-Object { node --check $_.FullName }
    - 外部编辑器改完该文件后点「从文件读取」即可看到变化（与 TikTokDownloader 共用同一个 user-url.txt）。
 5. 「全部下载」把清单里每个链接按当前引擎逐个入队，返回入队成功/失败数量；「清空」需二次确认（弹窗提示只清链接、不删已下载文件）。
 6. 接口层同样可用：`GET/POST /api/download/urls`、`GET /api/download/urls/export`、`POST /api/download/urls/sync`、`POST /api/download/urls/queue`。
+
+### 4.2 最近下载（分页 / 多选清除）
+
+1. 「最近下载」列表与链接清单共用同一套分页条：超过 10 条自动分页，可选 10 / 20 / 50 / 100 条一页，
+   支持上一页、下一页、页码与跳页，页大小分别记忆在 `localStorage['tiklocal.download.historyPageSize']`。
+2. 点列表下方的「清除」进入多选：每行左侧出现勾选框，点击整行也可切换选中，底部浮出操作条
+   （`全选` / `已选 N 项` / `取消` / `删除`）。
+   - `全选` 只选当前页；当前页已全选且还有其它页时按钮变成「全选全部 N 条」，再点选中所有记录，全选后变为「取消全选」；
+   - 选中状态跨页保留，按 `Esc` 或「取消」退出多选。
+3. 点「删除」弹出选择面板，两种删除方式：
+   - 「仅删除记录」：保留已下载的本地文件；
+   - 「删除记录及文件」：记录删除的同时把文件移入该媒体源的回收站（`.tiklocal-trash`，30 天内可恢复）；
+     选中的记录都没有本地文件时该选项置灰，并提示「没有可删除的本地文件。」。
+4. 删除完成后给出结果提示（例如「已删除 1 条记录，1 个文件已移入回收站」）；
+   正在下载的记录会被跳过并在提示里说明；删掉当前页最后一条后分页自动回到有效页。
+5. 接口：`POST /api/download/jobs/delete`，请求体 `{"ids": [...], "delete_files": true|false}`，
+   返回 `{deleted, skipped, files: {moved, missing, failed}}`；单个记录的删除仍走 `DELETE /api/download/jobs/<id>`。
 
 ## 5. 功能三：合集筛选与批量整理
 
@@ -208,7 +226,7 @@ curl -s -X POST http://127.0.0.1:8000/api/download/jobs -H 'Content-Type: applic
 ## 8. 一键回归
 
 ```bash
-poetry run pytest -q                     # 期望 6 failed / 346 passed / 6 skipped
+poetry run pytest -q                     # 期望 6 failed / 354 passed / 6 skipped
 poetry run pytest tests/test_i18n.py -q  # 期望全绿
 ```
 
