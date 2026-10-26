@@ -186,6 +186,29 @@ sidecar 未配置 `base_url` 时按钮不出现，页面保持目录名派生的
    UID 反查媒体源。设置页「作者资料」卡片就是它的界面：
    点「刷新」列出媒体源，粘贴若干链接后点「同步」逐条显示结果。
 
+### 自动绑定主页 + 一键更新视频
+
+每个媒体源现在自己记住主页地址，同步不再依赖「每次粘贴一批链接」：
+
+- `POST /api/author/<sid>/bind` `{profile_url}` 只做校验与保存：主页链接存
+  `https://www.douyin.com/user/<sec_user_id>`，作品链接则改存该作品的
+  `sec_user_id` 主页地址；写入 `instance/authors/<sid>.json` 的 `profile_url`。
+- `POST /api/author/<sid>/sync` `{profile_url?}` 用已绑定（或本次传入）的链接
+  走上面的快/慢路径，仍然强制 UID 校验。
+- `POST /api/author/<sid>/update-videos` `{profile_url?, count?}` 一键更新最新视频：
+  `TikTokDownloadService.enqueue_latest_videos()` 用 `sec_user_id` 调
+  `/douyin/account`（默认 `count: 18`、`pages: 1`）拿作者时间线，把作品的
+  `_title_key()`（去掉 emoji / 标点 / 空白的标题指纹）与本地 `post_title()`
+  逐个比对，只为本地没有的作品 `enqueue_from_url('https://www.douyin.com/video/<aweme_id>')`，
+  已存在的不重复下载。实测 42 个作品取回 13.9 秒、整轮 16.2 秒，全部已在本地时
+  返回 `已是最新`。
+- `GET /api/author/sources` 的每一项都带 `profile_url` 与 `local_count`，
+  作者主页的「同步」按钮打开两段式菜单（同步博主资料 / 一键更新最新视频），
+  设置页「作者资料」卡片每行是一个媒体源：已绑定的主页链接直接预填在输入框里，
+  右侧是「同步资料」「更新视频」，顶部还有「全部同步资料」「全部更新视频」。
+  已经同步过资料的老媒体源会从缓存资料里的 `sec_uid` 自动推导出主页地址
+  （`guess_profile_url()`），不需要重新粘贴。
+
 ## 下载链接清单（与 TikTokDownloader 共用 user-url.txt）
 
 `tiklocal/services/url_list.py` 维护一份本地清单 `instance/download-urls.txt`

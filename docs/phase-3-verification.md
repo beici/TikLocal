@@ -54,7 +54,7 @@ pip install imageio-ffmpeg gallery-dl yt-dlp   # 或：poetry add imageio-ffmpeg
 poetry run pytest -q
 ```
 
-第三阶段结束时的基线：**6 failed / 323 passed / 6 skipped**。这 6 个失败在本阶段之前就存在，与本阶段四个功能无关：
+第三阶段结束时的基线：**6 failed / 346 passed / 6 skipped**。这 6 个失败在本阶段之前就存在，与本阶段四个功能无关：
 
 - `tests/test_auth.py::test_auth_store_hashes_password_and_increments_revision`
 - `tests/test_library_upgrade.py::test_library_images_use_bounded_cached_thumbnails`
@@ -97,6 +97,10 @@ Get-ChildItem tiklocal\static\*.js | ForEach-Object { node --check $_.FullName }
    - 点击信息按钮进入详情页。
    - 长文案出现“展开”，点开后为全屏文案层，可用“收起”、Esc 或点击空白处关闭。
    - 上下滑动切换作品时，右栏心形/星形先复位再同步，不会残留上一个作品的选中态（`is-syncing` 期间关闭过渡与爆裂动画）。
+   - 开启开关后全站都留在信息流里：作者主页、媒体库、收藏里的作品格子点进去不再打开原生播放页，
+     而是跳到 `/flow?blog=<媒体源>&start=<媒体>` 并直接停在这条作品上；直接访问 `/detail/<媒体>` 或
+     `/image?uri=<媒体>` 也会被重定向到同一条作品（图集会停在点开的那一张）。
+     关闭开关后这两种链接恢复原来的播放页 / 看图页。
 4. 话题流：点击文案里的任意 `#话题` → 地址变为 `/flow?tag=<话题>`，顶部只显示
    `# 话题 N 个作品` 与返回箭头，列表只剩文案含该话题的作品；点返回回到推荐流。
    不存在的标签显示“这个话题下还没有作品。”与“打开媒体库”入口。
@@ -114,15 +118,24 @@ Get-ChildItem tiklocal\static\*.js | ForEach-Object { node --check $_.FullName }
 
 前置：`/settings/` → 下载 → TikTokDownloader 填好服务地址（可选 token）。未配置时设置卡片与作者页按钮都不出现，页面保持目录名派生的纯本地形态。
 
-1. 打开 `/settings/`，在「作者资料」卡片里点「刷新」，列出全部媒体源：头像、显示名、`抖音号:`（未同步时是目录里的数字 UID）与同步状态。
-2. 在文本框粘贴链接，每行一个，支持两种写法：
+1. 打开 `/settings/`，在「作者资料」卡片里点「刷新」，列出全部媒体源：每行是头像、显示名、
+   `抖音号:`（未同步时是目录里的数字 UID）、同步状态、本地作品数（`本地 N 个作品`），
+   下面是一行**已绑定的主页链接**（输入框可直接改），右侧是「同步资料」「更新视频」；
+   卡片顶部是「全部同步资料」「全部更新视频」。已经同步过的媒体源会自动填好主页地址。
+2. 在输入框里粘贴链接，支持三种写法：
+   - `作者主页链接`，例如 `https://www.douyin.com/user/<sec_uid>` —— 慢路径，需要先读作者作品列表（可能 20 秒以上，超时上限 150 秒）；
    - `作品链接`，例如 `https://www.douyin.com/video/<作品ID>` —— **推荐**，一次请求约 5~8 秒；
-   - `媒体源ID|作者主页链接`，例如 `blogger|https://www.douyin.com/user/<sec_uid>` —— 慢路径，需要先读作者作品列表（可能 20 秒以上，超时上限 150 秒）。
-   - 也可以只粘贴作者主页链接（不带媒体源 ID），程序会用返回资料里的数字 UID 反查目录。
-3. 点「同步」，逐条显示结果；成功后该行的 `抖音号:` 变成真实抖音号（例如 `demo0001`）、头像换成真实头像，状态变为「已同步」。
-4. 安全校验：返回资料里的 `uid` 必须与目录名里的数字 UID 完全一致，不一致直接报错并且**不写入任何文件**。
-5. 作者页同样可以同步：`/author/<source_id>` → 「同步资料」，弹窗里优先填「作者主页链接」，昵称搜索仅作兜底。
-6. 头像落在 `instance/authors/<source_id>.jpg`，资料落在 `instance/authors/<source_id>.json`；删掉这两个文件即回到默认头像 + 目录名派生。
+   - 批量区还支持 `媒体源ID|链接` 逐行写法，也可以只粘贴链接（用返回资料里的数字 UID 反查目录）。
+   点「同步资料」后链接会绑定到这个媒体源，下次刷新直接预填，不用再粘。
+3. 成功时该行状态变为「已同步」、`抖音号:` 变成真实抖音号（例如 `demo0001`）、头像换成真实头像；
+   作者页 `/author/<source_id>` 的「同步」按钮打开两段式菜单（同步博主资料 / 一键更新最新视频），
+   和设置页是同一套接口。
+4. 「更新视频」= 一键更新最新视频：按已绑定的主页读取作者时间线（默认 18 条），
+   用标题指纹和本地作品比对，只把**本地没有的**作品加入下载队列；全部已在本地时提示「已是最新」。
+   实测 42 个作品读取约 13.9 秒、整轮 16.2 秒。
+5. 安全校验：返回资料里的 `uid` 必须与目录名里的数字 UID 完全一致，不一致直接报错并且**不写入任何文件**。
+6. 头像落在 `instance/authors/<source_id>.jpg`，资料（含 `profile_url`）落在
+   `instance/authors/<source_id>.json`；删掉这两个文件即回到默认头像 + 目录名派生。
 7. 服务不可达 / 主页读取超时时给出对应提示（超时会建议改用作品链接），不影响页面其它部分。
 
 ## 4. 功能二：TikTokDownloader 博主批量下载
@@ -138,6 +151,8 @@ Get-ChildItem tiklocal\static\*.js | ForEach-Object { node --check $_.FullName }
 ### 4.1 下载链接清单（导入 / 导出 / 与服务器文件同步）
 
 1. `/download` 顶部出现「链接清单」卡片：标题旁显示 `N 个链接`，工具栏为「全部下载」「导出」「清空」。
+   - 超过 5 条时列表默认只显示前 5 条，下面出现「展开全部（N 条）」；点开后显示全部并变成「收起」，
+     删到 5 条以内时按钮自动消失、列表恢复完整显示。
 2. 展开「导入链接」，粘贴多行文本后点「导入」：
    - 空行与 `#` 开头的注释被忽略；非 http(s)、缺主机、超长（>2048）的链接被丢弃；
    - 重复链接自动去重，顺序保留，上限 5000 行；
@@ -187,13 +202,13 @@ curl -s -X POST http://127.0.0.1:8000/api/download/jobs -H 'Content-Type: applic
   `cache_count == 2`（`delete_thumbnail` 按规范化 key 删除，与 `generate_thumbnail` 实际写入的文件名不一致），
   与阶段三功能无关。
 - 作者资料同步的主页链接路径依赖 sidecar 的 `/douyin/account`，实测该接口可能 20 秒以上甚至超时；
-  优先用作品链接（`/video/<id>`）走快路径。
+  首次绑定建议用作品链接（`/video/<id>`）走快路径，绑定之后「更新视频」才会用到作者时间线。
 - `docs/` 下除本文件与 `docs/tiktok-downloader.md` 外仍为英文，留待统一翻译。
 
 ## 8. 一键回归
 
 ```bash
-poetry run pytest -q                     # 期望 6 failed / 323 passed / 6 skipped
+poetry run pytest -q                     # 期望 6 failed / 346 passed / 6 skipped
 poetry run pytest tests/test_i18n.py -q  # 期望全绿
 ```
 
