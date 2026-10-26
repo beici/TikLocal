@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ locale or 'zh' }}">
   <head>
     <meta charset="utf-8" />
     <title>TikLocal · {{ instance_name }}</title>
@@ -9,6 +9,10 @@
     <link rel="icon" href="{{ static_asset('brand/favicon.svg') }}" type="image/svg+xml">
     <link rel="apple-touch-icon" href="{{ static_asset('brand/apple-touch-icon.png') }}">
     {% if auth_enabled %}<meta name="csrf-token" content="{{ csrf_token() }}">{% endif %}
+    <script>
+      window.__TIKLOCAL_I18N__ = {{ i18n_js|tojson }};
+    </script>
+    <script src="{{ static_asset('i18n.js') }}"></script>
     <link rel="stylesheet" type="text/css" href="{{ static_asset('output.css') }}">
     <script src="{{ static_asset('feather.min.js') }}"></script>
     <link rel="stylesheet" type="text/css" href="{{ static_asset('ui_feedback.css') }}">
@@ -22,82 +26,82 @@
     <link rel="stylesheet" type="text/css" href="{{ static_asset('app_navigation.css') }}">
   </head>
   <body data-theme="{{ theme if theme else 'light' }}" data-nav-context="{{ menu or 'default' }}" class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white min-h-screen transition-colors duration-300">
-    <header class="mobile-app-header {% if menu not in ['flow', 'radio'] %}is-utility-page{% endif %}" aria-label="App navigation">
+    <header class="mobile-app-header {% if menu not in ['flow', 'radio'] %}is-utility-page{% endif %}" aria-label="{{ t('nav.app_navigation') }}">
       {% if menu in ['flow', 'radio'] %}
-      <nav class="mobile-mode-switch" aria-label="Experience mode">
-        <a href="/flow" class="mobile-mode-link {% if menu == 'flow' %}is-active{% endif %}" {% if menu == 'flow' %}aria-current="page"{% endif %}>Flow</a>
-        <a href="/radio" class="mobile-mode-link {% if menu == 'radio' %}is-active{% endif %}" {% if menu == 'radio' %}aria-current="page"{% endif %}>Radio</a>
+      <nav class="mobile-mode-switch" aria-label="{{ t('nav.experience_mode') }}">
+        <a href="/flow" class="mobile-mode-link {% if menu == 'flow' %}is-active{% endif %}" {% if menu == 'flow' %}aria-current="page"{% endif %}>{{ t('nav.flow') }}</a>
+        <a href="/radio" class="mobile-mode-link {% if menu == 'radio' %}is-active{% endif %}" {% if menu == 'radio' %}aria-current="page"{% endif %}>{{ t('nav.radio') }}</a>
       </nav>
       {% else %}
-      <a class="app-wordmark" href="/" aria-label="Return home">
+      <a class="app-wordmark" href="/" aria-label="{{ t('nav.return_home') }}">
         <span class="app-wordmark-mark">{% include 'brand_mark.html' %}</span>
         <span><span class="app-wordmark-tik">tik</span>Local</span>
       </a>
       {% endif %}
-      <button id="app-nav-menu-trigger" class="mobile-nav-trigger" type="button" aria-label="Open media and tools" aria-expanded="false" aria-controls="app-nav-menu">
+      <button id="app-nav-menu-trigger" class="mobile-nav-trigger" type="button" aria-label="{{ t('nav.open_menu') }}" aria-expanded="false" aria-controls="app-nav-menu">
         <i data-feather="grid"></i>
       </button>
     </header>
 
-    <nav class="floating-dock" aria-label="Main navigation">
-      <a class="rail-brand" href="/" aria-label="TikLocal home">{% include 'brand_mark.html' %}</a>
-      <a href="/" class="dock-item {% if menu == 'home' %}active{% endif %}" data-label="Home" aria-label="Home" {% if menu == 'home' %}aria-current="page"{% endif %}>
-        <i data-feather="home"></i><span class="rail-tooltip">Home</span>
+    <nav class="floating-dock" aria-label="{{ t('nav.main_navigation') }}">
+      <a class="rail-brand" href="/" aria-label="{{ t('nav.tiklocal_home') }}">{% include 'brand_mark.html' %}</a>
+      <a href="/" class="dock-item {% if menu == 'home' %}active{% endif %}" data-label="{{ t('nav.home') }}" aria-label="{{ t('nav.home') }}" {% if menu == 'home' %}aria-current="page"{% endif %}>
+        <i data-feather="home"></i><span class="rail-tooltip">{{ t('nav.home') }}</span>
       </a>
       <div class="rail-divider rail-divider-compact" aria-hidden="true"></div>
-      <a href="/flow" class="dock-item {% if menu == 'flow' %}active{% endif %}" data-label="Flow" aria-label="Flow" {% if menu == 'flow' %}aria-current="page"{% endif %}>
-        <i data-feather="play-circle"></i><span class="rail-tooltip">Flow</span>
+      <a href="/flow" class="dock-item {% if menu == 'flow' %}active{% endif %}" data-label="{{ t('nav.flow') }}" aria-label="{{ t('nav.flow') }}" {% if menu == 'flow' %}aria-current="page"{% endif %}>
+        <i data-feather="play-circle"></i><span class="rail-tooltip">{{ t('nav.flow') }}</span>
       </a>
-      <a href="/radio" class="dock-item {% if menu == 'radio' %}active{% endif %}" data-label="Radio" aria-label="Radio" {% if menu == 'radio' %}aria-current="page"{% endif %}>
-        <i data-feather="headphones"></i><span class="rail-tooltip">Radio</span>
+      <a href="/radio" class="dock-item {% if menu == 'radio' %}active{% endif %}" data-label="{{ t('nav.radio') }}" aria-label="{{ t('nav.radio') }}" {% if menu == 'radio' %}aria-current="page"{% endif %}>
+        <i data-feather="headphones"></i><span class="rail-tooltip">{{ t('nav.radio') }}</span>
       </a>
       <div class="rail-divider" aria-hidden="true"></div>
-      <a href="/library" class="dock-item {% if menu == 'library' %}active{% endif %}" data-label="Library" aria-label="Library" {% if menu == 'library' %}aria-current="page"{% endif %}>
-        <i data-feather="grid"></i><span class="rail-tooltip">Library</span>
+      <a href="/library" class="dock-item {% if menu == 'library' %}active{% endif %}" data-label="{{ t('nav.library') }}" aria-label="{{ t('nav.library') }}" {% if menu == 'library' %}aria-current="page"{% endif %}>
+        <i data-feather="grid"></i><span class="rail-tooltip">{{ t('nav.library') }}</span>
       </a>
-      <a href="/favorite" class="dock-item {% if menu == 'favorite' %}active{% endif %}" data-label="Saved" aria-label="Saved" {% if menu == 'favorite' %}aria-current="page"{% endif %}>
-        <i data-feather="bookmark"></i><span class="rail-tooltip">Saved</span>
+      <a href="/favorite" class="dock-item {% if menu == 'favorite' %}active{% endif %}" data-label="{{ t('nav.saved') }}" aria-label="{{ t('nav.saved') }}" {% if menu == 'favorite' %}aria-current="page"{% endif %}>
+        <i data-feather="bookmark"></i><span class="rail-tooltip">{{ t('nav.saved') }}</span>
       </a>
       <div class="rail-spacer"></div>
-      <a href="/download" class="dock-item {% if menu == 'download' %}active{% endif %}" data-label="Download" aria-label="Download" {% if menu == 'download' %}aria-current="page"{% endif %}>
-        <i data-feather="download"></i><span class="rail-tooltip">Download</span>
+      <a href="/download" class="dock-item {% if menu == 'download' %}active{% endif %}" data-label="{{ t('nav.download') }}" aria-label="{{ t('nav.download') }}" {% if menu == 'download' %}aria-current="page"{% endif %}>
+        <i data-feather="download"></i><span class="rail-tooltip">{{ t('nav.download') }}</span>
       </a>
-      <a href="/settings" class="dock-item {% if menu == 'settings' %}active{% endif %}" data-label="Settings" aria-label="Settings" {% if menu == 'settings' %}aria-current="page"{% endif %}>
-        <i data-feather="settings"></i><span class="rail-tooltip">Settings</span>
+      <a href="/settings" class="dock-item {% if menu == 'settings' %}active{% endif %}" data-label="{{ t('nav.settings') }}" aria-label="{{ t('nav.settings') }}" {% if menu == 'settings' %}aria-current="page"{% endif %}>
+        <i data-feather="settings"></i><span class="rail-tooltip">{{ t('nav.settings') }}</span>
       </a>
       {% if auth_enabled %}
       <form method="post" action="{{ url_for('logout_view') }}">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <button class="dock-item" type="submit" data-label="Sign Out" aria-label="Sign out"><i data-feather="log-out"></i><span class="rail-tooltip">Sign Out</span></button>
+        <button class="dock-item" type="submit" data-label="{{ t('nav.sign_out') }}" aria-label="{{ t('nav.sign_out_label') }}"><i data-feather="log-out"></i><span class="rail-tooltip">{{ t('nav.sign_out') }}</span></button>
       </form>
       {% endif %}
     </nav>
 
     <div id="app-nav-menu" class="app-nav-menu" aria-hidden="true" inert>
-      <nav class="app-nav-menu-card" aria-label="Media and tools">
+      <nav class="app-nav-menu-card" aria-label="{{ t('nav.media_and_tools') }}">
         <div class="app-nav-menu-handle" aria-hidden="true"></div>
         <div class="app-nav-menu-label">Overview</div>
         <div class="app-nav-menu-list app-nav-menu-list-single">
-          <a href="/" class="app-nav-menu-item {% if menu == 'home' %}is-active{% endif %}"><i data-feather="home"></i><span>Home</span></a>
+          <a href="/" class="app-nav-menu-item {% if menu == 'home' %}is-active{% endif %}"><i data-feather="home"></i><span>{{ t('nav.home') }}</span></a>
         </div>
         <div class="app-nav-menu-label">Experience</div>
         <div class="app-nav-menu-list">
-          <a href="/flow" class="app-nav-menu-item {% if menu == 'flow' %}is-active{% endif %}"><i data-feather="play-circle"></i><span>Flow</span></a>
-          <a href="/radio" class="app-nav-menu-item {% if menu == 'radio' %}is-active{% endif %}"><i data-feather="headphones"></i><span>Radio</span></a>
+          <a href="/flow" class="app-nav-menu-item {% if menu == 'flow' %}is-active{% endif %}"><i data-feather="play-circle"></i><span>{{ t('nav.flow') }}</span></a>
+          <a href="/radio" class="app-nav-menu-item {% if menu == 'radio' %}is-active{% endif %}"><i data-feather="headphones"></i><span>{{ t('nav.radio') }}</span></a>
         </div>
         <div class="app-nav-menu-label">Media</div>
         <div class="app-nav-menu-list">
-          <a href="/library" class="app-nav-menu-item {% if menu == 'library' %}is-active{% endif %}"><i data-feather="grid"></i><span>Library</span></a>
-          <a href="/favorite" class="app-nav-menu-item {% if menu == 'favorite' %}is-active{% endif %}"><i data-feather="bookmark"></i><span>Saved</span></a>
+          <a href="/library" class="app-nav-menu-item {% if menu == 'library' %}is-active{% endif %}"><i data-feather="grid"></i><span>{{ t('nav.library') }}</span></a>
+          <a href="/favorite" class="app-nav-menu-item {% if menu == 'favorite' %}is-active{% endif %}"><i data-feather="bookmark"></i><span>{{ t('nav.saved') }}</span></a>
         </div>
         <div class="app-nav-menu-divider" aria-hidden="true"></div>
         <div class="app-nav-menu-list">
-          <a href="/download" class="app-nav-menu-item {% if menu == 'download' %}is-active{% endif %}"><i data-feather="download"></i><span>Download</span></a>
-          <a href="/settings" class="app-nav-menu-item {% if menu == 'settings' %}is-active{% endif %}"><i data-feather="settings"></i><span>Settings</span></a>
+          <a href="/download" class="app-nav-menu-item {% if menu == 'download' %}is-active{% endif %}"><i data-feather="download"></i><span>{{ t('nav.download') }}</span></a>
+          <a href="/settings" class="app-nav-menu-item {% if menu == 'settings' %}is-active{% endif %}"><i data-feather="settings"></i><span>{{ t('nav.settings') }}</span></a>
           {% if auth_enabled %}
           <form method="post" action="{{ url_for('logout_view') }}">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-            <button class="app-nav-menu-item" type="submit" aria-label="Sign out"><i data-feather="log-out"></i><span>Sign Out</span></button>
+            <button class="app-nav-menu-item" type="submit" aria-label="{{ t('nav.sign_out_label') }}"><i data-feather="log-out"></i><span>{{ t('nav.sign_out') }}</span></button>
           </form>
           {% endif %}
         </div>

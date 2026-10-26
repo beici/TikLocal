@@ -33,6 +33,7 @@ from tiklocal.services.auth import AuthStore
 from tiklocal.services.device_auth import DeviceAuthStore
 from tiklocal.services.pairing_grants import PairingGrantStore
 from tiklocal.auth import configure_auth
+from tiklocal.i18n import detect_locale, js_catalog, translate
 from tiklocal.radio_client import register_radio_client_routes
 from tiklocal.paths import (
     get_metadata_path,
@@ -153,11 +154,31 @@ def create_app(test_config=None):
 
     @app.context_processor
     def app_identity_context():
+        locale = detect_locale(request.cookies.get, request.headers.get('Accept-Language'))
+
+        def t(key: str, **params: object) -> str:
+            return translate(locale, key, **params)
+
         return {
             'app_version': app_version,
             'instance_name': instance_name,
             'similarity_enabled': similarity_active,
+            'locale': locale,
+            't': t,
+            'i18n_js': js_catalog(locale),
         }
+
+    @app.template_filter('timestamp_to_date')
+    def timestamp_to_date(timestamp):
+        locale = detect_locale(request.cookies.get, request.headers.get('Accept-Language'))
+        try:
+            moment = datetime.datetime.fromtimestamp(timestamp)
+        except (ValueError, OSError):
+            return translate(locale, 'common.unknown_time')
+        if locale == 'en':
+            day = moment.strftime('%d').lstrip('0')
+            return f"{moment.strftime('%b')} {day}, {moment.strftime('%Y %H:%M:%S')}"
+        return moment.strftime('%Y-%m-%d %H:%M:%S')
 
     @app.after_request
     def apply_cache_policy(response):

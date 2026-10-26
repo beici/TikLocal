@@ -45,6 +45,23 @@
           </label>
         </div>
       </div>
+      <div class="settings-card">
+        <div class="settings-row">
+          <span class="setting-icon"><i data-feather="globe"></i></span>
+          <div class="settings-row-main">
+            <div class="settings-row-title">{{ t('settings.language.title') }}</div>
+            <div class="settings-row-copy">{{ t('settings.language.copy') }}</div>
+          </div>
+          <div class="theme-options language-options" role="group" aria-label="{{ t('settings.language.title') }}">
+            <button class="theme-option language-option" type="button" data-locale-choice="zh" aria-pressed="false">
+              <span class="theme-check"><i data-feather="check"></i></span><span>中文</span>
+            </button>
+            <button class="theme-option language-option" type="button" data-locale-choice="en" aria-pressed="false">
+              <span class="theme-check"><i data-feather="check"></i></span><span>English</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section aria-labelledby="radio-devices-title">

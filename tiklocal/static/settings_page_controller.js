@@ -326,6 +326,25 @@
     });
   }
 
+  // Language: persist to localStorage (per device) + cookie (so SSR matches), then reload.
+  const languageButtons = [...document.querySelectorAll('.language-option')];
+  const currentLocale = document.documentElement.lang || 'zh';
+  function syncLanguageButtons() {
+    languageButtons.forEach((button) => {
+      const active = button.dataset.localeChoice === currentLocale;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+  languageButtons.forEach((button) => button.addEventListener('click', () => {
+    const locale = button.dataset.localeChoice;
+    if (!locale || locale === currentLocale) return;
+    window.localStorage.setItem('tiklocal:lang', locale);
+    document.cookie = 'lang=' + encodeURIComponent(locale) + ';path=/;max-age=31536000;samesite=lax';
+    window.location.reload();
+  }));
+  syncLanguageButtons();
+
   refreshButton.addEventListener('click', () => {
     confirmAction('Rescan the media library?', 'The scan will reconcile files added, moved, or deleted while TikLocal was running.', 'Start Scan', 'primary', () => {
       runButton(refreshButton, 'Scanning…', async () => {
