@@ -104,10 +104,53 @@ TIKLOCAL_TIKTOK_DOWNLOADER='{"base_url": "http://192.168.x.x:5555", "token": ""}
 
 ## 已知边界
 
-- 不接直播、评论、搜索接口；不支持 TikTok 国际版链接（路由已预留
-  `/tiktok/*`，需要时再扩展）。
-- 博主昵称不在 API 返回数据里，文件名"博主"段用 UID 派生，不影响配对；
-  后续如需真实昵称可在 sidecar 设置里调整返回字段再映射。
+- 不接直播、评论接口；搜索接口只用于「同步博主资料」（见下），不对外暴露
+  搜索页面；不支持 TikTok 国际版链接（路由已预留 `/tiktok/*`，需要时再扩展）。
+- 默认返回（`source: false`）的账号数据只有 uid/unique_id/昵称/签名，没有头像和
+  粉丝数；需要头像与统计时按作品或账号调用时带 `source: true` 取原始字段。
+  文件名"博主"段仍用 UID 派生，不影响配对。
 - sidecar 解析出的直链由 TikLocal 直接下载（带浏览器 UA 与抖音 Referer）。
   Retry 复用已解析的直链；若直链已过期（报 HTTP 403/无法访问媒体主机），
   请清空输入后重新提交原链接，TikLocal 会重新解析。
+
+## 三种运行模式的区别（后台监听 vs Web API）
+
+TikTokDownloader / DouK-Downloader 有三种跑法，选择决定"谁来下载、文件落在哪"：
+
+| 模式 | 入口 | 行为 | 与 TikLocal 的关系 |
+| --- | --- | --- | --- |
+| 终端交互模式 | `python main.py` 命令行 | 交互式输入链接，自己下载到 `root` | 互不干扰；TikLocal 只读同一目录时可用 |
+| Web UI 交互模式 | 浏览器 UI | 上游 README 标注"代码尚未更新，未开放" | 不用 |
+| Web API 模式 | `python main.py` → FastAPI，`/docs` | 只返回 JSON（元数据 + 直链），**不落盘** | TikLocal 调它拿直链，自己下载入库 |
+
+用户常说的"后台监听"指终端/后台常驻那一类跑法：它按自己的
+`name_format`（如 `create_time type nickname desc`）和 `root`/`folder_name`
+自动把作品写进磁盘，TikLocal 只是被动看到文件。Web API 模式则相反：
+sidecar 不写盘，TikLocal 拿到直链后用自己的下载管线落盘，因此能保持
+`YYYY-MM-DD HH.MM.SS-类型-博主-标题[_N].ext` 命名与实况/图集配对规则，
+也能在下载历史里追踪进度、重试、取消。
+
+## 作者资料同步（头像 / 抖音号 / 粉丝数）
+
+抖音的账号昵称不唯一（同名账号可以有很多个），而本地媒体目录只有
+`UID<数字>_<昵称>_发布作品`，这个数字 UID 既不是 `sec_user_id`，也不在
+`/douyin/search/user` 的结果里，所以**不能**用"搜到第一个同名账号"来认领。
+
+落地方式（`tiklocal/services/author_profiles.py` + `tiklocal/web/author.py`）：
+
+1. `/author/<source_id>` 默认用目录名派生：昵称取 `_发布作品` 之前的部分，
+   `抖音号` 取 `UID` 后面的数字，头像用内置 `static/default-avatar.jpg`。
+2. 页面上的「同步资料」按钮打开账号选择弹窗：先 `POST /api/author/<sid>/search`
+   （`/douyin/search/user`，`channel: 2`，`count` 会被夹到 5–20，因为 sidecar
+   要求 `count >= 5`），把候选账号（头像 / 昵称 / 抖音号 / 粉丝 / 获赞）列出来。
+3. 用户点中正确的那一个，前端把 `unique_id` / `uid` 一起回传
+   `POST /api/author/<sid>/refresh`；服务端只在**完全相等**的
+   unique_id / short_id / 昵称上匹配，多个精确命中时返回 409 让用户再选，
+   绝不猜。命中后把资料写进 `instance/authors/<source_id>.json`，头像字节
+   缓存为 `instance/authors/<source_id>.jpg`（抖音头像 URL 是带签名的临时地址，
+   只能缓存图片本体，不能缓存 URL）。
+4. 头像通过 `GET /author/<source_id>/avatar` 输出（有缓存发缓存，无缓存发内置
+   默认头像，`max-age=300`）。抖音模式下 Flow 右栏头像与作者名都指向
+   `/author/<source_id>`，点进去就是本地作者主页。
+
+sidecar 未配置 `base_url` 时按钮不出现，页面保持目录名派生的纯本地形态。
