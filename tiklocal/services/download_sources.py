@@ -66,7 +66,12 @@ def normalize_source_meta(meta: dict[str, Any], *, resolved_by: str | None = Non
     }
     if resolved_by:
         payload["resolved_by"] = resolved_by
-    payload["url"] = payload["source_url_display"] or payload["source_url_raw"]
+    # Jinja escapes markup but not URL schemes: a sidecar *.info.json could put
+    # javascript: into the detail page's "view source" href. API paths already
+    # validate http(s); this closes the sidecar-file route.
+    url = payload["source_url_display"] or payload["source_url_raw"]
+    if urlparse(str(url)).scheme.lower() in {"http", "https"}:
+        payload["url"] = url
     return payload
 
 

@@ -73,3 +73,28 @@ def test_cli_cache_is_reused_by_web_and_isolated_between_sources(tmp_path, monke
     assert client.get('/api/library/stats').get_json()['cache_count'] == 0
     assert (extra / 'same # clip.Mp4').read_bytes() == b'video'
     assert '@extra/same # clip.Mp4' in json.loads(mapping_path.read_text())
+
+
+def test_poster_frame_request_actually_regenerates_the_cache(tmp_path, monkeypatch):
+    # The detail page's "use this frame as the cover" posts a timestamp, but the
+    # fresh-cache short-circuit returned the existing poster and dropped it while
+    # the response still reported success.
+    (tmp_path / 'clip.mp4').write_bytes(b'video')
+    calls = []
+
+    def fake_generate(self, video_path, output_path, timestamp, *, auto_timestamp):
+        calls.append(timestamp)
+        Image.new('RGB', (8, 8), 'red').save(output_path)
+        return True
+
+    monkeypatch.setattr('tiklocal.services.thumbnail.ThumbnailService._generate', fake_generate)
+    client = create_app({'TESTING': True, 'MEDIA_ROOT': tmp_path}).test_client()
+
+    # Prime the cache the way the detail page poster does.
+    assert client.get('/thumb', query_string={'uri': 'clip.mp4'}).status_code == 200
+    assert calls == [None]
+
+    response = client.post('/api/thumbnail/clip.mp4', json={'time': 7.5})
+    assert response.status_code == 200
+    assert response.get_json()['success'] is True
+    assert calls == [None, 7.5]

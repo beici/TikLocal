@@ -44,7 +44,22 @@ def load_config():
             except Exception as e:
                 print(f"Warning: Failed to read configuration file {config_path}: {e}", file=sys.stderr)
 
+    if not isinstance(config, dict):
+        # A list or a bare scalar used to surface as `AttributeError: 'list'
+        # object has no attribute 'get'` pointing at the host line.
+        print(f"Error: {config_path} must contain a mapping of configuration keys", file=sys.stderr)
+        sys.exit(2)
     return config
+
+
+def resolve_data_dir(parser):
+    """Create and return the data directory, reporting bad paths as usage errors."""
+    try:
+        return get_data_dir()
+    except OSError as exc:
+        # TIKLOCAL_INSTANCE pointing at a file or an unwritable location used to
+        # surface as a bare traceback from paths.py after the banner was printed.
+        parser.error(f"Cannot create the data directory: {exc}")
 
 
 def parse_cli_media_source(value):
@@ -158,7 +173,7 @@ Examples:
         if not media_path.exists() or not media_path.is_dir():
             print(f"Error: Media directory is unavailable: {media_root}", file=sys.stderr)
             sys.exit(1)
-        print(f"Data directory: {get_data_dir()}")
+        print(f"Data directory: {resolve_data_dir(parser)}")
         stats = generate_thumbnails(media_path, overwrite=getattr(args, 'overwrite', False), limit=getattr(args, 'limit', 0), show_progress=True)
         # Exit after completion.
         return
@@ -229,18 +244,27 @@ Examples:
 
     # Serve path.
     media_root = args.media_root or os.environ.get('MEDIA_ROOT') or config.get('media_root')
-    host = args.host or os.environ.get('TIKLOCAL_HOST') or config.get('host', '0.0.0.0')
+    host = args.host or os.environ.get('TIKLOCAL_HOST') or config.get('host') or '0.0.0.0'
     if any(config.get(key) for key in ('https', 'tls_cert', 'tls_key', 'hostnames')):
         parser.error('Built-in HTTPS has been removed. Delete the old TLS settings and provide HTTPS through an external reverse proxy.')
+    env_port_text = os.environ.get('TIKLOCAL_PORT')
     try:
-        env_port = int(os.environ.get('TIKLOCAL_PORT') or 0)
+        env_port = int(env_port_text) if env_port_text not in (None, '') else None
     except ValueError:
         parser.error('TIKLOCAL_PORT must be an integer')
-    configured_port = env_port or config.get('port')
-    try:
-        port = int(args.port or configured_port or 8000)
-    except (TypeError, ValueError):
-        parser.error('The server port must be an integer')
+    configured_port = env_port if env_port is not None else config.get('port')
+    raw_port = args.port if args.port is not None else configured_port
+    if raw_port is None:
+        port = 8000
+    else:
+        try:
+            port = int(raw_port)
+        except (TypeError, ValueError):
+            parser.error('The server port must be an integer')
+        if not 1 <= port <= 65535:
+            # Waitress performs no range check: 70000 printed the URL first and
+            # then died inside bind() with a bare traceback.
+            parser.error('The server port must be between 1 and 65535')
     media_sources = normalize_media_sources(config, getattr(args, 'media_source', None), media_root=media_root)
     download_source = args.download_source or config.get('download_source') or 'default'
     vision_config = config.get('vision') or config.get('vision_config') or None
@@ -294,8 +318,9 @@ Examples:
             print(f"  @{source.get('id')}: {Path(str(source.get('path'))).expanduser().absolute()}{marker}")
     else:
         print(f"Media directory: {media_path.absolute()}")
-    print(f"Data directory: {get_data_dir()}")
-    print(f"Open: http://{host}:{port}")
+    print(f"Data directory: {resolve_data_dir(parser)}")
+    display_host = f'[{host}]' if ':' in host and not host.startswith('[') else host
+    print(f"Open: http://{display_host}:{port}")
 
     try:
         app = create_app({
@@ -332,7 +357,12 @@ Examples:
             serve(app, host=host, port=port, threads=8)
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
-        download_manager.close()
+        try:
+            download_manager.close()
+        except RuntimeError as exc:
+            # Ctrl+C while a download worker is still winding down must not
+            # replace the clean shutdown with a traceback.
+            print(f"Warning: {exc}", file=sys.stderr)
 
 
 if __name__ == '__main__':

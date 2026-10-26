@@ -170,3 +170,17 @@ def test_cli_password_change_invalidates_running_sessions(authenticated_app):
     response = client.get('/')
     assert response.status_code == 302
     assert '/login?' in response.headers['Location']
+
+
+def test_login_is_rate_limited_after_repeated_failures(authenticated_app):
+    # The only brute-force guard in front of /login: five wrong passwords per
+    # client, then 429 with a Retry-After inside the five-minute window.
+    app, _ = authenticated_app
+    client = app.test_client()
+
+    for _ in range(5):
+        assert _login(client, password='incorrect-password').status_code == 401
+
+    blocked = _login(client, password='incorrect-password')
+    assert blocked.status_code == 429
+    assert 0 < int(blocked.headers['Retry-After']) <= 300

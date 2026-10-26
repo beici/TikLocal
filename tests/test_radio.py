@@ -4,6 +4,7 @@ import os
 import sqlite3
 import struct
 import subprocess
+import time
 import wave
 
 import pytest
@@ -227,3 +228,34 @@ def test_radio_energy_is_unavailable_for_undecodable_audio(client, monkeypatch):
 
     assert client.get('/api/radio/energy?uri=@default/a01.mp3').status_code == 404
     assert client.get('/api/radio/energy?uri=@default/missing.mp3').status_code == 404
+
+
+def test_batch_metadata_probes_cold_tracks_concurrently(tmp_path, monkeypatch):
+    from tiklocal.services.favorites import FavoriteService
+    from tiklocal.services.library import LibraryService
+    from tiklocal.services.radio import AudioMetadata, RadioService
+
+    media_root = tmp_path / 'media'
+    media_root.mkdir()
+    paths = []
+    for index in range(6):
+        path = media_root / f'track{index}.mp3'
+        path.write_bytes(b'audio')
+        paths.append(path)
+
+    library = LibraryService(media_root)
+    service = RadioService(library, FavoriteService(tmp_path / 'favorites.json', library), None)
+
+    def slow_probe(path):
+        time.sleep(0.2)
+        return AudioMetadata(title=path.stem)
+
+    monkeypatch.setattr(service, '_probe_audio_metadata', slow_probe)
+    started = time.monotonic()
+    metadata = service.metadata_for_many(paths)
+    elapsed = time.monotonic() - started
+
+    # Order must follow the request, and the probes must overlap: serial probing
+    # would take 6 * 0.2 s, which is what made a cold /radio page hang.
+    assert [item.title for item in metadata] == [path.stem for path in paths]
+    assert elapsed < 0.7

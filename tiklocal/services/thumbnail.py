@@ -74,6 +74,10 @@ class ThumbnailService:
         self.library = library_service or LibraryService(media_root)
         self.thumb_dir = get_thumbnails_dir()
         self._locks = [threading.Lock() for _ in range(self._LOCK_POOL_SIZE)]
+        # The same relative path in a different library is a different picture, and
+        # the mtime freshness check cannot tell them apart (a copied file keeps its
+        # old mtime). Keying the cache by root prevents cross-library thumbnails.
+        self._root_key = hashlib.sha1(str(Path(media_root).resolve()).lower().encode('utf-8')).hexdigest()[:16]
         self.placeholder = (
             b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0cIDAT\x08\x99c\xf8\xff\xff?\x00\x05\xfe\x02\xfeA\x93\x8a\x1d\x00\x00\x00\x00IEND\xaeB`\x82"
         )
@@ -83,7 +87,33 @@ class ThumbnailService:
         return self._path_for_key(canonical)
 
     def _path_for_key(self, key: str) -> Path:
+        digest = hashlib.sha1(f'{self._root_key}|{key}'.encode('utf-8')).hexdigest()
+        return self.thumb_dir / (digest + '.jpg')
+
+    def _legacy_path_for_key(self, key: str) -> Path:
+        """Pre-root-key cache layout: plain sha1(canonical uri)."""
         return self.thumb_dir / (hashlib.sha1(key.encode('utf-8')).hexdigest() + '.jpg')
+
+    def _cached_path_for_key(self, key: str) -> Path | None:
+        canonical = self._path_for_key(key)
+        legacy = self._legacy_path_for_key(key)
+        for candidate in (canonical, legacy):
+            try:
+                if candidate.is_file() and candidate.stat().st_size > 0:
+                    break
+            except OSError:
+                continue
+        else:
+            return None
+        if candidate == legacy:
+            # Adopt a pre-root-key cache file instead of leaving a duplicate that
+            # would show up in the settings cache count and never be cleaned.
+            try:
+                legacy.replace(canonical)
+                return canonical
+            except OSError:
+                return legacy
+        return canonical
 
     def cached_thumbnail(self, uri: str) -> Path | None:
         """Reuse valid canonical caches and legacy caches belonging to the default source."""
@@ -91,10 +121,10 @@ class ThumbnailService:
         if source_path is None:
             return None
         for key in self.library.legacy_candidates(self.library.canonicalize_uri(uri)):
-            cached = self._path_for_key(key)
+            cached = self._cached_path_for_key(key)
+            if cached is None:
+                continue
             try:
-                if not cached.is_file() or cached.stat().st_size == 0:
-                    continue
                 if not source_path.exists():
                     # Offline sources may display an existing canonical preview.
                     return cached if key.startswith('@') else None
@@ -121,12 +151,9 @@ class ThumbnailService:
 
     def _stale_thumbnail(self, uri: str) -> Path | None:
         for key in self.library.legacy_candidates(self.library.canonicalize_uri(uri)):
-            cached = self._path_for_key(key)
-            try:
-                if cached.is_file() and cached.stat().st_size > 0:
-                    return cached
-            except OSError:
-                continue
+            cached = self._cached_path_for_key(key)
+            if cached is not None:
+                return cached
         return None
 
     def get_radio_artwork(self, uri: str) -> tuple[Path | bytes, str]:
@@ -137,9 +164,16 @@ class ThumbnailService:
         return radio_artwork_bytes(uri or 'radio'), 'image/png'
 
     def cache_stats(self) -> dict:
-        files = list(self.thumb_dir.glob('*.jpg'))
-        size = sum(path.stat().st_size for path in files if path.exists())
-        return {'count': len(files), 'size_mb': round(size / (1024 * 1024), 2)}
+        count = 0
+        size = 0
+        for path in self.thumb_dir.glob('*.jpg'):
+            try:
+                size += path.stat().st_size
+            except OSError:
+                # Unlinked by a concurrent clear_cache() between glob and stat.
+                continue
+            count += 1
+        return {'count': count, 'size_mb': round(size / (1024 * 1024), 2)}
 
     def clear_cache(self) -> dict:
         deleted_count = 0
@@ -193,11 +227,12 @@ class ThumbnailService:
     def delete_thumbnail(self, uri: str) -> bool:
         removed = False
         for key in self.library.legacy_candidates(self.library.canonicalize_uri(uri)):
-            try:
-                self._path_for_key(key).unlink()
-                removed = True
-            except OSError:
-                continue
+            for path in (self._path_for_key(key), self._legacy_path_for_key(key)):
+                try:
+                    path.unlink()
+                    removed = True
+                except OSError:
+                    continue
         return removed
 
     def sample_video_frames(self, uri: str, directory: Path) -> list[Path]:

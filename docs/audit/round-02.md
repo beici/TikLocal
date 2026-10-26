@@ -25,8 +25,8 @@
 |---|------|------|------|------|
 | 1 | P1 | `/api/feed/mix` 每页对全池 `filter(...len)` 再 `pool[offset:]`，页号越大越慢（O(n²)），page=5000 时单请求 ≈12 s 且持 GIL | `tiklocal/web/flow.py:105-113` | `start >= len(pool)` 先直接返回空页（复用 `_serialize_item` 提取器），循环起点 `start=0`；实测 page=5000/size=200：**≈12 s → 0.8 s** |
 | 2 | P1 | 电台列表对每条未缓存音轨串行 `ffprobe`（最多 200 条），冷缓存下整个 `/radio` 首屏阻塞数十秒 | `tiklocal/web/radio.py:79-90` | 新增 `RADIO_ITEMS_MAX_LIMIT = 60`、按 source 的 `_probe_limits`（每 source 16 条）+ `_warm_queue`/`_warm_worker` 后台预热线程；只对已缓存/预算内的条目探测 |
-| 3 | P1 | `cancel(job_id)` 只改状态，`_execute_download`/`_direct_fetch`/`_run_tool` 无检查点，取消后仍下载完并覆盖状态 | `tiklocal/services/downloader.py` | 新增 `_is_cancelled()`，在 `_direct_fetch` 每次写块前、`_run_tool` 轮询循环内、`_execute_download` 各阶段检查；命中即 `DownloadCancelled` |
-| 4 | P1 | 下载无墙钟超时，`yt-dlp` 卡住时 job 永久 running（等待线程池） | 同上 | `_run_tool` 增 `deadline = time.monotonic() + self._job_timeout`（`job_timeout` 默认 900 s，可注入）；超时 kill 进程并置失败 |
+| 3 | P1 | `cancel(job_id)` 只改状态，`_execute_download`/`_direct_fetch`/`_run_tool` 无检查点，取消后仍下载完并覆盖状态 | `tiklocal/services/downloader.py:710-726`、`1022-1030`、`1086`、`882-884` | `_direct_fetch` 逐块调 `cancelled()`（`lambda: bool(cancel_event and cancel_event.is_set())`）命中即返回 `(1, "Canceled.", [])`；`_run_tool` 轮询循环内检测 cancel 并 kill 进程；`_run_job` 在成功落库前再查 `_cancel_events[job_id]`，避免「取消后仍 success」 |
+| 4 | P1 | 下载无墙钟超时，`yt-dlp` 卡住时 job 永久 running（等待线程池） | `downloader.py:1118-1147` | `_run_tool` 改用独立 stdout pump 线程 + 主循环 `deadline = time.monotonic() + max(1.0, job_timeout_sec)`（`DEFAULT_JOB_TIMEOUT_SEC = 3600`，可由 `config['job_timeout_sec']` 覆盖），超时 kill 进程并置失败 |
 | 5 | P2 | `enqueue()` 在锁内调 `probe_binary()`（起子进程），并发入队时相互阻塞 | `downloader.py:465-503` | 探测移到锁外，锁内只赋值 `engine_version` |
 | 6 | P2 | `_update_progress` 每次都 `_persist_locked()`（整份 jobs.json 重写），进度回调高频时 IO 放大 | `downloader.py:1101-1112` | 节流：距上次持久化 <1 s 且未跨阶段时不写盘，完成/失败/取消仍强制落盘 |
 | 7 | P2 | `_direct_fetch` 把 `OSError` 归为「网络不可达」`Unable to reach the media host`，误导用户 | `downloader.py:1041-1077` | 按 `errno` 分类：`EACCES/EPERM/ENOSPC` → `download.error.local_write`，其余网络类保留原文案 |
@@ -46,7 +46,7 @@
 | # | 级别 | 问题 | 处置理由 |
 |---|------|------|----------|
 | 18 | P3 | `douyin_mode.js:52` `location.replace` 丢失来源页 | 抖音模式入口本身是「进入沉浸」，丢失来源页属产品预期；如需返回栈应改前端路由设计，列入 backlog 待评审 |
-| 19 | P3 | `/api/library/stats` 在 1500 张缩略图下并发清缓存偶发 `FileNotFoundError` | 已由 #11 兜底（降级为 0），根因在 `thumbnail.py:141` 的 `exists()`→`stat()` 竞态，已在第 01 轮 thumbnail 修复中改为 `try/except` 处理，本轮复核确认不再 500 |
+| 19 | P3 | `/api/library/stats` 在 1500 张缩略图下并发清缓存偶发 `FileNotFoundError` | 根因 `tiklocal/services/thumbnail.py:141` 的 `glob()`→`exists()`→`stat()` 竞态 | 已修：`cache_stats()` 改为逐文件 `try/except OSError` 计数，不再依赖路由兜底 |
 
 ## C. 最优解检索
 

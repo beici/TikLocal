@@ -4,7 +4,22 @@
     <meta charset="utf-8" />
     <title>TikLocal · {{ instance_name }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#171815" />
+    <meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#171815" media="(prefers-color-scheme: dark)" />
+    <script>
+      // Resolve the theme before the first paint. base.js runs at the end of
+      // <body>, so without this every dark-mode page painted light first (and
+      // any script reading body[data-theme] early saw the wrong value).
+      (function () {
+        try {
+          var saved = localStorage.getItem('theme');
+          var preference = ['light', 'dark', 'system'].indexOf(saved) >= 0 ? saved : 'system';
+          var dark = preference === 'dark' || (preference === 'system'
+            && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        } catch (error) {}
+      })();
+    </script>
     <link rel="icon" href="{{ static_asset('brand/favicon.ico') }}" sizes="32x32">
     <link rel="icon" href="{{ static_asset('brand/favicon.svg') }}" type="image/svg+xml">
     <link rel="apple-touch-icon" href="{{ static_asset('brand/apple-touch-icon.png') }}">
@@ -81,16 +96,16 @@
     <div id="app-nav-menu" class="app-nav-menu" aria-hidden="true" inert>
       <nav class="app-nav-menu-card" aria-label="{{ t('nav.media_and_tools') }}">
         <div class="app-nav-menu-handle" aria-hidden="true"></div>
-        <div class="app-nav-menu-label">Overview</div>
+        <div class="app-nav-menu-label">{{ t('nav.group.overview') }}</div>
         <div class="app-nav-menu-list app-nav-menu-list-single">
           <a href="/" class="app-nav-menu-item {% if menu == 'home' %}is-active{% endif %}"><i data-feather="home"></i><span>{{ t('nav.home') }}</span></a>
         </div>
-        <div class="app-nav-menu-label">Experience</div>
+        <div class="app-nav-menu-label">{{ t('nav.group.experience') }}</div>
         <div class="app-nav-menu-list">
           <a href="/flow" class="app-nav-menu-item {% if menu == 'flow' %}is-active{% endif %}"><i data-feather="play-circle"></i><span>{{ t('nav.flow') }}</span></a>
           <a href="/radio" class="app-nav-menu-item {% if menu == 'radio' %}is-active{% endif %}"><i data-feather="headphones"></i><span>{{ t('nav.radio') }}</span></a>
         </div>
-        <div class="app-nav-menu-label">Media</div>
+        <div class="app-nav-menu-label">{{ t('nav.group.media') }}</div>
         <div class="app-nav-menu-list">
           <a href="/library" class="app-nav-menu-item {% if menu == 'library' %}is-active{% endif %}"><i data-feather="grid"></i><span>{{ t('nav.library') }}</span></a>
           <a href="/favorite" class="app-nav-menu-item {% if menu == 'favorite' %}is-active{% endif %}"><i data-feather="bookmark"></i><span>{{ t('nav.saved') }}</span></a>

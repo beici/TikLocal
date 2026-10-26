@@ -24,7 +24,7 @@ from tiklocal.services.tiktok_downloader import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # Author caches, the app database and auth files must stay inside the repo
 # instead of the pytest temp tree.
-INSTANCE_ROOT = REPO_ROOT / '.tmp-inst-author'
+INSTANCE_ROOT = REPO_ROOT / f'.tmp-inst-author-{os.getpid()}'
 BLOGGER_FOLDER = 'UID100000000000001_示例博主_发布作品'
 SIDECAR_URL = 'http://127.0.0.1:9/'
 PROFILE_URL = 'https://www.douyin.com/user/MS4wLjABAAAAfake'

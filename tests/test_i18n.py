@@ -85,6 +85,24 @@ def test_merge_rejects_duplicate_keys():
         del i18n_pages_flow.TRANSLATIONS['zh']['nav.home']
 
 
+def test_templates_and_scripts_only_use_known_keys():
+    # The catalog tests above only compare catalog to catalog. This one catches a
+    # template/JS key that was renamed on one side only: translate() would render
+    # the raw key into the page while every other test stayed green.
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / 'tiklocal'
+    files = list((root / 'templates').rglob('*.html'))
+    files += [p for p in (root / 'static').glob('*.js') if '.min.' not in p.name]
+    pattern = re.compile(r"""\b(?:t|T)\(\s*['"]([A-Za-z][\w.]*)['"]""")
+    used = set()
+    for path in files:
+        used.update(pattern.findall(path.read_text(encoding='utf-8')))
+    missing = sorted(used - set(TRANSLATIONS['zh']))
+    assert not missing, missing
+
+
 def test_t_follows_the_active_request_locale():
     from flask import Flask
 

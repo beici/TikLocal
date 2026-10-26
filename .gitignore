@@ -198,3 +198,11 @@ TikLocal二开启动提示词.md
 .smoke-data/
 .smoke-run/
 .smoke-open/
+
+# Probe leftovers: subagent/audit scripts and per-process test instance roots
+.tmp-inst-*/
+tl-*/
+tl_bounds*/
+tmp??????/
+
+/tmp*/

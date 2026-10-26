@@ -7,6 +7,7 @@ the UID in the export folder name, so the fixture data below uses fake ids
 """
 
 import gc
+import os
 import shutil
 import time
 from pathlib import Path
@@ -26,8 +27,9 @@ from tiklocal.web.author import parse_sync_text
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # Author caches and the app database must stay inside the repo instead of the
-# pytest temp tree.
-INSTANCE_ROOT = REPO_ROOT / '.tmp-inst-sync'
+# pytest temp tree. Keep the root per-process: two pytest processes sharing one
+# sqlite file flake on Windows ("database is locked") and leave locked files.
+INSTANCE_ROOT = REPO_ROOT / f'.tmp-inst-sync-{os.getpid()}'
 FOLDER = 'UID200000000000002_demo_author_发布作品'
 FOLDER_UID = '200000000000002'
 SEC_UID = 'MS4wLjABAAAAfake'

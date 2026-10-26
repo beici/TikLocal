@@ -38,14 +38,15 @@ def register_settings_routes(app, media_index, favorite_service, thumbnail_servi
 
         index = safe(media_index.stats, {}) or {}
         cache = safe(thumbnail_service.cache_stats, {}) or {}
-        favorites = safe(favorite_service.load, []) or []
+        # favorite_service.load() returns a set, not a list.
+        favorites = safe(favorite_service.load, set()) or set()
         return {
             'videos': index.get('videos', 0),
             'images': index.get('images', 0),
             'audios': index.get('audios', 0),
             'indexed_total': index.get('total', 0),
             'last_synced_at': index.get('last_synced_at'),
-            'favorites': len(favorites) if isinstance(favorites, list) else 0,
+            'favorites': len(favorites) if isinstance(favorites, (list, set, tuple)) else 0,
             'cache_count': cache.get('count', 0),
             'cache_mb': cache.get('size_mb', 0),
         }

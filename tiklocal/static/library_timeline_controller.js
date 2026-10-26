@@ -263,9 +263,12 @@
     const targetMonth = hashMatch?.[1] || String(saved?.month || '');
     if (!targetMonth) return;
 
+    // Same bounded retry as loadUntilVisible(): loadMore() keeps hasMore=true
+    // when a request fails, so an unguarded while-loop retried forever (or spun
+    // in microtasks when it returned synchronously) and froze the tab.
     let target = document.getElementById(`month-${targetMonth}`);
-    while (!target && hasMore) {
-      await loadMore();
+    for (let guard = 0; !target && guard < 200; guard += 1) {
+      if (!(await loadMore())) break;
       target = document.getElementById(`month-${targetMonth}`);
     }
     if (!target) return;

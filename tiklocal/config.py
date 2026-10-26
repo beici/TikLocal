@@ -1,8 +1,7 @@
 from tiklocal.services.library import normalize_source_id
 
 
-def normalize_media_sources(config, cli_sources=None, media_root=None):
-    raw_sources = cli_sources or config.get('media_sources') or []
+def _coerce_source_list(raw_sources):
     sources = []
     if isinstance(raw_sources, dict):
         raw_sources = [{'id': key, 'path': value, 'name': key} for key, value in raw_sources.items()]
@@ -19,6 +18,22 @@ def normalize_media_sources(config, cli_sources=None, media_root=None):
                 'name': str(item.get('name') or source_id).strip() or source_id,
                 'path': path,
             })
+    return sources
+
+
+def normalize_media_sources(config, cli_sources=None, media_root=None):
+    # CLI sources extend the configured list instead of replacing it: passing one
+    # --media-source used to silently drop every source declared in config.yaml.
+    sources = _coerce_source_list(config.get('media_sources') or [])
+    from_cli = _coerce_source_list(cli_sources or [])
+    if from_cli:
+        positions = {item['id']: index for index, item in enumerate(sources)}
+        for item in from_cli:
+            if item['id'] in positions:
+                sources[positions[item['id']]] = item
+            else:
+                positions[item['id']] = len(sources)
+                sources.append(item)
     if media_root and all(item.get('id') != 'default' for item in sources):
         sources.insert(0, {'id': 'default', 'name': 'Default', 'path': str(media_root)})
     return sources

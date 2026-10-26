@@ -4,8 +4,9 @@ import datetime
 import errno
 import io
 import math
+import time
 from pathlib import Path
-from urllib.parse import quote, unquote
+from urllib.parse import quote
 
 from flask import redirect, render_template, request, send_file
 
@@ -217,21 +218,37 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         if not uri: return "Missing uri", 400
         return redirect(f"/media/{quote(library_service.find_existing_uri(uri), safe='/')}")
 
+    def _placeholder_response():
+        # A failed generation (ffmpeg missing, file being copied, unknown uri) must
+        # not be cached for an hour: the browser would keep showing the placeholder
+        # long after the thumbnail became generatable.
+        response = send_file(io.BytesIO(thumbnail_service.placeholder), mimetype='image/png')
+        response.headers['Cache-Control'] = 'private, no-store'
+        return response
+
     @app.route('/thumb')
     def thumb_view():
         uri = request.args.get('uri')
-        if not uri: return send_file(io.BytesIO(thumbnail_service.placeholder), mimetype='image/png')
+        if not uri: return _placeholder_response()
 
-        path, mimetype = thumbnail_service.get_thumbnail(library_service.find_existing_uri(unquote(uri)))
+        path, mimetype = thumbnail_service.get_thumbnail(library_service.find_existing_uri(uri))
         if isinstance(path, bytes):
+            # get_thumbnail() returns the placeholder bytes when nothing usable exists.
+            if mimetype == 'image/png':
+                return _placeholder_response()
             return send_file(io.BytesIO(path), mimetype=mimetype)
         # Hand the bytes over instead of the path: on Windows a response that keeps
         # the cache file open makes the next regeneration fail to replace it.
         try:
+            stat = path.stat()
             payload = path.read_bytes()
         except OSError:
-            return send_file(io.BytesIO(thumbnail_service.placeholder), mimetype='image/png')
-        return send_file(io.BytesIO(payload), mimetype=mimetype, max_age=3600)
+            return _placeholder_response()
+        response = send_file(io.BytesIO(payload), mimetype=mimetype, max_age=3600)
+        # max-age without a validator means "must-revalidate" never actually
+        # revalidates; the cache file identity is the cheapest correct validator.
+        response.set_etag(f'{stat.st_mtime_ns:x}-{stat.st_size:x}')
+        return response
 
     @app.route('/api/image/embedded-metadata')
     def api_image_embedded_metadata():
@@ -247,8 +264,13 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
     @app.route('/api/thumbnail/<path:name>', methods=['POST'])
     def api_set_thumbnail(name):
         name = library_service.find_existing_uri(name)
+        if not name:
+            return {'success': False, 'error': t('detail.error.file_not_found')}, 404
         target = library_service.resolve_path(name)
-        if not target: return {'success': False, 'error': t('detail.error.invalid_path')}, 400
+        if not target or not target.exists():
+            return {'success': False, 'error': t('detail.error.file_not_found')}, 404
+        if not target.is_file():
+            return {'success': False, 'error': t('detail.error.invalid_path')}, 400
 
         payload = json_body()
         ts = payload.get('time')
@@ -263,8 +285,11 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             if not (0 <= timestamp < 10 ** 9):
                 return {'success': False, 'error': t('detail.error.invalid_time')}, 400
 
-        success = thumbnail_service.generate_thumbnail(name, timestamp=timestamp)
+        # overwrite=True: without it generate_thumbnail() sees the existing poster,
+        # decides it is fresh and returns it, so the chosen frame was silently
+        # dropped while the response claimed success.
+        success = thumbnail_service.generate_thumbnail(name, timestamp=timestamp, overwrite=True)
 
         if success:
-             return {'success': True, 'url': f"{media_urls(name)['thumb_url']}&v={int(datetime.datetime.now().timestamp())}"}
+             return {'success': True, 'url': f"{media_urls(name)['thumb_url']}&v={time.time_ns()}"}
         return {'success': False, 'error': t('detail.error.thumbnail_generate')}, 500

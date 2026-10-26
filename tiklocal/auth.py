@@ -5,7 +5,7 @@ import time
 from collections import defaultdict, deque
 from urllib.parse import urlsplit
 
-from flask import redirect, render_template, request, session, url_for
+from flask import make_response, redirect, render_template, request, session, url_for
 
 from tiklocal.i18n import t
 
@@ -168,6 +168,7 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
 
         error = ''
         status = 200
+        retry_after = 0
         if request.method == 'POST':
             client_key = request.remote_addr or 'unknown'
             retry_after = limiter.retry_after(client_key)
@@ -189,12 +190,16 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
                 ensure_csrf_token()
                 return redirect(next_url)
 
-        return render_template(
+        response = make_response(render_template(
             'login.html',
             csrf_value=ensure_csrf_token(),
             next_url=next_url,
             error=error,
-        ), status
+        ), status)
+        if status == 429:
+            # A 429 without Retry-After gives clients nothing to back off on.
+            response.headers['Retry-After'] = str(int(retry_after))
+        return response
 
     @app.post('/logout')
     def logout_view():

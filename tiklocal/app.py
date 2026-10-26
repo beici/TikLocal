@@ -55,6 +55,7 @@ from tiklocal.web.radio import register_radio_routes
 from tiklocal.web.media import register_media_routes
 from tiklocal.web.settings import register_settings_routes
 from tiklocal.config import similarity_enabled
+from tiklocal import __version__
 
 
 def get_app_version():
@@ -74,7 +75,7 @@ def get_app_version():
             try:
                 with open(pyproject_path, 'rb') as f:
                     data = tomllib.load(f)
-                    return data.get('tool', {}).get('poetry', {}).get('version', '1.0.0')
+                    return data.get('tool', {}).get('poetry', {}).get('version') or __version__
             except Exception:
                 pass
 
@@ -82,7 +83,8 @@ def get_app_version():
     try:
         return version("tiklocal")
     except PackageNotFoundError:
-        return '1.0.0'
+        # Never claim a release that does not exist on PyPI.
+        return __version__
 
 
 app_version = get_app_version()
@@ -202,7 +204,10 @@ def create_app(test_config=None):
         elif request.path.startswith('/media'):
             response.headers['Cache-Control'] = 'private, no-cache'
         elif request.path == '/thumb':
-            response.headers['Cache-Control'] = 'private, max-age=3600, must-revalidate'
+            # The route marks fallback/placeholder responses no-store; only real
+            # thumbnails get the hour-long cache.
+            if 'no-store' not in response.headers.get('Cache-Control', ''):
+                response.headers['Cache-Control'] = 'private, max-age=3600, must-revalidate'
         elif response.mimetype == 'text/html':
             response.headers['Cache-Control'] = 'private, no-cache'
         return response
