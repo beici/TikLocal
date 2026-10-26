@@ -1,6 +1,12 @@
 const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
 const detailBoot = window.__TIKLOCAL_DETAIL_BOOT__ || {};
 
+// Douyin mode turns the whole app into a vertical feed, so a detail page opened
+// directly by URL hands the work back to the flow feed instead of the native player.
+if (window.TikLocalDouyinMode?.enabled() && detailBoot.file) {
+  window.TikLocalDouyinMode.redirect(detailBoot.file);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const mainVideo = document.getElementById('main-video');
   const fullscreenBtn = document.getElementById('fullscreen-btn');

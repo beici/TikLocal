@@ -819,6 +819,11 @@
 
   function openViewer(index) {
     if (index < 0 || index >= items.length) return;
+    const douyinMode = window.TikLocalDouyinMode;
+    if (douyinMode && douyinMode.enabled()) {
+      const name = String(items[index]?.name || '');
+      if (name && douyinMode.redirect(name)) return;
+    }
     if (!quickView.classList.contains('active')) {
       bodyOverflowBackup = document.body.style.overflow || '';
       document.body.style.overflow = 'hidden';

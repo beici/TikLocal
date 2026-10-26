@@ -476,6 +476,28 @@
       douyinTopicCount.textContent = template;
     }
 
+    // Deep links from the author page and the detail page land on one specific work.
+    function flowStartUri() {
+      return new URLSearchParams(window.location.search).get('start') || '';
+    }
+
+    function flowStartIndex() {
+      const uri = flowStartUri();
+      if (!uri) return 0;
+      const direct = feedItems.findIndex((item) => item && item.name === uri);
+      if (direct >= 0) return direct;
+      // Album works collapse into one feed entry; jump to the requested child.
+      const grouped = feedItems.findIndex(
+        (item) => Array.isArray(item?.items) && item.items.some((child) => child && child.name === uri)
+      );
+      if (grouped >= 0) {
+        const childIndex = feedItems[grouped].items.findIndex((child) => child && child.name === uri);
+        if (childIndex >= 0) feedItems[grouped].activeChildIndex = childIndex;
+        return grouped;
+      }
+      return 0;
+    }
+
     async function goNext() {
       if (getCurrentIndex() >= feedItems.length - 1 && flowSession.hasMore()) {
         await loadFeed();
@@ -1277,6 +1299,8 @@
           if (blogFilter) query.set('blog', blogFilter);
           const tagFilter = currentTopicTag();
           if (tagFilter) query.set('tag', tagFilter);
+          const startUri = flowStartUri();
+          if (startUri) query.set('start', startUri);
 
           const res = await fetch(`/api/feed/mix?${query.toString()}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1967,6 +1991,6 @@
 
     await loadFeed();
     if (feedItems.length > 0) {
-      await showItem(0);
+      await showItem(flowStartIndex());
     }
   })();

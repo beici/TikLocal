@@ -1,6 +1,11 @@
 const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
 const imageDetailBoot = window.__TIKLOCAL_IMAGE_DETAIL_BOOT__ || {};
 
+// Same as the video detail page: Douyin mode keeps image works inside the flow feed.
+if (window.TikLocalDouyinMode?.enabled() && imageDetailBoot.uri) {
+  window.TikLocalDouyinMode.redirect(imageDetailBoot.uri);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const mainImage = document.getElementById('main-image');
   const imageContainer = document.getElementById('image-container');

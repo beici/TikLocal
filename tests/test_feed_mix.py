@@ -349,3 +349,58 @@ def test_tag_feed_paginates_newest_first(tmp_path):
     assert second['has_more'] is False
     assert all(item['caption_text'].endswith('#夏日')
                for item in first['items'] + second['items'])
+
+
+def test_start_link_opens_the_requested_work_and_keeps_scrolling(tmp_path):
+    """A deep link must land on that work, not on the first recommendation page."""
+    files = {
+        f'{BLOGGER}/2024-07-01 10.00.00-视频-示例博主-作品{index:02d}.mp4': index + 1
+        for index in range(12)
+    }
+    client = _tag_client(tmp_path, files)
+    ordered = [f'@default/{name}' for name in files]
+
+    # Opening the ninth work scrolls on through the three remaining older ones.
+    tail = client.get('/api/feed/mix', query_string={
+        'start': ordered[8], 'page': 1, 'size': 8, 'seed': 's',
+    }).get_json()
+    assert [item['name'] for item in tail['items']] == ordered[8:]
+    assert tail['has_more'] is False
+    assert tail['start'] == ordered[8]
+
+    # Opening the third work keeps pagination continuous and non-overlapping.
+    head = client.get('/api/feed/mix', query_string={
+        'start': ordered[2], 'page': 1, 'size': 8, 'seed': 's',
+    }).get_json()
+    rest = client.get('/api/feed/mix', query_string={
+        'start': ordered[2], 'page': 2, 'size': 8, 'seed': 's',
+    }).get_json()
+    assert [item['name'] for item in head['items']] == ordered[2:10]
+    assert head['has_more'] is True
+    assert [item['name'] for item in rest['items']] == ordered[10:]
+    assert rest['has_more'] is False
+
+    # An unknown work falls back to the newest item instead of an empty feed.
+    unknown = client.get('/api/feed/mix', query_string={
+        'start': '@default/does-not-exist.mp4', 'page': 1, 'size': 8, 'seed': 's',
+    }).get_json()
+    assert [item['name'] for item in unknown['items']] == ordered[:8]
+
+
+def test_start_link_resolves_an_album_member_to_its_group(tmp_path):
+    cover = f'{BLOGGER}/2024-08-01 10.00.00-图集-示例博主-海边人像_1.jpeg'
+    member = f'{BLOGGER}/2024-08-01 10.00.00-图集-示例博主-海边人像_2.jpeg'
+    newer = f'{BLOGGER}/2024-08-02 10.00.00-视频-示例博主-更新的作品.mp4'
+    client = _tag_client(tmp_path, {newer: 1, cover: 2, member: 2})
+
+    payload = client.get('/api/feed/mix', query_string={
+        'start': f'@default/{member}', 'page': 1, 'size': 8, 'seed': 's',
+    }).get_json()
+
+    first = payload['items'][0]
+    assert first['type'] == 'image_group'
+    assert [child['name'] for child in first['items']] == [
+        f'@default/{cover}', f'@default/{member}',
+    ]
+    assert payload['has_more'] is False
+

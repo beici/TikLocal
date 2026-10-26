@@ -2,6 +2,7 @@
 
 import datetime
 import random
+import re
 from pathlib import Path
 from urllib.parse import quote
 
@@ -303,6 +304,52 @@ def build_tag_feed_page(
     }
 
 
+def build_start_feed_page(
+    *,
+    uri: str,
+    page: int,
+    size: int,
+    seed: str,
+    media_index,
+    sources_by_id: dict | None = None,
+    blog: str = '',
+) -> dict:
+    """Open one specific work and keep scrolling down that author's timeline.
+
+    A deep link (author page, search, a shared link) must land on the work the
+    user asked for even when it is far outside the first recommendation page,
+    so the timeline is rebuilt deterministically and sliced from that work.
+    """
+    source_id = str(blog or '').strip()
+    if not source_id:
+        match = re.match(r'^@([^/]+)/', uri)
+        source_id = match.group(1) if match else ''
+    records = media_index.records(source_id=source_id) if source_id else []
+    records_by_name = {str(record.get('name') or ''): record for record in records}
+    pairs = [
+        (str(record.get('media_type') or ''), str(record.get('name') or ''))
+        for record in records
+    ]
+    entries = collapse_media_entries(pairs, records_by_name, media_index)
+    offset = 0
+    for position, entry in enumerate(entries):
+        names = [str(entry.get('name') or '')]
+        names.extend(str(child.get('name') or '') for child in entry.get('items') or [])
+        if uri in names:
+            offset = position
+            break
+    entries = entries[offset:]
+    end = page * size
+    start = max(0, end - size)
+    return {
+        'items': build_feed_items(entries[start:end], records_by_name, sources_by_id),
+        'page': page,
+        'has_more': len(entries) > end,
+        'seed': seed,
+        'start': uri,
+    }
+
+
 def build_mix_feed_page(
     *,
     page: int,
@@ -317,6 +364,7 @@ def build_mix_feed_page(
     blog: str = '',
     sources_by_id: dict | None = None,
     tag: str = '',
+    start: str = '',
 ) -> dict:
     raw_tag = str(tag or '').strip()
     tag = normalize_tag(raw_tag)
@@ -328,6 +376,13 @@ def build_mix_feed_page(
     if raw_tag:
         # A lone '#' names no tag: filtering still applies and nothing matches.
         return {'items': [], 'page': page, 'has_more': False, 'seed': seed, 'tag': ''}
+
+    raw_start = str(start or '').strip()
+    if raw_start:
+        return build_start_feed_page(
+            uri=raw_start, page=page, size=size, seed=seed,
+            media_index=media_index, sources_by_id=sources_by_id, blog=blog,
+        )
 
     video_ratio = 4
     image_ratio = 1
@@ -510,6 +565,7 @@ def register_flow_routes(
         return render_template(
             'flow.html', menu='flow',
             tag=normalize_tag(request.args.get('tag', '')),
+            start=str(request.args.get('start', '')).strip(),
         )
 
     @app.route('/api/feed/mix')
@@ -527,6 +583,7 @@ def register_flow_routes(
             blog=str(request.args.get('blog', '')).strip(),
             sources_by_id=getattr(library_service, 'sources_by_id', None) or {},
             tag=request.args.get('tag', ''),
+            start=request.args.get('start', ''),
         )
         if request.args.get('snapshot') == '1':
             result['has_more'] = False
