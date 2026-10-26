@@ -88,3 +88,49 @@ def test_collection_pages_keep_member_order_without_gaps(client, endpoint):
         assert page['has_more'] == (offset < 24)
         collected.extend(item['name'] for item in page['items'])
     assert collected == [f'@default/{name}' for name in reversed(names)]
+
+
+def test_collection_delete_keeps_favorite_state(client):
+    assert client.post('/api/favorite/clip.mp4').get_json()['favorite'] is True
+    collection_id = client.post('/api/collections', json={'name': 'Keep favorites'}).get_json()['data']['item']['id']
+    client.post(f'/api/collections/{collection_id}/items', json={'uris': ['clip.mp4']})
+    assert client.delete(f'/api/collections/{collection_id}').status_code == 200
+    assert client.get('/api/favorite/clip.mp4').get_json()['favorite'] is True
+
+
+def test_collection_rename_is_reflected_in_list_and_media_lookup(client):
+    collection_id = client.post('/api/collections', json={'name': 'Before'}).get_json()['data']['item']['id']
+    client.post(f'/api/collections/{collection_id}/items', json={'uris': ['clip.mp4']})
+    assert client.patch(f'/api/collections/{collection_id}', json={'name': 'After'}).status_code == 200
+    listed = client.get('/api/collections').get_json()['data']['items']
+    assert [item['name'] for item in listed] == ['After']
+    lookup = client.get('/api/collections/by-media?uri=clip.mp4').get_json()['data']['items']
+    assert [(item['id'], item['name']) for item in lookup] == [(collection_id, 'After')]
+
+
+def test_collection_api_rejects_invalid_input(client):
+    assert client.post('/api/collections', json={}).status_code == 400
+    assert client.post('/api/collections', json={'name': ''}).status_code == 400
+    created = client.post('/api/collections', json={'name': 'Target'}).get_json()['data']['item']
+    assert client.patch(f"/api/collections/{created['id']}", json={'name': ''}).status_code == 400
+    assert client.post(f"/api/collections/{created['id']}/items", json={'uris': []}).status_code == 400
+    assert client.post(f"/api/collections/{created['id']}/items", json={'uris': {}}).status_code == 400
+
+    assert client.get('/api/collections/missing-id').status_code == 404
+    assert client.patch('/api/collections/missing-id', json={'name': 'X'}).status_code == 404
+    assert client.delete('/api/collections/missing-id').status_code == 404
+    assert client.post('/api/collections/missing-id/items', json={'uris': ['clip.mp4']}).status_code == 404
+    assert client.delete('/api/collections/missing-id/items', json={'uris': ['clip.mp4']}).status_code == 404
+
+    assert client.get('/api/collections/by-media').status_code == 400
+    assert client.get('/api/collections/by-media?uri=clip.mp4').get_json()['data']['items'] == []
+
+
+def test_favorite_view_accepts_collection_filter(client):
+    collection_id = client.post('/api/collections', json={'name': 'Filter me'}).get_json()['data']['item']['id']
+    client.post(f'/api/collections/{collection_id}/items', json={'uris': ['clip.mp4']})
+    assert client.get('/favorite').status_code == 200
+    assert client.get(f'/favorite?collection={collection_id}').status_code == 200
+    assert client.get('/favorite?collection=missing-id').status_code == 200
+    assert client.get('/favorite?collection=').status_code == 200
+    assert client.get('/library?view=explore').status_code == 200

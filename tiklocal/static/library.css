@@ -1002,3 +1002,286 @@ body:not([data-nav-context="favorite"]) {
   width: 14px;
   height: 14px;
 }
+
+/* Collection chips on the /library explore toolbar. */
+.library-collections {
+  margin-top: 8px;
+  padding-top: 0;
+}
+
+/* Favorite toolbar: collection filter chips + organize entry. */
+.favorite-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+.favorite-collection-bar {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 2px 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.favorite-collection-bar::-webkit-scrollbar {
+  display: none;
+}
+.favorite-collection-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  font-size: 13px;
+  color: inherit;
+  text-decoration: none;
+  white-space: nowrap;
+  opacity: 0.85;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+.favorite-collection-chip:hover {
+  opacity: 1;
+}
+.favorite-collection-chip.is-active {
+  background: rgba(127, 127, 127, 0.18);
+  border-color: rgba(127, 127, 127, 0.6);
+  opacity: 1;
+  font-weight: 600;
+}
+.favorite-collection-count {
+  font-size: 11px;
+  opacity: 0.6;
+}
+.organize-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  background: transparent;
+  font-size: 13px;
+  color: inherit;
+  cursor: pointer;
+}
+.organize-toggle:hover {
+  opacity: 0.8;
+}
+.organize-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+.collection-nav .organize-toggle {
+  margin-left: auto;
+}
+
+/* Selecting mode: tiles become checkable cards. */
+.masonry-grid.is-selecting .media-tile {
+  cursor: pointer;
+}
+.masonry-grid.is-selecting .media-tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  border: 2px solid transparent;
+  background: rgba(0, 0, 0, 0.12);
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+.masonry-grid.is-selecting .media-tile.is-selected::after {
+  border-color: #2f6fed;
+  background: rgba(47, 111, 237, 0.14);
+}
+.masonry-grid.is-selecting .media-tile.is-selected::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #2f6fed
+    url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E")
+    center / 14px 14px no-repeat;
+}
+
+/* Organize action bar pinned above the dock while selecting. */
+.organize-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 24px);
+  padding: 10px 14px;
+  border-radius: 18px;
+  background: rgba(28, 27, 24, 0.92);
+  color: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(8px);
+}
+[data-theme="dark"] .organize-bar {
+  background: rgba(20, 20, 19, 0.96);
+}
+.organize-count {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.organize-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.organize-actions::-webkit-scrollbar {
+  display: none;
+}
+.organize-btn {
+  flex: none;
+  padding: 7px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.organize-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.organize-btn-danger {
+  border-color: rgba(235, 94, 94, 0.55);
+  color: #ff9a9a;
+}
+.organize-btn-primary {
+  border-color: transparent;
+  background: #f4c56e;
+  color: #24231f;
+  font-weight: 600;
+}
+
+/* Bottom sheet for picking target collections. */
+.organize-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+.organize-sheet.active {
+  display: flex;
+}
+.organize-sheet-card {
+  width: min(100%, 520px);
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 20px 20px 0 0;
+  background: #ffffff;
+  color: #24231f;
+  overflow: hidden;
+}
+[data-theme="dark"] .organize-sheet-card {
+  background: #232322;
+  color: rgba(255, 255, 255, 0.92);
+}
+.organize-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 8px;
+}
+.organize-sheet-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 680;
+}
+.organize-sheet-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.organize-sheet-close svg {
+  width: 18px;
+  height: 18px;
+}
+.organize-sheet-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px 8px;
+}
+.organize-sheet-empty {
+  padding: 26px 12px;
+  text-align: center;
+  font-size: 13px;
+  opacity: 0.6;
+}
+.organize-sheet-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.organize-sheet-item:hover {
+  background: rgba(127, 127, 127, 0.1);
+}
+.organize-sheet-item input {
+  width: 18px;
+  height: 18px;
+  accent-color: #2f6fed;
+  flex: none;
+}
+.organize-sheet-item-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.organize-sheet-item-count {
+  flex: none;
+  font-size: 12px;
+  opacity: 0.55;
+}
+.organize-sheet-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px calc(12px + env(safe-area-inset-bottom));
+}
+.organize-sheet-footer .organize-btn {
+  border-color: rgba(127, 127, 127, 0.4);
+  color: inherit;
+}
+.organize-sheet-footer .organize-btn-primary {
+  border-color: transparent;
+  color: #24231f;
+}

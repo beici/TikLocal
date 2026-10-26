@@ -45,6 +45,17 @@ def register_library_routes(
             'min_mb': read_int_arg('min_mb', 50, minimum=1, maximum=10240),
         }
 
+    def _collection_chip_rows() -> list[dict]:
+        """Lightweight collection summaries for filter chips (no cover IO)."""
+        return [
+            {
+                'id': str(item.get('id') or ''),
+                'name': str(item.get('name') or ''),
+                'item_count': int(item.get('item_count') or 0),
+            }
+            for item in collection_store.list()
+        ]
+
     def _blog_chips() -> list[dict]:
         chips = []
         for row in media_index.blog_rows():
@@ -234,15 +245,23 @@ def register_library_routes(
             media_search_available=bool(media_search_available and media_search_available()),
             blog=options['blog'],
             blogs=_blog_chips(),
+            library_collections=_collection_chip_rows() if requested_view != 'timeline' else [],
         )
 
     @app.route('/favorite')
     def favorite_view():
+        collection_id = str(request.args.get('collection', '')).strip()
+        collection = collection_store.get(collection_id) if collection_id else None
         page = _build_library_page(
-            favorites_only=True,
+            collection_id=collection['id'] if collection else '',
+            favorites_only=not collection,
             limit=read_int_arg('limit', 24, minimum=12, maximum=96),
         )
-        return _render_library_page(page, scope='favorite')
+        return _render_library_page(
+            page, scope='favorite',
+            favorite_collections=_collection_chip_rows(),
+            **({'collection': _serialize_collection_summary(collection)} if collection else {}),
+        )
 
     @app.route('/collections')
     def collections_view():

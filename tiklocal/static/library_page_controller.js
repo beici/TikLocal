@@ -19,6 +19,9 @@
   let searchRequest = 0;
   let searchQuery = new URLSearchParams(window.location.search).get('q') || '';
   const blogFilter = new URLSearchParams(window.location.search).get('blog') || '';
+  // Collection filter inside the saved view: a chip click narrows favorites to one collection.
+  let activeScope = scope === 'favorite' && collectionId ? 'collection' : scope;
+  let activeCollectionId = String(collectionId || '');
 
   const grid = document.getElementById('library-grid');
   const statusText = document.getElementById('library-status-text');
@@ -335,7 +338,18 @@
       }, { once: true });
     }
 
-    tile.addEventListener('click', () => openViewer(index));
+    tile.dataset.name = String(item.name || '');
+    tile.addEventListener('click', () => {
+      if (selecting) {
+        const name = String(item.name || '');
+        if (selectedNames.has(name)) selectedNames.delete(name);
+        else selectedNames.add(name);
+        tile.classList.toggle('is-selected', selectedNames.has(name));
+        updateOrganizeBar();
+        return;
+      }
+      openViewer(index);
+    });
     return tile;
   }
 
@@ -396,14 +410,14 @@
 
   function apiParams(offset) {
     const params = new URLSearchParams({
-      scope,
+      scope: activeScope,
       mode,
       offset: String(offset),
       limit: String(pageSize),
     });
     if (blogFilter) params.set('blog', blogFilter);
-    if (scope === 'collection' && collectionId) {
-      params.set('collection_id', String(collectionId));
+    if (activeScope === 'collection' && activeCollectionId) {
+      params.set('collection_id', activeCollectionId);
     }
     if (mode === 'big_files') {
       params.set('min_mb', String(minMb));
@@ -452,7 +466,7 @@
         if (searchQuery) {
           setLoadingText(`No results for "${searchQuery}"`, { clearSearch: true });
         } else {
-          setLoadingText(emptyMessage);
+          setLoadingText(currentEmptyMessage());
         }
       } else if (!flowSession.hasMore()) {
         setLoadingText('You have reached the end');
@@ -513,6 +527,10 @@
       cursor: { offset: 0 },
     });
     resetWaterfallLayout();
+    if (selecting) {
+      selectedNames.clear();
+      updateOrganizeBar();
+    }
     activeTab();
     setLoadingText('Loading...');
     await loadNextPage();
@@ -881,6 +899,14 @@
   });
 
   document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && organizeSheet?.classList.contains('active')) {
+      closeOrganizeSheet();
+      return;
+    }
+    if (event.key === 'Escape' && selecting) {
+      setSelecting(false);
+      return;
+    }
     if (event.key === 'Escape' && collections.isOpen()) {
       collections.close();
       return;
@@ -894,6 +920,249 @@
       togglePlay();
     }
   });
+
+  // ---- Saved view: collection filter chips + multi-select organize ----
+  const favoriteCollectionBar = document.getElementById('favorite-collection-bar');
+  const organizeToggle = document.getElementById('organize-toggle');
+  const organizeBar = document.getElementById('organize-bar');
+  const organizeSheet = document.getElementById('organize-sheet');
+  let selecting = false;
+  let organizeSheetMode = 'add';
+  let organizeBusy = false;
+  const selectedNames = new Set();
+
+  function escapeHtmlText(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function currentEmptyMessage() {
+    if (scope === 'favorite' && activeCollectionId) return 'This collection has no media to display yet.';
+    return emptyMessage;
+  }
+
+  function showOrganizeToast(message, kind) {
+    if (window.TikLocalUI && typeof window.TikLocalUI.toast === 'function') {
+      window.TikLocalUI.toast(message, kind || 'success');
+    }
+  }
+
+  function syncFavoriteCollectionChips() {
+    if (!favoriteCollectionBar) return;
+    favoriteCollectionBar.querySelectorAll('[data-collection-id]').forEach((chip) => {
+      const isActive = String(chip.dataset.collectionId || '') === activeCollectionId;
+      chip.classList.toggle('is-active', isActive);
+      if (isActive) chip.setAttribute('aria-current', 'page');
+      else chip.removeAttribute('aria-current');
+    });
+  }
+
+  function syncFavoriteCollectionUrl(replace = false) {
+    if (scope !== 'favorite') return;
+    const params = new URLSearchParams(window.location.search);
+    if (activeCollectionId) params.set('collection', activeCollectionId);
+    else params.delete('collection');
+    const query = params.toString();
+    const nextUrl = `/favorite${query ? `?${query}` : ''}${window.location.hash}`;
+    window.history[replace ? 'replaceState' : 'pushState']({ collection: activeCollectionId }, '', nextUrl);
+  }
+
+  async function applyCollectionFilter(nextId, { push = true } = {}) {
+    const target = String(nextId || '');
+    if (target === activeCollectionId) return;
+    activeCollectionId = target;
+    activeScope = target ? 'collection' : 'favorite';
+    if (push) syncFavoriteCollectionUrl(false);
+    syncFavoriteCollectionChips();
+    if (selecting) setSelecting(false);
+    await reloadCurrentMode();
+  }
+
+  function refreshTileSelection() {
+    grid?.querySelectorAll('.media-tile').forEach((tile) => {
+      tile.classList.toggle('is-selected', selectedNames.has(String(tile.dataset.name || '')));
+    });
+  }
+
+  function updateOrganizeBar() {
+    if (!organizeBar) return;
+    const countEl = document.getElementById('organize-count');
+    if (countEl) countEl.textContent = `已选 ${selectedNames.size} 项`;
+    const inCollection = activeScope === 'collection' && !!activeCollectionId;
+    const moveBtn = document.getElementById('organize-move');
+    const removeBtn = document.getElementById('organize-remove');
+    if (moveBtn) moveBtn.hidden = !inCollection;
+    if (removeBtn) removeBtn.hidden = !inCollection;
+    const hasSelection = selectedNames.size > 0;
+    ['organize-add', 'organize-move', 'organize-remove'].forEach((id) => {
+      const btn = document.getElementById(id);
+      if (btn) btn.disabled = !hasSelection;
+    });
+    const selectAllBtn = document.getElementById('organize-select-all');
+    if (selectAllBtn) {
+      const allSelected = items.length > 0 && selectedNames.size >= items.length;
+      selectAllBtn.textContent = allSelected ? '取消全选' : '全选';
+    }
+  }
+
+  function setSelecting(next) {
+    selecting = !!next;
+    grid?.classList.toggle('is-selecting', selecting);
+    document.body.classList.toggle('is-organizing', selecting);
+    if (organizeBar) organizeBar.hidden = !selecting;
+    if (!selecting) selectedNames.clear();
+    refreshTileSelection();
+    updateOrganizeBar();
+  }
+
+  function toggleSelectAll() {
+    const allSelected = items.length > 0 && selectedNames.size >= items.length;
+    selectedNames.clear();
+    if (!allSelected) items.forEach((item) => selectedNames.add(String(item?.name || '')));
+    refreshTileSelection();
+    updateOrganizeBar();
+  }
+
+  async function sendCollectionUris(collectionId, method, uris) {
+    const targetId = encodeURIComponent(collectionId);
+    for (let start = 0; start < uris.length; start += 200) {
+      await window.TikLocalCollections.request(`/api/collections/${targetId}/items`, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uris: uris.slice(start, start + 200) }),
+      });
+    }
+  }
+
+  function closeOrganizeSheet() {
+    if (!organizeSheet) return;
+    organizeSheet.classList.remove('active');
+    organizeSheet.setAttribute('aria-hidden', 'true');
+  }
+
+  async function openOrganizeSheet(mode) {
+    if (!organizeSheet || !selectedNames.size || organizeBusy) return;
+    organizeSheetMode = mode === 'move' ? 'move' : 'add';
+    const title = document.getElementById('organize-sheet-title');
+    if (title) title.textContent = organizeSheetMode === 'move' ? '移动到合集' : '加入合集';
+    const listEl = document.getElementById('organize-sheet-list');
+    if (listEl) listEl.innerHTML = '<div class="organize-sheet-empty">加载中…</div>';
+    organizeSheet.classList.add('active');
+    organizeSheet.setAttribute('aria-hidden', 'false');
+    try {
+      const data = await window.TikLocalCollections.request('/api/collections');
+      const rows = (data?.items || []).filter((item) => organizeSheetMode === 'add' || String(item.id) !== activeCollectionId);
+      if (!listEl) return;
+      if (!rows.length) {
+        listEl.innerHTML = '<div class="organize-sheet-empty">暂无可选合集，先到合集页创建一个吧</div>';
+        return;
+      }
+      listEl.innerHTML = rows.map((item) => `
+        <label class="organize-sheet-item" data-id="${escapeHtmlText(item.id)}">
+          <input type="checkbox" value="${escapeHtmlText(item.id)}">
+          <span class="organize-sheet-item-name">${escapeHtmlText(item.name)}</span>
+          <span class="organize-sheet-item-count">${Number(item.item_count || 0)}</span>
+        </label>`).join('');
+    } catch (error) {
+      if (listEl) listEl.innerHTML = `<div class="organize-sheet-empty">${escapeHtmlText(error?.message || '加载合集失败')}</div>`;
+    }
+  }
+
+  async function refreshFavoriteCollectionCounts() {
+    if (!favoriteCollectionBar) return;
+    try {
+      const data = await window.TikLocalCollections.request('/api/collections');
+      (data?.items || []).forEach((item) => {
+        const chip = favoriteCollectionBar.querySelector(`[data-collection-id="${CSS.escape(String(item.id))}"] .favorite-collection-count`);
+        if (chip) chip.textContent = String(Number(item.item_count || 0));
+      });
+    } catch (error) {
+      // Count refresh is cosmetic; failures are ignored until the next reload.
+    }
+  }
+
+  function finishOrganizeAction(message) {
+    closeOrganizeSheet();
+    selectedNames.clear();
+    refreshTileSelection();
+    updateOrganizeBar();
+    showOrganizeToast(message, 'success');
+    refreshFavoriteCollectionCounts();
+    return reloadCurrentMode();
+  }
+
+  async function confirmOrganizeSheet() {
+    if (!organizeSheet || organizeBusy) return;
+    const sheetItems = [...organizeSheet.querySelectorAll('.organize-sheet-item input:checked')];
+    const targetIds = sheetItems.map((input) => String(input.value || '')).filter(Boolean);
+    if (!targetIds.length || !selectedNames.size) return;
+    organizeBusy = true;
+    const confirmBtn = document.getElementById('organize-sheet-confirm');
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = '处理中…';
+    }
+    const uris = [...selectedNames];
+    try {
+      for (const targetId of targetIds) await sendCollectionUris(targetId, 'POST', uris);
+      if (organizeSheetMode === 'move' && activeCollectionId) {
+        await sendCollectionUris(activeCollectionId, 'DELETE', uris);
+      }
+      await finishOrganizeAction(organizeSheetMode === 'move' ? '已移动到合集' : '已加入合集');
+    } catch (error) {
+      showOrganizeToast(error?.message || '操作失败，请重试', 'error');
+    } finally {
+      organizeBusy = false;
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = '确认';
+      }
+    }
+  }
+
+  async function removeSelectedFromCurrentCollection() {
+    if (!selectedNames.size || activeScope !== 'collection' || !activeCollectionId) return;
+    const removeBtn = document.getElementById('organize-remove');
+    if (removeBtn) removeBtn.disabled = true;
+    try {
+      await sendCollectionUris(activeCollectionId, 'DELETE', [...selectedNames]);
+      await finishOrganizeAction('已移出合集');
+    } catch (error) {
+      showOrganizeToast(error?.message || '操作失败，请重试', 'error');
+    } finally {
+      if (removeBtn) removeBtn.disabled = false;
+    }
+  }
+
+  favoriteCollectionBar?.addEventListener('click', (event) => {
+    const chip = event.target.closest('[data-collection-id]');
+    if (!chip) return;
+    event.preventDefault();
+    applyCollectionFilter(chip.dataset.collectionId);
+  });
+  if (scope === 'favorite') {
+    window.addEventListener('popstate', () => {
+      const nextId = new URLSearchParams(window.location.search).get('collection') || '';
+      if (nextId !== activeCollectionId) applyCollectionFilter(nextId, { push: false });
+    });
+  }
+  organizeToggle?.addEventListener('click', () => setSelecting(!selecting));
+  document.getElementById('organize-done')?.addEventListener('click', () => setSelecting(false));
+  document.getElementById('organize-select-all')?.addEventListener('click', toggleSelectAll);
+  document.getElementById('organize-add')?.addEventListener('click', () => openOrganizeSheet('add'));
+  document.getElementById('organize-move')?.addEventListener('click', () => openOrganizeSheet('move'));
+  document.getElementById('organize-remove')?.addEventListener('click', removeSelectedFromCurrentCollection);
+  document.getElementById('organize-sheet-close')?.addEventListener('click', closeOrganizeSheet);
+  document.getElementById('organize-sheet-cancel')?.addEventListener('click', closeOrganizeSheet);
+  document.getElementById('organize-sheet-confirm')?.addEventListener('click', confirmOrganizeSheet);
+  organizeSheet?.addEventListener('click', (event) => {
+    if (event.target === organizeSheet) closeOrganizeSheet();
+  });
+  syncFavoriteCollectionChips();
 
   quickOverlay.addEventListener('click', () => {
     const item = currentItem();

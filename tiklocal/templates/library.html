@@ -88,11 +88,35 @@
       {% endif %}
     </nav>
     {% endif %}
+    {% if library_collections %}
+    <nav id="library-collections" class="blog-chips library-collections" aria-label="Browse by collection">
+      {% for chip in library_collections %}
+      <a class="blog-chip" href="/collection/{{ chip.id }}" title="{{ chip.item_count }} 条媒体">
+        {{ chip.name }}<span class="blog-chip-count">{{ chip.item_count }}</span>
+      </a>
+      {% endfor %}
+    </nav>
+    {% endif %}
     </div>
   </section>
   {% elif scope == 'favorite' %}
   {% set saved_active = 'favorite' %}
   {% include '_saved_header.html' %}
+  {% if favorite_collections %}
+  <section class="favorite-toolbar" aria-label="Filter favorites by collection">
+    <nav id="favorite-collection-bar" class="favorite-collection-bar">
+      <a class="favorite-collection-chip{% if not collection_id %} is-active{% endif %}" data-collection-id="" href="/favorite">全部</a>
+      {% for chip in favorite_collections %}
+      <a class="favorite-collection-chip{% if collection_id == chip.id %} is-active{% endif %}" data-collection-id="{{ chip.id }}" href="/favorite?collection={{ chip.id }}" title="{{ chip.item_count }} 条媒体">
+        {{ chip.name }}<span class="favorite-collection-count">{{ chip.item_count }}</span>
+      </a>
+      {% endfor %}
+    </nav>
+    <button id="organize-toggle" class="organize-toggle" type="button">
+      <i data-feather="check-square" aria-hidden="true"></i><span>整理</span>
+    </button>
+  </section>
+  {% endif %}
   {% elif scope == 'collection' %}
   <section>
     <div class="collection-nav">
@@ -100,6 +124,9 @@
         <i data-feather="arrow-left"></i>
         <span>All Collections</span>
       </a>
+      <button id="organize-toggle" class="organize-toggle" type="button">
+        <i data-feather="check-square" aria-hidden="true"></i><span>整理</span>
+      </button>
     </div>
     <div class="collection-identity">
       <div id="collection-identity-cover" class="collection-identity-cover">
@@ -171,6 +198,34 @@
   </div>
   <div id="library-sentinel" style="height: 1px;"></div>
 </main>
+
+{% if scope in ['favorite', 'collection'] %}
+<div id="organize-bar" class="organize-bar" hidden>
+  <span class="organize-count" id="organize-count">已选 0 项</span>
+  <div class="organize-actions">
+    <button id="organize-add" class="organize-btn" type="button" disabled>加入合集</button>
+    <button id="organize-move" class="organize-btn" type="button" disabled hidden>移动到合集</button>
+    <button id="organize-remove" class="organize-btn organize-btn-danger" type="button" disabled hidden>移出本合集</button>
+    <button id="organize-select-all" class="organize-btn" type="button">全选</button>
+    <button id="organize-done" class="organize-btn organize-btn-primary" type="button">完成</button>
+  </div>
+</div>
+<div id="organize-sheet" class="organize-sheet" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="organize-sheet-title">
+  <div class="organize-sheet-card">
+    <div class="organize-sheet-header">
+      <h3 id="organize-sheet-title">加入合集</h3>
+      <button id="organize-sheet-close" class="organize-sheet-close" type="button" aria-label="Close">
+        <i data-feather="x"></i>
+      </button>
+    </div>
+    <div id="organize-sheet-list" class="organize-sheet-list"></div>
+    <div class="organize-sheet-footer">
+      <button id="organize-sheet-cancel" class="organize-btn" type="button">取消</button>
+      <button id="organize-sheet-confirm" class="organize-btn organize-btn-primary" type="button">确认</button>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <div id="quick-view" aria-hidden="true">
   <div id="quick-feed-layer">
