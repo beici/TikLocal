@@ -416,3 +416,109 @@ body.author-picker-open { overflow: hidden; }
   transition: background-color 0.18s ease;
 }
 .author-picker-cancel:hover { background: rgba(255, 255, 255, 0.12); }
+
+/* ---- sync menu: one action for the profile, one for new works ---- */
+.author-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 61;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+}
+.author-sheet[hidden],
+.author-sheet-hint[hidden] { display: none; }
+.author-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.62);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+.author-sheet-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(100%, 420px);
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  background: #16161a;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  color: #f5f5f7;
+}
+.author-sheet-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.author-sheet-copy {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.42);
+}
+.author-sheet-bound {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.55);
+  word-break: break-all;
+}
+.author-sheet-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.18s ease, border-color 0.18s ease;
+}
+.author-sheet-action:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(254, 44, 85, 0.45);
+}
+.author-sheet-action:focus-visible {
+  outline: 2px solid rgba(254, 44, 85, 0.7);
+  outline-offset: 2px;
+}
+.author-sheet-action[disabled] { opacity: 0.55; cursor: progress; }
+.author-sheet-action-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.author-sheet-action-copy {
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.45);
+}
+.author-sheet-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #fe2c55;
+}
+.author-sheet-cancel {
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.18s ease;
+}
+.author-sheet-cancel:hover { background: rgba(255, 255, 255, 0.12); }
+@media (min-width: 561px) {
+  .author-sheet { align-items: center; }
+}

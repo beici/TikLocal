@@ -29,7 +29,12 @@ from flask import abort, current_app, jsonify, render_template, request, send_fi
 from tiklocal.i18n import t
 from tiklocal.services import author_profiles
 from tiklocal.services.media_naming import blogger_display_name
-from tiklocal.services.tiktok_downloader import AuthorAmbiguousError, TikTokDownloaderError
+from tiklocal.services.tiktok_downloader import (
+    AuthorAmbiguousError,
+    TikTokDownloaderError,
+    normalize_profile_url,
+    parse_profile_sec_uid,
+)
 from tiklocal.web.media_payloads import media_urls
 
 AVATAR_MAX_AGE = 300
@@ -85,6 +90,20 @@ def parse_sync_text(text) -> list[dict]:
         else:
             entries.append({'source_id': '', 'profile_url': line})
     return entries
+
+
+def local_work_names(media_index, source_id: str) -> list[str]:
+    """Every file name the library holds for a source, newest first.
+
+    ``更新最新视频`` diffs the sidecar's account timeline against these names, so
+    it has to see album members and live-post parts too, not just the covers the
+    grid renders.
+    """
+    try:
+        records = media_index.records(source_id=source_id, album_covers_only=False)
+    except Exception:
+        return []
+    return [str(record.get('name') or '') for record in records or () if record.get('name')]
 
 
 def build_tiles(records) -> list[dict]:
@@ -155,6 +174,7 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         folder_name = folder_name_for(source)
         profile = author_profiles.resolve_profile(source_id, folder_name=folder_name)
         tiles = build_tiles(media_index.records(source_id=source_id, album_covers_only=True))
+        sidecar_ready = bool(_sidecar_base_url())
         return render_template(
             'author.html',
             menu='author',
@@ -162,9 +182,11 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             author_name=display_name(source_id, folder_name, profile),
             search_default=blogger_display_name(folder_name) or str(source_id or ''),
             douyin_id=str(profile.get('douyin_id') or ''),
+            profile_url=str(profile.get('profile_url') or ''),
             tiles=tiles,
             stats=build_stats(tiles, profile),
-            refresh_enabled=bool(_sidecar_base_url()),
+            refresh_enabled=sidecar_ready,
+            update_enabled=sidecar_ready,
         )
 
     @app.route('/author/<source_id>/avatar')
@@ -178,14 +200,40 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             abort(404)
         return send_file(bundled, mimetype='image/jpeg', max_age=AVATAR_MAX_AGE)
 
-    @app.post('/api/author/<source_id>/refresh')
-    def author_refresh(source_id):
+    def _sync_profile(source_id):
+        """Refresh one author's cached profile (nickname, Douyin id, avatar, stats).
+
+        A home-page or work link goes through the exact identity chain and is
+        then bound to the source, so the next sync is a single click; a bare
+        keyword feeds the nickname picker and answers 409 with the candidates
+        when several accounts share the name.
+        """
         source = _source_or_404(source_id)
         if not _sidecar_base_url():
             return jsonify({'ok': False, 'error': t('author.refresh.unconfigured')}), 400
         payload = _json_body()
+        folder_name = folder_name_for(source)
+        profile_url = str(payload.get('profile_url') or '').strip()
+        aweme_id = str(payload.get('aweme_id') or '').strip()
+        if profile_url or aweme_id:
+            try:
+                tiktok_service.sync_author_profile(
+                    source_id,
+                    profile_url=profile_url,
+                    aweme_id=aweme_id,
+                    folder_uid=author_profiles.douyin_id_from_folder(folder_name),
+                )
+            except ValueError as exc:
+                return jsonify({'ok': False, 'error': str(exc)}), 400
+            except TikTokDownloaderError as exc:
+                return jsonify({'ok': False, 'error': str(exc)}), 502
+            except Exception as exc:  # a sidecar hiccup must never become a 500 page
+                return jsonify({'ok': False, 'error': str(exc) or t('author.refresh.error')}), 502
+            profile = author_profiles.resolve_profile(source_id, folder_name=folder_name)
+            return jsonify({'ok': True, 'profile': profile})
+
         keyword = str(payload.get('keyword') or '').strip()
-        keyword = keyword or blogger_display_name(folder_name_for(source))
+        keyword = keyword or blogger_display_name(folder_name)
         unique_id = str(payload.get('unique_id') or '').strip()
         uid = str(payload.get('uid') or '').strip()
         try:
@@ -202,6 +250,56 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         except Exception as exc:  # a sidecar hiccup must never become a 500 page
             return jsonify({'ok': False, 'error': str(exc) or t('author.refresh.error')}), 502
         return jsonify({'ok': True, 'profile': profile})
+
+    @app.post('/api/author/<source_id>/refresh')
+    def author_refresh(source_id):
+        return _sync_profile(source_id)
+
+    @app.post('/api/author/<source_id>/sync')
+    def author_sync_one(source_id):
+        """Alias of ``refresh``: the sync menu calls the action by its new name."""
+        return _sync_profile(source_id)
+
+    @app.post('/api/author/<source_id>/bind')
+    def author_bind(source_id):
+        """Persist the author home-page link that belongs to this media source."""
+        _source_or_404(source_id)
+        url = str(_json_body().get('profile_url') or '').strip()
+        if not url:
+            return jsonify({'ok': False, 'error': t('author.sync.error.profile_url')}), 400
+        try:
+            sec_uid = parse_profile_sec_uid(url)
+        except ValueError as exc:
+            return jsonify({'ok': False, 'error': str(exc)}), 400
+        author_profiles.set_profile_url(source_id, url)
+        return jsonify({'ok': True, 'profile_url': url, 'sec_uid': sec_uid})
+
+    @app.post('/api/author/<source_id>/update-videos')
+    def author_update_videos(source_id):
+        """Queue downloads for the author's works that the library does not hold yet."""
+        _source_or_404(source_id)
+        if not _sidecar_base_url():
+            return jsonify({'ok': False, 'error': t('author.sync.error.unconfigured')}), 400
+        payload = _json_body()
+        profile_url = str(payload.get('profile_url') or '').strip()
+        if profile_url:
+            bound = normalize_profile_url(profile_url)
+            if not bound:
+                return jsonify({'ok': False, 'error': t('author.sync.error.profile_url')}), 400
+            author_profiles.set_profile_url(source_id, bound)
+        try:
+            result = tiktok_service.enqueue_latest_videos(
+                source_id,
+                profile_url=profile_url,
+                local_names=local_work_names(media_index, source_id),
+            )
+        except ValueError as exc:
+            return jsonify({'ok': False, 'error': str(exc)}), 400
+        except TikTokDownloaderError as exc:
+            return jsonify({'ok': False, 'error': str(exc)}), 502
+        except Exception as exc:  # a sidecar hiccup must never become a 500 page
+            return jsonify({'ok': False, 'error': str(exc) or t('author.sync.error.unknown')}), 502
+        return jsonify({'ok': True, **result})
 
     @app.post('/api/author/<source_id>/search')
     def author_search(source_id):
@@ -242,6 +340,8 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
                 'douyin_id': str(profile.get('douyin_id') or ''),
                 'nickname': str(profile.get('name') or ''),
                 'has_profile': bool(author_profiles.load_profile(source_id)),
+                'profile_url': str(profile.get('profile_url') or ''),
+                'local_count': len(local_work_names(media_index, source_id)),
                 'avatar_url': f'/author/{quote(str(source_id))}/avatar',
             })
         items.sort(key=lambda item: (item['display_name'].lower(), item['source_id']))

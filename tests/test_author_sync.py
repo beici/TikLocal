@@ -105,12 +105,15 @@ def _fake_client(monkeypatch, *, author=None, works=None, calls=None):
     return log
 
 
-def _app(tmp_path, *, sources=None, config=None):
+def _app(tmp_path, *, sources=None, config=None, files=None):
     media = tmp_path / 'media'
     entries = []
     for source_id, folder_name in (sources or [('demo', FOLDER)]):
-        (media / folder_name).mkdir(parents=True, exist_ok=True)
-        entries.append({'id': source_id, 'name': folder_name, 'path': str(media / folder_name)})
+        folder = media / folder_name
+        folder.mkdir(parents=True, exist_ok=True)
+        for name in files or ():
+            (folder / name).write_bytes(b'x')
+        entries.append({'id': source_id, 'name': folder_name, 'path': str(folder)})
     settings = {
         'TESTING': True,
         'MEDIA_ROOT': tmp_path / 'unused',
@@ -183,11 +186,13 @@ def test_sync_follows_link_through_account_and_detail(monkeypatch):
         'follower_count': 1234,
         'total_favorited': 5678,
         'avatar_saved': False,
+        'profile_url': PROFILE_URL,
     }
     cached = author_profiles.load_profile('demo')
     assert cached['name'] == 'demo_author'
     assert cached['douyin_id'] == 'demo0001'
     assert cached['uid'] == FOLDER_UID
+    assert cached['profile_url'] == PROFILE_URL
 
 
 def test_sync_skips_the_account_hop_when_the_work_id_is_known(monkeypatch):
@@ -278,6 +283,7 @@ def test_batch_matches_a_bare_link_through_the_folder_uid(monkeypatch):
         'follower_count': 1234,
         'total_favorited': 5678,
         'avatar_saved': False,
+        'profile_url': PROFILE_URL,
     }]
 
 
@@ -400,9 +406,10 @@ def test_settings_page_renders_the_sync_card(tmp_path):
 
     html = client.get('/settings/').get_data(as_text=True)
 
-    assert 'author-sync-links' in html
-    assert 'author-sync-run' in html
     assert 'author-sync-source-list' in html
+    assert 'author-sync-all-profiles' in html
+    assert 'author-sync-all-videos' in html
+    assert 'author-sync-links' not in html
 
 
 def test_author_page_offers_the_link_route_inside_the_picker(tmp_path):
@@ -413,3 +420,269 @@ def test_author_page_offers_the_link_route_inside_the_picker(tmp_path):
     assert 'data-author-profile-url' in html
     assert 'data-author-url-sync' in html
     assert 'data-author-search-form' in html
+
+
+def test_author_page_renders_the_sync_menu_with_the_bound_link(tmp_path):
+    author_profiles.set_profile_url('demo', PROFILE_URL)
+    _, client = _app(tmp_path, config={'TIKTOK_DOWNLOADER': {'base_url': SIDECAR_URL}})
+
+    html = client.get('/author/demo').get_data(as_text=True)
+
+    assert 'data-author-sheet' in html
+    assert 'data-author-sheet-profile' in html
+    assert 'data-author-sheet-videos' in html
+    assert f'data-author-bound-url="{PROFILE_URL}"' in html
+
+
+def test_set_profile_url_persists_and_clears():
+    author_profiles.set_profile_url('demo', PROFILE_URL)
+
+    assert author_profiles.load_profile('demo')['profile_url'] == PROFILE_URL
+    assert author_profiles.resolve_profile('demo', folder_name=FOLDER)['profile_url'] == PROFILE_URL
+
+    author_profiles.set_profile_url('demo', '')
+
+    assert 'profile_url' not in author_profiles.load_profile('demo')
+    assert author_profiles.resolve_profile('demo', folder_name=FOLDER)['profile_url'] == ''
+
+
+def test_sync_author_profile_binds_the_home_page_link(monkeypatch):
+    _fake_client(monkeypatch)
+
+    result = _service().sync_author_profile('demo', profile_url=PROFILE_URL, folder_uid=FOLDER_UID)
+
+    assert result['nickname'] == 'demo_author'
+    assert result['profile_url'] == PROFILE_URL
+    assert author_profiles.load_profile('demo')['profile_url'] == PROFILE_URL
+
+
+def test_sync_author_profile_binds_the_home_page_derived_from_the_work_link(monkeypatch):
+    """A work link proves identity, so the canonical home page is bound for free.
+
+    The detail payload carries ``sec_uid``, which rebuilds the author home page;
+    the user pastes one link and later syncs or video updates need none.
+    """
+    _fake_client(monkeypatch)
+
+    result = _service().sync_author_profile(
+        'demo', aweme_id=WORK_ID, folder_uid=FOLDER_UID,
+    )
+
+    expected = f'https://www.douyin.com/user/{SEC_UID}'
+    assert result['profile_url'] == expected
+    assert author_profiles.load_profile('demo')['profile_url'] == expected
+
+
+def test_enqueue_latest_videos_queues_only_the_missing_works(monkeypatch):
+    works = [
+        {'aweme_id': WORK_ID, 'desc': 'already on disk by id'},
+        {'aweme_id': '7000000000000000001', 'desc': '演示作品标题'},
+        {'aweme_id': '7000000000000000002', 'desc': '全新的作品'},
+    ]
+    calls = []
+    _fake_client(monkeypatch, works=works)
+    monkeypatch.setattr(
+        TikTokDownloadService,
+        'enqueue_from_url',
+        lambda self, url, tab='post', count=18: calls.append(url) or {'queued': 1},
+    )
+    author_profiles.set_profile_url('demo', PROFILE_URL)
+    local = [
+        f'2026-09-01 23.33.46-视频-demo_author-{WORK_ID}.mp4',
+        '2026-09-02 08.00.00-视频-demo_author-演示作品标题.mp4',
+    ]
+
+    result = _service().enqueue_latest_videos('demo', local_names=local)
+
+    assert result['queued'] == 1
+    assert result['skipped'] == 2
+    assert result['total'] == 3
+    assert calls == ['https://www.douyin.com/video/7000000000000000002']
+    assert [item['status'] for item in result['items']] == ['local', 'local', 'queued']
+
+
+def test_enqueue_latest_videos_ignores_emoji_the_exporter_dropped(monkeypatch):
+    """Exporters strip emoji from file names while the description keeps them."""
+    works = [{'aweme_id': '7518692465361308991', 'desc': '海岛日记🫧⊹⋰ 𓇼 #海陵岛#看海'}]
+    calls = []
+    _fake_client(monkeypatch, works=works)
+    monkeypatch.setattr(
+        TikTokDownloadService,
+        'enqueue_from_url',
+        lambda self, url, tab='post', count=18: calls.append(url) or {'queued': 1},
+    )
+    author_profiles.set_profile_url('demo', PROFILE_URL)
+    local = ['2025-06-22 16.46.51-实况-demo_author-海岛日记⊹⋰ 𓇼 #海陵岛#看海_1.jpeg']
+
+    result = _service().enqueue_latest_videos('demo', local_names=local)
+
+    assert result['skipped'] == 1
+    assert result['queued'] == 0
+    assert calls == []
+
+
+def test_enqueue_latest_videos_skips_works_already_in_the_queue(monkeypatch):
+    works = [
+        {'aweme_id': WORK_ID, 'desc': 'queued already'},
+        {'aweme_id': '7000000000000000002', 'desc': '全新的作品'},
+    ]
+    calls = []
+    _fake_client(monkeypatch, works=works)
+    monkeypatch.setattr(
+        TikTokDownloadService,
+        'enqueue_from_url',
+        lambda self, url, tab='post', count=18: calls.append(url) or {'queued': 1},
+    )
+    author_profiles.set_profile_url('demo', PROFILE_URL)
+
+    class _QueuedJobs:
+        def list_jobs(self, *, limit=50):
+            return [
+                {'url': f'https://www.douyin.com/video/{WORK_ID}', 'status': 'queued'},
+                {'url': 'https://www.douyin.com/video/7000000000000000009', 'status': 'success'},
+            ]
+
+    service = TikTokDownloadService(_ConfigStore(), download_manager=_QueuedJobs())
+
+    result = service.enqueue_latest_videos('demo', local_names=[])
+
+    assert result['queued'] == 1
+    assert result['skipped'] == 1
+    assert calls == ['https://www.douyin.com/video/7000000000000000002']
+    assert [item['status'] for item in result['items']] == ['queued', 'queued']
+
+
+def test_enqueue_latest_videos_prefers_the_given_link_over_the_bound_one(monkeypatch):
+    other_sec = 'MS4wLjABAAAAother'
+    calls = _fake_client(monkeypatch, works=[])
+    monkeypatch.setattr(
+        TikTokDownloadService,
+        'enqueue_from_url',
+        lambda self, url, tab='post', count=18: {'queued': 0},
+    )
+    author_profiles.set_profile_url('demo', PROFILE_URL)
+
+    _service().enqueue_latest_videos(
+        'demo', profile_url=f'https://www.douyin.com/user/{other_sec}', local_names=[],
+    )
+
+    assert ('account', other_sec, 18, True, 1) in calls
+
+
+def test_enqueue_latest_videos_requires_a_bound_link(monkeypatch):
+    _fake_client(monkeypatch)
+
+    with pytest.raises(ValueError):
+        _service().enqueue_latest_videos('demo', local_names=[])
+
+
+def test_enqueue_latest_videos_reports_a_missing_sidecar():
+    service = TikTokDownloadService(_ConfigStore({'base_url': ''}), download_manager=None)
+
+    with pytest.raises(TikTokDownloaderError):
+        service.enqueue_latest_videos('demo', profile_url=PROFILE_URL)
+
+
+def test_bind_endpoint_saves_the_link(tmp_path):
+    _, client = _app(tmp_path)
+
+    response = client.post('/api/author/demo/bind', json={'profile_url': PROFILE_URL})
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body['ok'] is True
+    assert body['sec_uid'] == SEC_UID
+    assert author_profiles.load_profile('demo')['profile_url'] == PROFILE_URL
+
+
+def test_bind_endpoint_rejects_a_link_that_is_not_a_home_page(tmp_path):
+    _, client = _app(tmp_path)
+
+    response = client.post('/api/author/demo/bind', json={'profile_url': 'https://v.douyin.com/short/'})
+
+    assert response.status_code == 400
+    assert response.get_json()['ok'] is False
+    assert 'profile_url' not in author_profiles.load_profile('demo')
+
+
+def test_bind_endpoint_rejects_an_unknown_source(tmp_path):
+    _, client = _app(tmp_path)
+
+    response = client.post('/api/author/ghost/bind', json={'profile_url': PROFILE_URL})
+
+    assert response.status_code == 404
+
+
+def test_sync_route_binds_the_link_and_returns_the_profile(tmp_path, monkeypatch):
+    _fake_client(monkeypatch)
+    _, client = _app(tmp_path, config={'TIKTOK_DOWNLOADER': {'base_url': SIDECAR_URL}})
+
+    response = client.post('/api/author/demo/sync', json={'profile_url': PROFILE_URL})
+
+    assert response.status_code == 200
+    profile = response.get_json()['profile']
+    assert profile['douyin_id'] == 'demo0001'
+    assert profile['profile_url'] == PROFILE_URL
+    assert author_profiles.load_profile('demo')['profile_url'] == PROFILE_URL
+
+
+def test_update_videos_endpoint_reports_counts_and_binds_the_link(tmp_path, monkeypatch):
+    _fake_client(monkeypatch, works=[{'aweme_id': '7000000000000000002', 'desc': '全新作品'}])
+    monkeypatch.setattr(
+        TikTokDownloadService,
+        'enqueue_from_url',
+        lambda self, url, tab='post', count=18: {'queued': 1},
+    )
+    _, client = _app(tmp_path, config={'TIKTOK_DOWNLOADER': {'base_url': SIDECAR_URL}})
+
+    response = client.post('/api/author/demo/update-videos', json={'profile_url': PROFILE_URL})
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body['ok'] is True
+    assert body['queued'] == 1
+    assert body['skipped'] == 0
+    assert body['total'] == 1
+    assert author_profiles.load_profile('demo')['profile_url'] == PROFILE_URL
+
+
+def test_update_videos_endpoint_needs_a_bound_link(tmp_path):
+    _, client = _app(tmp_path, config={'TIKTOK_DOWNLOADER': {'base_url': SIDECAR_URL}})
+
+    response = client.post('/api/author/demo/update-videos', json={})
+
+    assert response.status_code == 400
+    assert response.get_json()['ok'] is False
+
+
+def test_update_videos_endpoint_rejects_a_missing_sidecar(tmp_path):
+    _, client = _app(tmp_path)
+
+    response = client.post('/api/author/demo/update-videos', json={'profile_url': PROFILE_URL})
+
+    assert response.status_code == 400
+    assert response.get_json()['ok'] is False
+
+
+def test_update_videos_endpoint_maps_sidecar_failures_to_502(tmp_path, monkeypatch):
+    def offline(self, source_id, *, profile_url='', count=18, local_names=None):
+        raise TikTokDownloaderError('sidecar offline')
+
+    monkeypatch.setattr(TikTokDownloadService, 'enqueue_latest_videos', offline)
+    _, client = _app(tmp_path, config={'TIKTOK_DOWNLOADER': {'base_url': SIDECAR_URL}})
+
+    response = client.post('/api/author/demo/update-videos', json={'profile_url': PROFILE_URL})
+
+    assert response.status_code == 502
+    assert response.get_json()['error'] == 'sidecar offline'
+
+
+def test_sources_endpoint_reports_the_bound_link_and_local_count(tmp_path):
+    _, client = _app(tmp_path, files=['2026-09-01 23.33.46-视频-demo_author-演示作品.mp4'])
+    author_profiles.set_profile_url('demo', PROFILE_URL)
+
+    body = client.get('/api/author/sources').get_json()
+
+    row = next(item for item in body['items'] if item['source_id'] == 'demo')
+    assert row['profile_url'] == PROFILE_URL
+    assert row['local_count'] == 1

@@ -1,4 +1,4 @@
-(() => {
+﻿(() => {
   const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
   const themeButtons = Array.from(document.querySelectorAll('[data-theme-preference]'));
   const refreshButton = document.getElementById('refresh-library');
@@ -555,11 +555,14 @@
     });
   });
 
-  // Author profile sync: paste one author home page link per line, or
-  // "source id|link" when the folder name carries no UID to match on.
-  const authorSyncInput = document.getElementById('author-sync-links');
+  // Author profiles: every media source keeps its own home-page link, so the
+  // profile sync and the "download what is missing" update are one click per
+  // row — and one click for the whole library at the top of the card.
   const authorSyncResult = document.getElementById('author-sync-result');
   const authorSyncList = document.getElementById('author-sync-source-list');
+  const authorSyncSummary = document.getElementById('author-sync-summary');
+  const authorSyncCount = document.getElementById('author-sync-count');
+  let authorRows = [];
 
   function authorSyncSummaryText(items) {
     const total = items.length;
@@ -569,46 +572,230 @@
       : T('settings.sync.author_summary_empty');
   }
 
+  function rowUrl(row, item) {
+    const input = row.querySelector('.author-sync-url');
+    return ((input && input.value) || '').trim() || (item && item.profile_url) || '';
+  }
+
+  function setRowStatus(row, text, isError) {
+    const status = row.querySelector('.author-sync-row-status');
+    if (!status) return;
+    status.textContent = text || '';
+    status.hidden = !text;
+    status.classList.toggle('is-error', Boolean(isError));
+  }
+
+  async function postAuthor(path, body) {
+    const response = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+    const payload = await response.json().catch(() => ({}));
+    return { status: response.status, payload };
+  }
+
+  function rowMeta(item) {
+    return [
+      item.douyin_id ? T('author.douyin_id', { id: item.douyin_id }) : '',
+      item.has_profile ? T('settings.sync.author_synced') : T('settings.sync.author_unsynced'),
+      Number(item.local_count || 0) ? T('settings.sync.author_local_count', { count: Number(item.local_count) }) : '',
+    ].filter(Boolean).join(' · ');
+  }
+
   function renderAuthorSources(items) {
-    document.getElementById('author-sync-summary').textContent = authorSyncSummaryText(items);
-    document.getElementById('author-sync-count').textContent = items.length ? authorSyncSummaryText(items) : '';
-    if (!items.length) {
+    authorRows = Array.isArray(items) ? items : [];
+    authorSyncSummary.textContent = authorSyncSummaryText(authorRows);
+    authorSyncCount.textContent = authorRows.length ? authorSyncSummaryText(authorRows) : '';
+    if (!authorRows.length) {
       authorSyncList.innerHTML = '<div class="settings-row-copy author-sync-empty"></div>';
       authorSyncList.querySelector('.author-sync-empty').textContent = T('settings.sync.author_sources_empty');
       return;
     }
-    authorSyncList.innerHTML = items.map(() => `
+    authorSyncList.innerHTML = authorRows.map(() => `
       <div class="author-sync-row">
         <img class="author-sync-avatar" src="" alt="">
-        <div class="settings-row-main">
+        <div class="author-sync-main">
           <div class="settings-row-title author-sync-name"></div>
           <div class="settings-row-copy author-sync-meta"></div>
+          <input class="author-sync-url" type="url" inputmode="url" spellcheck="false" autocomplete="off">
+          <div class="author-sync-row-actions">
+            <button class="settings-action author-sync-profile" type="button"></button>
+            <button class="settings-action author-sync-videos" type="button"></button>
+          </div>
+          <p class="author-sync-row-status" aria-live="polite" hidden></p>
         </div>
-        <button class="settings-action author-sync-fill" type="button"></button>
       </div>`).join('');
     authorSyncList.querySelectorAll('.author-sync-row').forEach((row, index) => {
-      const item = items[index];
+      const item = authorRows[index];
       const avatar = row.querySelector('.author-sync-avatar');
       avatar.src = item.avatar_url || '';
       avatar.alt = item.display_name || '';
       avatar.loading = 'lazy';
       row.querySelector('.author-sync-name').textContent = item.display_name || item.folder_name || item.source_id;
-      row.querySelector('.author-sync-meta').textContent = [
-        item.douyin_id ? T('author.douyin_id', { id: item.douyin_id }) : '',
-        item.has_profile ? T('settings.sync.author_synced') : T('settings.sync.author_unsynced'),
-      ].filter(Boolean).join(' · ');
-      const fill = row.querySelector('.author-sync-fill');
-      fill.textContent = T('settings.sync.author_sources_fill');
-      fill.addEventListener('click', () => {
-        const line = `${item.source_id}|`;
-        const current = authorSyncInput.value.trim();
-        authorSyncInput.value = current ? `${current}\n${line}` : line;
-        authorSyncInput.focus();
-        authorSyncInput.setSelectionRange(authorSyncInput.value.length, authorSyncInput.value.length);
+      row.querySelector('.author-sync-meta').textContent = rowMeta(item);
+      const input = row.querySelector('.author-sync-url');
+      input.value = item.profile_url || '';
+      input.placeholder = T('settings.sync.author_url_placeholder');
+      input.addEventListener('change', () => void bindAuthorUrl(item, row, input));
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          input.blur();
+        }
       });
+      const profileButton = row.querySelector('.author-sync-profile');
+      profileButton.textContent = T('settings.sync.author_sync_profile');
+      profileButton.addEventListener('click', () => void syncAuthorProfile(item, row, input));
+      const videosButton = row.querySelector('.author-sync-videos');
+      videosButton.textContent = T('settings.sync.author_update_videos');
+      videosButton.addEventListener('click', () => void updateAuthorVideos(item, row, input));
     });
     feather.replace();
   }
+
+  async function bindAuthorUrl(item, row, input) {
+    const url = (input.value || '').trim();
+    if (!url) return;
+    try {
+      const { status, payload } = await postAuthor(`/api/author/${encodeURIComponent(item.source_id)}/bind`, { profile_url: url });
+      if (status === 200 && payload.ok) {
+        item.profile_url = payload.profile_url || url;
+        setRowStatus(row, T('settings.sync.author_bound'), false);
+        return;
+      }
+      setRowStatus(row, payload.error || T('settings.sync.author_failed'), true);
+    } catch (_) {
+      setRowStatus(row, T('settings.sync.author_failed'), true);
+    }
+  }
+
+  async function syncAuthorProfile(item, row, input) {
+    const url = (input.value || '').trim() || item.profile_url || '';
+    if (!url) {
+      TikLocalUI.toast(T('settings.sync.author_need_url'), 'error');
+      input.focus();
+      return;
+    }
+    const button = row.querySelector('.author-sync-profile');
+    await runButton(button, T('settings.sync.author_working'), async () => {
+      const { status, payload } = await postAuthor(`/api/author/${encodeURIComponent(item.source_id)}/sync`, { profile_url: url });
+      if (status === 200 && payload.ok) {
+        const profile = payload.profile || {};
+        const name = profile.nickname || item.display_name || item.source_id;
+        setRowStatus(row, T('settings.sync.author_profile_done', { nickname: name }), false);
+        TikLocalUI.toast(T('settings.sync.author_profile_done', { nickname: name }));
+        await loadAuthorSources();
+        return;
+      }
+      setRowStatus(row, payload.error || T('settings.sync.author_failed'), true);
+      TikLocalUI.toast(payload.error || T('settings.sync.author_failed'), 'error');
+    }).catch(() => {});
+  }
+
+  async function updateAuthorVideos(item, row, input) {
+    const url = (input.value || '').trim() || item.profile_url || '';
+    if (!url) {
+      TikLocalUI.toast(T('settings.sync.author_need_url'), 'error');
+      input.focus();
+      return;
+    }
+    const button = row.querySelector('.author-sync-videos');
+    await runButton(button, T('settings.sync.author_videos_running'), async () => {
+      const { status, payload } = await postAuthor(`/api/author/${encodeURIComponent(item.source_id)}/update-videos`, { profile_url: url });
+      if (status === 200 && payload.ok) {
+        const queued = Number(payload.queued || 0);
+        const skipped = Number(payload.skipped || 0);
+        const text = queued
+          ? T('settings.sync.author_videos_done', { queued, skipped })
+          : T('settings.sync.author_videos_none', { skipped });
+        item.profile_url = url;
+        setRowStatus(row, text, false);
+        TikLocalUI.toast(text);
+        return;
+      }
+      setRowStatus(row, payload.error || T('settings.sync.author_failed'), true);
+      TikLocalUI.toast(payload.error || T('settings.sync.author_failed'), 'error');
+    }).catch(() => {});
+  }
+
+  function authorRowsWithUrl() {
+    const rows = Array.from(authorSyncList.querySelectorAll('.author-sync-row'));
+    return rows
+      .map((row, index) => ({ row, item: authorRows[index] }))
+      .filter(({ row, item }) => Boolean(item && rowUrl(row, item)));
+  }
+
+  async function syncAllAuthorProfiles() {
+    const entries = authorRowsWithUrl().map(({ row, item }) => ({ source_id: item.source_id, profile_url: rowUrl(row, item) }));
+    if (!entries.length) {
+      TikLocalUI.toast(T('settings.sync.author_need_url'), 'error');
+      return;
+    }
+    const button = document.getElementById('author-sync-all-profiles');
+    await runButton(button, T('settings.sync.author_busy'), async () => {
+      // A partial batch answers 502 while still listing the authors that synced,
+      // so read the body instead of letting requestJson drop it.
+      let payload = {};
+      try {
+        const response = await fetch('/api/author/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: entries }),
+        });
+        payload = await response.json();
+      } catch (_) {
+        payload = { ok: false, error: T('settings.sync.author_failed') };
+      }
+      renderAuthorSyncResult(payload.items || [], payload.synced);
+      if (!payload.ok) TikLocalUI.toast(payload.error || T('settings.sync.author_failed'), 'error');
+      await loadAuthorSources();
+    }).catch(() => {});
+  }
+
+  async function updateAllAuthorVideos() {
+    const targets = authorRowsWithUrl();
+    if (!targets.length) {
+      TikLocalUI.toast(T('settings.sync.author_need_url'), 'error');
+      return;
+    }
+    const button = document.getElementById('author-sync-all-videos');
+    await runButton(button, T('settings.sync.author_videos_running'), async () => {
+      let queued = 0;
+      let skipped = 0;
+      let failed = 0;
+      for (const { row, item } of targets) {
+        const url = rowUrl(row, item);
+        setRowStatus(row, T('settings.sync.author_working'), false);
+        try {
+          const { status, payload } = await postAuthor(`/api/author/${encodeURIComponent(item.source_id)}/update-videos`, { profile_url: url });
+          if (status === 200 && payload.ok) {
+            queued += Number(payload.queued || 0);
+            skipped += Number(payload.skipped || 0);
+            item.profile_url = url;
+            setRowStatus(row, Number(payload.queued || 0)
+              ? T('settings.sync.author_videos_done', { queued: Number(payload.queued), skipped: Number(payload.skipped || 0) })
+              : T('settings.sync.author_videos_none', { skipped: Number(payload.skipped || 0) }), false);
+          } else {
+            failed += 1;
+            setRowStatus(row, payload.error || T('settings.sync.author_failed'), true);
+          }
+        } catch (_) {
+          failed += 1;
+          setRowStatus(row, T('settings.sync.author_failed'), true);
+        }
+      }
+      const text = T('settings.sync.author_videos_summary', { queued, skipped });
+      TikLocalUI.toast(failed ? `${text} · ${T('settings.sync.author_done', { synced: targets.length - failed, failed })}` : text, failed ? 'error' : undefined);
+      await loadAuthorSources();
+    }).catch(() => {});
+  }
+
+  document.getElementById('author-sync-all-profiles').addEventListener('click', () => void syncAllAuthorProfiles());
+  document.getElementById('author-sync-all-videos').addEventListener('click', () => void updateAllAuthorVideos());
+  document.getElementById('author-sync-reload').addEventListener('click', (event) => {
+    runButton(event.currentTarget, T('settings.sync.author_busy'), loadAuthorSources).catch(() => {});
+  });
 
   function renderAuthorSyncResult(items, synced) {
     if (!items.length) {
@@ -642,39 +829,6 @@
       authorSyncList.querySelector('.author-sync-empty').textContent = T('settings.sync.author_sources_empty');
     }
   }
-
-  async function runAuthorSync() {
-    const text = authorSyncInput.value.trim();
-    if (!text) {
-      TikLocalUI.toast(T('settings.sync.author_need_input'), 'error');
-      authorSyncInput.focus();
-      return;
-    }
-    const button = document.getElementById('author-sync-run');
-    await runButton(button, T('settings.sync.author_busy'), async () => {
-      // A partial batch answers 502 while still listing the authors that synced,
-      // so read the body instead of letting requestJson drop it.
-      let payload = {};
-      try {
-        const response = await fetch('/api/author/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
-        });
-        payload = await response.json();
-      } catch (_) {
-        payload = { ok: false, error: T('settings.sync.author_failed') };
-      }
-      renderAuthorSyncResult(payload.items || [], payload.synced);
-      if (!payload.ok) TikLocalUI.toast(payload.error || T('settings.sync.author_failed'), 'error');
-      await loadAuthorSources();
-    });
-  }
-
-  document.getElementById('author-sync-run').addEventListener('click', () => void runAuthorSync());
-  document.getElementById('author-sync-reload').addEventListener('click', (event) => {
-    runButton(event.currentTarget, T('settings.sync.author_busy'), loadAuthorSources).catch(() => {});
-  });
 
   loadStats();
   loadRadioDevices();

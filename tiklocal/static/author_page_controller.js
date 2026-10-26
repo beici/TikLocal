@@ -23,7 +23,8 @@
 
   const syncButton = page.querySelector('[data-author-sync]');
   const picker = page.querySelector('[data-author-picker]');
-  if (!syncButton || !picker) return;
+  const sheet = page.querySelector('[data-author-sheet]');
+  if (!syncButton || !picker || !sheet) return;
 
   const alertBox = page.querySelector('[data-author-alert]');
   const form = picker.querySelector('[data-author-search-form]');
@@ -33,7 +34,30 @@
   const urlButton = picker.querySelector('[data-author-url-sync]');
   const list = picker.querySelector('[data-author-candidates]');
   const hint = picker.querySelector('[data-author-hint]');
+  const sheetProfile = sheet.querySelector('[data-author-sheet-profile]');
+  const sheetVideos = sheet.querySelector('[data-author-sheet-videos]');
+  const sheetHint = sheet.querySelector('[data-author-sheet-hint]');
+  const boundLine = sheet.querySelector('[data-author-bound]');
+  let boundUrl = page.dataset.authorBoundUrl || '';
   let busy = false;
+
+  function toast(message, type) {
+    if (window.TikLocalUI?.toast) {
+      window.TikLocalUI.toast(message, type);
+      return;
+    }
+    if (type === 'error') showPageError(message);
+  }
+
+  function renderBound() {
+    if (!boundLine) return;
+    const template = boundLine.dataset.boundTemplate || '{url}';
+    boundLine.textContent = boundUrl
+      ? template.replace('{url}', boundUrl)
+      : boundLine.dataset.unboundText || '';
+    page.dataset.authorBoundUrl = boundUrl;
+    if (urlInput && !urlInput.value.trim()) urlInput.value = boundUrl;
+  }
 
   function setBusy(value) {
     busy = value;
@@ -216,9 +240,53 @@
     }
   }
 
+  function openSheet() {
+    sheet.hidden = false;
+    document.body.classList.add('author-picker-open');
+    if (sheetHint) {
+      sheetHint.hidden = true;
+      sheetHint.textContent = '';
+    }
+    renderBound();
+    sheetProfile?.focus();
+  }
+
+  function closeSheet() {
+    sheet.hidden = true;
+    document.body.classList.remove('author-picker-open');
+  }
+
+  async function updateVideos() {
+    if (busy) return;
+    setBusy(true);
+    toast(T('author.sync.videos_busy'));
+    try {
+      // The bound link is read server-side, so the page only sends the source id.
+      const { status, payload } = await postJSON('update-videos', {});
+      if (status === 200 && payload.ok) {
+        const queued = Number(payload.queued || 0);
+        const skipped = Number(payload.skipped || 0);
+        toast(queued
+          ? T('author.sync.videos_done', { queued, skipped })
+          : T('author.sync.videos_none'));
+        return;
+      }
+      toast(payload.error || T('author.sync.videos_failed'), 'error');
+      if (status === 400) {
+        // No bound link yet: ask for it with the same dialog the sync uses.
+        openPicker();
+      }
+    } catch (error) {
+      toast(T('author.sync.videos_failed'), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function openPicker() {
     picker.hidden = false;
     document.body.classList.add('author-picker-open');
+    renderBound();
     const fallback = page.dataset.authorName || '';
     if (input && !input.value.trim() && fallback) input.value = fallback;
     // The home-page link is the exact route; the nickname search is the fallback.
@@ -236,7 +304,18 @@
     renderCandidates([]);
   }
 
-  syncButton.addEventListener('click', openPicker);
+  syncButton.addEventListener('click', openSheet);
+  sheet.querySelectorAll('[data-author-sheet-close]').forEach((element) => {
+    element.addEventListener('click', closeSheet);
+  });
+  sheetProfile?.addEventListener('click', () => {
+    closeSheet();
+    openPicker();
+  });
+  sheetVideos?.addEventListener('click', () => {
+    closeSheet();
+    void updateVideos();
+  });
   urlButton?.addEventListener('click', syncWithUrl);
   urlInput?.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
@@ -251,6 +330,9 @@
     element.addEventListener('click', closePicker);
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !picker.hidden) closePicker();
+    if (event.key !== 'Escape') return;
+    if (!sheet.hidden) closeSheet();
+    if (!picker.hidden) closePicker();
   });
+  renderBound();
 })();

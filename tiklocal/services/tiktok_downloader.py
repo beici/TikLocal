@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 from tiklocal.i18n import t
 from tiklocal.services import author_profiles
+from tiklocal.services.media_naming import post_title
 
 
 DEFAULT_TIKTOK_DOWNLOADER_CONFIG: dict[str, Any] = {
@@ -63,6 +64,7 @@ _TIKTOK_SHORT_LINK_PATTERN = re.compile(r"https?://v[a-z]*\.tiktok\.com/[A-Za-z0
 _LIVE_TYPE_TEXTS = {"实况", "LivePhoto"}
 _FILENAME_UNSAFE_PATTERN = re.compile(r'[\\/:*?"<>|\r\n\t\-]+')
 _WHITESPACE_PATTERN = re.compile(r"\s+")
+_WORD_ONLY_PATTERN = re.compile(r"[\W_]+")
 _MEDIA_FILENAME_SUFFIXES = {".mp4", ".webm", ".mov", ".m4v", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif"}
 
 
@@ -204,6 +206,72 @@ def parse_aweme_id(text: str) -> str:
     if _BARE_AWEME_ID_PATTERN.match(candidate):
         return candidate
     return ""
+
+
+def normalize_profile_url(text: str) -> str:
+    """Return ``text`` when it identifies an author home page, else ``''``.
+
+    A work link proves identity but is not a stable author address, so only a
+    link the profile resolver accepts is worth binding to a media source.
+    """
+    try:
+        parse_profile_sec_uid(text)
+    except ValueError:
+        return ""
+    return str(text or "").strip()
+
+
+def _title_key(text: str, limit: int = 60) -> str:
+    """Normalize a work description or a file-name title for comparison.
+
+    Exporters drop emoji and decorative symbols from file names while the API
+    description keeps them (``海岛日记🫧⊹⋰ 𓇼 #海陵岛#看海`` versus
+    ``海岛日记⊹⋰ 𓇼 #海陵岛#看海``), so only letters, digits and Han characters
+    survive here: they are what both sides agree on.
+    """
+    cleaned = sanitize_filename_component(text or "", limit=limit)
+    return _WORD_ONLY_PATTERN.sub("", cleaned).lower()
+
+
+def _local_work_keys(local_names: Any) -> tuple[set[str], set[str]]:
+    """Split local file names into comparable titles and numeric work ids.
+
+    Export file names look like ``2026-09-01 23.33.46-视频-博主-标题.mp4`` (the
+    title may be truncated to 60 chars) or carry the raw ``aweme_id`` instead of
+    a title, so both a normalized title set and an id set are needed to avoid
+    queueing a work that is already on disk.
+    """
+    titles: set[str] = set()
+    ids: set[str] = set()
+    for raw_name in local_names or ():
+        name = str(raw_name or "")
+        if not name:
+            continue
+        title = _title_key(post_title(name))
+        if title:
+            titles.add(title)
+        # The pattern is anchored, so feed it one token at a time: a work id sits
+        # between the ``-``/``.`` separators of an export file name.
+        for token in re.split(r"[^0-9]+", name):
+            if token and _BARE_AWEME_ID_PATTERN.match(token):
+                ids.add(token)
+    return titles, ids
+
+
+def _matches_local(desc: str, titles: set[str]) -> bool:
+    """True when ``desc`` (or its 60-char truncation) names a local work."""
+    key = _title_key(desc)
+    if not key:
+        return False
+    if key in titles:
+        return True
+    if len(key) < 4:
+        return False
+    # File names truncate the title, so compare the shared prefix instead.
+    return any(
+        len(title) >= 4 and (title.startswith(key) or key.startswith(title))
+        for title in titles
+    )
 
 
 class TikTokDownloaderClient:
@@ -686,20 +754,37 @@ class TikTokDownloadService:
         return author
 
     def store_author_block(
-        self, source_id: str, author: dict[str, Any], *, folder_uid: str = "",
+        self,
+        source_id: str,
+        author: dict[str, Any],
+        *,
+        folder_uid: str = "",
+        profile_url: str = "",
     ) -> dict[str, Any]:
         """Verify the author owns the source folder, then cache and describe it.
 
         The export folder is named ``UID<uid>_...`` and the author block carries
         the same numeric ``uid``, so a mismatch means the pasted link points at
-        a different account and nothing is written.
+        a different account and nothing is written. A verified link is bound to
+        the source, so later syncs and video updates need no paste at all.
         """
         block = author if isinstance(author, dict) else {}
         uid = str(block.get("uid") or "").strip()
         expected = str(folder_uid or "").strip()
         if expected and uid and uid != expected:
             raise TikTokDownloaderError(t('author.sync.error.uid_mismatch', uid=uid, folder=expected))
-        profile = author_profiles.store_author_from_payload(source_id, {"author": block})
+        # A work link (``/video/<id>``) proves identity but is not a home page, so
+        # the bound address comes from the author block itself: every detail
+        # payload carries ``sec_uid``, which rebuilds the canonical home page and
+        # spares the user from pasting a second link.
+        bound = normalize_profile_url(profile_url)
+        if not bound:
+            sec_uid = str(block.get("sec_uid") or "").strip()
+            if sec_uid:
+                bound = f"https://www.douyin.com/user/{sec_uid}"
+        profile = author_profiles.store_author_from_payload(
+            source_id, {"author": block}, profile_url=bound,
+        )
         return {
             "source_id": str(source_id or ""),
             "nickname": str(block.get("nickname") or profile.get("name") or ""),
@@ -709,6 +794,7 @@ class TikTokDownloadService:
             "follower_count": block.get("follower_count"),
             "total_favorited": block.get("total_favorited"),
             "avatar_saved": bool(profile.get("avatar_cached")),
+            "profile_url": str(profile.get("profile_url") or ""),
         }
 
     def sync_author_profile(
@@ -721,7 +807,9 @@ class TikTokDownloadService:
     ) -> dict[str, Any]:
         """Sync one author's nickname, Douyin id and avatar into the profile cache."""
         author = self.fetch_author_profile(profile_url=profile_url, aweme_id=aweme_id)
-        return self.store_author_block(source_id, author, folder_uid=folder_uid)
+        return self.store_author_block(
+            source_id, author, folder_uid=folder_uid, profile_url=profile_url,
+        )
 
     def sync_author_profiles(
         self,
@@ -760,7 +848,9 @@ class TikTokDownloadService:
                         source_id, profile_url=profile_url, aweme_id=aweme_id, folder_uid=folder_uid,
                     )
                 else:
-                    result = self.store_author_block(source_id, author, folder_uid=folder_uid)
+                    result = self.store_author_block(
+                        source_id, author, folder_uid=folder_uid, profile_url=profile_url,
+                    )
             except (TikTokDownloaderError, ValueError) as exc:
                 results.append({"ok": False, "source_id": source_id, "error": str(exc)})
             except Exception as exc:  # a broken sidecar reply must not kill the batch
@@ -772,6 +862,131 @@ class TikTokDownloadService:
             else:
                 results.append({"ok": True, **result})
         return results
+
+    def _pending_work_ids(self) -> set[str]:
+        """Return aweme ids of download jobs that are still waiting or running.
+
+        A work already queued by an earlier click must not be queued twice, even
+        before its file shows up on disk.
+        """
+        ids: set[str] = set()
+        manager = getattr(self, "_download_manager", None)
+        list_jobs = getattr(manager, "list_jobs", None)
+        if not callable(list_jobs):
+            return ids
+        try:
+            jobs = list_jobs(limit=200) or ()
+        except Exception:
+            return ids
+        try:
+            from tiklocal.services.downloader import TERMINAL_JOB_STATUS
+        except Exception:  # pragma: no cover - defensive only
+            TERMINAL_JOB_STATUS = {"success", "failed", "canceled"}
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            if str(job.get("status") or "") in TERMINAL_JOB_STATUS:
+                continue
+            url = str(job.get("url") or "")
+            match = _AWEME_ID_PATTERN.search(url)
+            if match:
+                ids.add(match.group(1))
+            elif _BARE_AWEME_ID_PATTERN.match(url.strip()):
+                ids.add(url.strip())
+        return ids
+
+    def enqueue_latest_videos(
+        self,
+        source_id: str,
+        *,
+        profile_url: str = "",
+        count: int = 18,
+        local_names: Any = None,
+    ) -> dict[str, Any]:
+        """Queue downloads for the author's works that are not on disk yet.
+
+        The account timeline lists every work the author published; the export
+        folder only holds the ones already downloaded. A work counts as local
+        when its ``aweme_id`` appears in a file name or when the normalized
+        description matches a file-name title (file names truncate at 60 chars,
+        hence the prefix comparison), so a repeated call never re-queues a work.
+        """
+        config = self.get_config()
+        if not config["base_url"]:
+            raise TikTokDownloaderError(t('author.sync.error.unconfigured'))
+        bound = str(profile_url or "").strip()
+        if not bound:
+            bound = str(author_profiles.load_profile(source_id).get("profile_url") or "").strip()
+        if not bound:
+            raise ValueError(t('author.sync.error.no_profile_url'))
+        sec_user_id = parse_profile_sec_uid(bound)
+        limit = max(5, min(int(count or 18), 100))
+        timeline_client = self._client(
+            timeout_sec=max(int(config["timeout_sec"] or 0), AUTHOR_ACCOUNT_TIMEOUT_SEC),
+        )
+        try:
+            works = timeline_client.fetch_account(
+                sec_user_id, tab="post", count=limit, platform="douyin", source=True, pages=1,
+            )
+        except TikTokDownloaderError as exc:
+            raise TikTokDownloaderError(t('author.sync.error.profile_slow')) from exc
+
+        titles, known_ids = _local_work_keys(local_names)
+        pending_ids = self._pending_work_ids()
+        queued = 0
+        skipped = 0
+        failed = 0
+        items: list[dict[str, Any]] = []
+        for raw in works or ():
+            if not isinstance(raw, dict):
+                continue
+            aweme_id = str(raw.get("aweme_id") or "").strip()
+            desc = str(raw.get("desc") or "").strip()
+            if aweme_id and aweme_id in pending_ids:
+                skipped += 1
+                items.append({"aweme_id": aweme_id, "desc": desc, "status": "queued"})
+                continue
+            if (aweme_id and aweme_id in known_ids) or _matches_local(desc, titles):
+                skipped += 1
+                items.append({"aweme_id": aweme_id, "desc": desc, "status": "local"})
+                continue
+            if not aweme_id:
+                failed += 1
+                items.append({
+                    "aweme_id": "",
+                    "desc": desc,
+                    "status": "failed",
+                    "error": t('author.sync.error.no_author'),
+                })
+                continue
+            try:
+                job = self.enqueue_from_url(f"https://www.douyin.com/video/{aweme_id}", "post", 1)
+            except (TikTokDownloaderError, ValueError) as exc:
+                failed += 1
+                items.append({
+                    "aweme_id": aweme_id, "desc": desc, "status": "failed", "error": str(exc),
+                })
+                continue
+            if isinstance(job, dict) and job.get("queued"):
+                queued += 1
+                known_ids.add(aweme_id)
+                items.append({"aweme_id": aweme_id, "desc": desc, "status": "queued"})
+            else:
+                failed += 1
+                items.append({
+                    "aweme_id": aweme_id,
+                    "desc": desc,
+                    "status": "failed",
+                    "error": t('author.sync.error.no_author'),
+                })
+        return {
+            "source_id": str(source_id or ""),
+            "queued": queued,
+            "skipped": skipped,
+            "failed": failed,
+            "total": len(works or ()),
+            "items": items,
+        }
 
     def enqueue_from_url(self, url: str, tab: str = "post", count: int = 18) -> dict[str, Any]:
         """Resolve a link into works and enqueue one direct-download job per work."""

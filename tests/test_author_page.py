@@ -27,6 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTANCE_ROOT = REPO_ROOT / '.tmp-inst-author'
 BLOGGER_FOLDER = 'UID100000000000001_示例博主_发布作品'
 SIDECAR_URL = 'http://127.0.0.1:9/'
+PROFILE_URL = 'https://www.douyin.com/user/MS4wLjABAAAAfake'
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -391,3 +392,44 @@ def test_refresh_accepts_a_picked_candidate(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.get_json()['profile']['douyin_id'] == 'demo0001'
     assert seen == {'keyword': 'puff', 'unique_id': 'demo0001', 'uid': '7001'}
+
+
+def test_sync_menu_offers_the_bound_link_instead_of_asking_for_it(tmp_path):
+    from tiklocal.services import author_profiles
+
+    author_profiles.set_profile_url('blogger', PROFILE_URL)
+    _, client = _blogger_app(
+        tmp_path,
+        ['2024-05-01 10.00.00-视频-示例博主-一.mp4'],
+        {'TIKTOK_DOWNLOADER': {'base_url': SIDECAR_URL}},
+    )
+
+    html = _html(client)
+
+    assert f'data-author-bound-url="{PROFILE_URL}"' in html
+    assert 'data-author-sheet-profile' in html
+    assert 'data-author-sheet-videos' in html
+
+
+def test_sync_route_behaves_like_refresh(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_sync(self, source_id, *, profile_url='', aweme_id='', folder_uid=''):
+        seen.append((source_id, profile_url))
+        return {'source_id': source_id}
+
+    monkeypatch.setattr(TikTokDownloadService, 'sync_author_profile', fake_sync)
+    _, client = _blogger_app(
+        tmp_path,
+        ['2024-05-01 10.00.00-视频-示例博主-一.mp4'],
+        {'TIKTOK_DOWNLOADER': {'base_url': SIDECAR_URL}},
+    )
+
+    synced = client.post('/api/author/blogger/sync', json={'profile_url': PROFILE_URL})
+    refreshed = client.post('/api/author/blogger/refresh', json={'profile_url': PROFILE_URL})
+
+    assert synced.status_code == 200
+    assert refreshed.status_code == 200
+    # Both names reach the same link-based sync and answer with the cached profile.
+    assert seen == [('blogger', PROFILE_URL), ('blogger', PROFILE_URL)]
+    assert synced.get_json()['profile']['douyin_id'] == '100000000000001'

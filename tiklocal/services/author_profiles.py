@@ -82,6 +82,26 @@ def save_profile(source_id: str, values: dict) -> dict:
     return profile
 
 
+def set_profile_url(source_id: str, url: str) -> dict:
+    """Remember the author home-page link that was proven to belong to ``source_id``.
+
+    Binding the link once is what makes the next sync a single click: the sync
+    flow can start from the stored ``sec_uid`` instead of asking for a paste.
+    An empty value clears the binding.
+    """
+    cleaned = str(url or '').strip()
+    if not cleaned:
+        profile = load_profile(source_id)
+        profile.pop('profile_url', None)
+        profile['updated_at'] = int(time.time())
+        path = profile_path(source_id)
+        tmp = path.with_suffix('.json.tmp')
+        tmp.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding='utf-8')
+        tmp.replace(path)
+        return profile
+    return save_profile(source_id, {'profile_url': cleaned})
+
+
 def clear_profile(source_id: str) -> None:
     for path in (profile_path(source_id), avatar_path(source_id)):
         try:
@@ -177,9 +197,14 @@ def download_avatar(source_id: str, url: str, timeout: float = 10.0) -> bool:
     return True
 
 
-def store_author_from_payload(source_id: str, payload: Any, *, fetch_avatar: bool = True) -> dict:
+def store_author_from_payload(
+    source_id: str, payload: Any, *, fetch_avatar: bool = True, profile_url: str = '',
+) -> dict:
     """Persist whatever the payload says about the author of ``source_id``."""
     fields = extract_author_fields(payload)
+    bound = str(profile_url or '').strip()
+    if bound:
+        fields['profile_url'] = bound
     if not fields:
         return load_profile(source_id)
     profile = save_profile(source_id, fields)
@@ -203,5 +228,6 @@ def resolve_profile(source_id: str, *, folder_name: str = '') -> dict:
         'total_favorited': profile.get('total_favorited'),
         'aweme_count': profile.get('aweme_count'),
         'avatar_url': str(profile.get('avatar_url') or ''),
+        'profile_url': str(profile.get('profile_url') or ''),
         'has_avatar': avatar_path(source_id).is_file(),
     }

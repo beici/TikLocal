@@ -4,7 +4,7 @@
 
 {% block content %}
 <main class="author-page" data-author-page data-source-id="{{ source_id }}"
-      data-author-name="{{ search_default }}">
+      data-author-name="{{ search_default }}" data-author-bound-url="{{ profile_url }}">
   <header class="author-topbar">
     <button type="button" class="author-back" data-author-back aria-label="{{ t('author.back') }}">
       <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
@@ -23,7 +23,8 @@
     <div class="author-name-row">
       <h1 class="author-name">{{ author_name }}</h1>
       {% if refresh_enabled %}
-      <button type="button" class="author-sync" data-author-sync>{{ t('author.action.refresh') }}</button>
+      <button type="button" class="author-sync" data-author-sync aria-haspopup="dialog"
+              aria-controls="author-sheet">{{ t('author.action.sync') }}</button>
       {% endif %}
     </div>
     {% if douyin_id %}
@@ -73,6 +74,28 @@
   {% endif %}
 
   {% if refresh_enabled %}
+  <div class="author-sheet" data-author-sheet hidden>
+    <div class="author-sheet-backdrop" data-author-sheet-close></div>
+    <section class="author-sheet-card" role="dialog" aria-modal="true"
+             aria-labelledby="author-sheet-title">
+      <h2 class="author-sheet-title" id="author-sheet-title">{{ t('author.sync.menu_title') }}</h2>
+      <p class="author-sheet-copy">{{ t('author.sync.menu_copy') }}</p>
+      <p class="author-sheet-bound" data-author-bound
+         data-bound-template="{{ t('author.sync.bound', url='{url}') }}"
+         data-unbound-text="{{ t('author.sync.unbound') }}">{% if profile_url %}{{ t('author.sync.bound', url=profile_url) }}{% else %}{{ t('author.sync.unbound') }}{% endif %}</p>
+      <button type="button" class="author-sheet-action" data-author-sheet-profile>
+        <span class="author-sheet-action-title">{{ t('author.sync.profile_action') }}</span>
+        <span class="author-sheet-action-copy">{{ t('author.sync.profile_copy') }}</span>
+      </button>
+      <button type="button" class="author-sheet-action" data-author-sheet-videos>
+        <span class="author-sheet-action-title">{{ t('author.sync.videos_action') }}</span>
+        <span class="author-sheet-action-copy">{{ t('author.sync.videos_copy') }}</span>
+      </button>
+      <p class="author-sheet-hint" data-author-sheet-hint hidden></p>
+      <button type="button" class="author-sheet-cancel" data-author-sheet-close>{{ t('author.sync.cancel') }}</button>
+    </section>
+  </div>
+
   <div class="author-picker" data-author-picker hidden>
     <div class="author-picker-backdrop" data-author-picker-close></div>
     <section class="author-picker-card" role="dialog" aria-modal="true"
@@ -81,7 +104,8 @@
       <div class="author-picker-url">
         <label class="author-picker-label" for="author-profile-url">{{ t('author.sync.url_label') }}</label>
         <input class="author-picker-input" id="author-profile-url" type="url" inputmode="url"
-               data-author-profile-url placeholder="{{ t('author.sync.url_placeholder') }}"
+               data-author-profile-url value="{{ profile_url }}"
+               placeholder="{{ t('author.sync.url_placeholder') }}"
                aria-label="{{ t('author.sync.url_label') }}" autocomplete="off" spellcheck="false">
         <p class="author-picker-copy">{{ t('author.sync.url_copy') }}</p>
         <button class="author-picker-action" type="button" data-author-url-sync>{{ t('author.sync.url_run') }}</button>
