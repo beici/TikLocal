@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+from tiklocal.i18n import t
 from tiklocal.services.download_sources import (
     DownloadSourceStore,
     normalize_file_rel,
@@ -100,7 +101,7 @@ def _merge_download_config(base: dict[str, Any], override: dict[str, Any] | None
 
 def validate_download_config(payload: Any, *, partial: bool = False) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(payload, dict):
-        return None, "Configuration must be a JSON object."
+        return None, t('download.error.config_object')
 
     cleaned: dict[str, Any] = {}
 
@@ -117,7 +118,7 @@ def validate_download_config(payload: Any, *, partial: bool = False) -> tuple[di
             return None
         value = payload[field]
         if not isinstance(value, bool):
-            return f"{field} must be a boolean."
+            return t('download.error.field_boolean', field=field)
         cleaned[field] = value
         return None
 
@@ -130,27 +131,27 @@ def validate_download_config(payload: Any, *, partial: bool = False) -> tuple[di
         value = payload.get("max_concurrent", defaults["max_concurrent"])
         max_concurrent = _to_int(value)
         if max_concurrent is None:
-            return None, "max_concurrent must be an integer."
+            return None, t('download.error.max_concurrent_integer')
         if max_concurrent < 0 or max_concurrent > DOWNLOAD_MAX_CONCURRENT_LIMIT:
-            return None, f"max_concurrent must be between 0 and {DOWNLOAD_MAX_CONCURRENT_LIMIT}."
+            return None, t('download.error.max_concurrent_range', limit=DOWNLOAD_MAX_CONCURRENT_LIMIT)
         cleaned["max_concurrent"] = max_concurrent
 
     if "cookie_dir" in payload or not partial:
         cookie_dir = str(payload.get("cookie_dir", defaults["cookie_dir"])).strip()
         if not cookie_dir:
-            return None, "cookie_dir cannot be empty."
+            return None, t('download.error.cookie_dir_empty')
         cleaned["cookie_dir"] = cookie_dir
 
     if "cookie_match_mode" in payload or not partial:
         mode = str(payload.get("cookie_match_mode", defaults["cookie_match_mode"])).strip()
         if mode != COOKIE_MATCH_MODE:
-            return None, f"cookie_match_mode only supports {COOKIE_MATCH_MODE}."
+            return None, t('download.error.cookie_match_mode', mode=COOKIE_MATCH_MODE)
         cleaned["cookie_match_mode"] = mode
 
     if "gallery_archive_file" in payload or not partial:
         archive_file = str(payload.get("gallery_archive_file", defaults["gallery_archive_file"])).strip()
         if not archive_file:
-            return None, "gallery_archive_file cannot be empty."
+            return None, t('download.error.gallery_archive_empty')
         cleaned["gallery_archive_file"] = archive_file
 
     if "tiktok_downloader" in payload or not partial:
@@ -166,25 +167,25 @@ def validate_download_config(payload: Any, *, partial: bool = False) -> tuple[di
 
 def validate_download_url(payload: Any) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(payload, dict):
-        return None, "Request body must be a JSON object."
+        return None, t('download.error.body_object')
 
     url = str(payload.get("url", "")).strip()
     if not url:
-        return None, "url cannot be empty."
+        return None, t('download.error.url_empty')
     if len(url) > DOWNLOAD_MAX_URL_LENGTH:
-        return None, f"url cannot exceed {DOWNLOAD_MAX_URL_LENGTH} characters."
+        return None, t('download.error.url_too_long', limit=DOWNLOAD_MAX_URL_LENGTH)
 
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return None, "Only HTTP and HTTPS URLs are supported."
+        return None, t('download.error.scheme_invalid')
 
     save_mode = str(payload.get("save_mode", "root")).strip() or "root"
     if save_mode != "root":
-        return None, "Downloads can only be saved to the media source root."
+        return None, t('download.error.save_mode_root')
 
     engine = str(payload.get("engine", DEFAULT_DOWNLOAD_ENGINE)).strip().lower() or DEFAULT_DOWNLOAD_ENGINE
     if engine not in USER_DOWNLOAD_ENGINES:
-        return None, "engine must be yt-dlp or gallery-dl."
+        return None, t('download.error.engine_invalid')
 
     cookie_mode = str(payload.get("cookie_mode", "")).strip().lower()
     cookie_file_raw = payload.get("cookie_file")
@@ -196,13 +197,13 @@ def validate_download_url(payload: Any) -> tuple[dict[str, Any] | None, str | No
         cookie_mode = "auto"
 
     if cookie_mode not in {"auto", "none", "manual"}:
-        return None, "cookie_mode must be auto, none, or manual."
+        return None, t('download.error.cookie_mode_invalid')
 
     if cookie_mode == "manual":
         if not cookie_file:
-            return None, "Manual cookie mode requires cookie_file."
+            return None, t('download.error.cookie_file_required')
         if not is_safe_cookie_filename(cookie_file):
-            return None, "cookie_file must be a filename, not a path."
+            return None, t('download.error.cookie_file_path')
     else:
         cookie_file = ""
 
@@ -376,7 +377,7 @@ class DownloadManager:
             for worker in workers:
                 worker.join(max(0, deadline - time.monotonic()))
             if any(worker.is_alive() for worker in workers):
-                raise RuntimeError('Download jobs did not stop in time; worker threads are still shutting down.')
+                raise RuntimeError(t('download.error.stop_timeout'))
 
     def probe_dependencies(self) -> dict[str, Any]:
         yt_dlp_path, yt_dlp_version = probe_binary("yt-dlp")
@@ -447,9 +448,9 @@ class DownloadManager:
     ) -> dict[str, Any]:
         engine = (engine or DEFAULT_DOWNLOAD_ENGINE).strip().lower()
         if engine not in DOWNLOAD_ENGINES:
-            raise RuntimeError("Unsupported download engine.")
+            raise RuntimeError(t('download.error.engine_unsupported'))
         if payload is not None and not isinstance(payload, dict):
-            raise RuntimeError("Download payload must be a JSON object.")
+            raise RuntimeError(t('download.error.payload_object'))
 
         chosen_file, chosen_mode, cookie_error = self._resolve_cookie_choice(
             url=url,
@@ -463,7 +464,7 @@ class DownloadManager:
             if not self._started or self._closed:
                 raise RuntimeError('The download manager has not started or is closed.')
             if not self._config.get("enabled", True):
-                raise RuntimeError("Downloads are disabled.")
+                raise RuntimeError(t('download.error.disabled'))
 
             job_id = uuid.uuid4().hex[:12]
             now = utc_now_iso()
@@ -503,23 +504,23 @@ class DownloadManager:
     def upload_cookie_file(self, filename: str, content: bytes, *, replace: bool = False) -> dict[str, Any]:
         safe_name = str(filename or "").strip()
         if not is_safe_cookie_filename(safe_name):
-            raise ValueError("Invalid filename. Only .txt and .cookies files are supported.")
+            raise ValueError(t('download.error.cookie_name_invalid'))
         if not isinstance(content, (bytes, bytearray)):
-            raise ValueError("Invalid file content format.")
+            raise ValueError(t('download.error.cookie_content_invalid'))
         if len(content) == 0:
-            raise ValueError("File content cannot be empty.")
+            raise ValueError(t('download.error.cookie_empty'))
         if len(content) > COOKIE_MAX_UPLOAD_BYTES:
-            raise ValueError(f"File cannot exceed {COOKIE_MAX_UPLOAD_BYTES // 1024} KB.")
+            raise ValueError(t('download.error.file_too_large', kb=COOKIE_MAX_UPLOAD_BYTES // 1024))
 
         cookie_dir = self._cookie_dir_path()
         target = (cookie_dir / safe_name).resolve()
         try:
             target.relative_to(cookie_dir.resolve())
         except ValueError as exc:
-            raise ValueError("Invalid file path.") from exc
+            raise ValueError(t('download.error.path_invalid')) from exc
 
         if target.exists() and not replace:
-            raise ValueError(f"File already exists: {safe_name}")
+            raise ValueError(t('download.error.cookie_exists', name=safe_name))
 
         tmp_path = target.with_suffix(target.suffix + ".tmp")
         with tmp_path.open("wb") as f:
@@ -542,7 +543,7 @@ class DownloadManager:
             if not job:
                 return False, "Job not found"
             if job.get("status") not in TERMINAL_JOB_STATUS:
-                return False, "A running job cannot be deleted"
+                return False, t('download.error.delete_running')
 
             self._jobs.pop(job_id, None)
             self._cancel_events.pop(job_id, None)
@@ -578,13 +579,13 @@ class DownloadManager:
             if not job:
                 return None, "Job not found"
             if job.get("status") not in {"failed", "canceled"}:
-                return None, "Only failed or canceled jobs can be retried"
+                return None, t('download.error.retry_state')
             index_only = job.get('failure_stage') == 'index'
             if index_only:
                 for uri in job['output_files_rel']:
                     path = self._resolve_media_file_path(uri)
                     if path is None or not path.is_file():
-                        return None, 'The downloaded file no longer exists and cannot be registered. Create a new download job.'
+                        return None, t('download.error.register_missing')
                 job.update(status='queued', error_message='', finished_at=None, cancel_requested=False)
                 self._cancel_events[job_id] = threading.Event()
                 self._persist_locked()
@@ -1249,14 +1250,14 @@ class DownloadManager:
         cookie_dir = self._expand_cookie_dir(cookie_dir_text)
         if not files:
             if cookie_mode == "manual":
-                return "", "none", f"Cookie directory or file not found: {cookie_dir}"
+                return "", "none", t('download.error.cookie_dir_missing', path=cookie_dir)
             return "", "none", None
 
         if cookie_mode == "manual":
             if not cookie_file:
-                return "", "none", "Manual mode requires cookie_file."
+                return "", "none", t('download.error.cookie_file_required_manual')
             if cookie_file not in files:
-                return "", "none", f"Cookie file not found: {cookie_file}"
+                return "", "none", t('download.error.cookie_file_missing', name=cookie_file)
             return cookie_file, "manual", None
 
         parsed = urlparse(url)
@@ -1286,12 +1287,12 @@ class DownloadManager:
         info = self.list_cookie_files()
         cookie_dir = Path(info["cookie_dir"]).expanduser().resolve()
         if cookie_file not in info.get("files", []):
-            return None, f"Cookie file not found: {cookie_file}"
+            return None, t('download.error.cookie_file_missing', name=cookie_file)
         path = (cookie_dir / cookie_file).resolve()
         try:
             path.relative_to(cookie_dir)
         except ValueError:
-            return None, "Invalid cookie file path."
+            return None, t('download.error.cookie_path_invalid')
         if not path.exists() or not path.is_file():
-            return None, f"Cookie file is unavailable: {cookie_file}"
+            return None, t('download.error.cookie_file_unavailable', name=cookie_file)
         return path, None

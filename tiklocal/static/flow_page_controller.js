@@ -1,4 +1,5 @@
   (async () => {
+    const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
     document.body.classList.add('immersive');
     // Douyin-style chrome follows the settings toggle; the class gates flow.css.
     const douyinModeOn = window.localStorage.getItem('douyin_mode') === '1';
@@ -208,7 +209,7 @@
     function scheduleFlowLoadingStatus() {
       clearTimeout(flowLoadingTimer);
       flowLoadingTimer = setTimeout(() => {
-        showFlowStatus('loading', 'Preparing your media');
+        showFlowStatus('loading', T('flow.state.preparing'));
       }, 250);
     }
 
@@ -303,8 +304,8 @@
         if (favoriteBtn.dataset.value !== name) return;
         favoriteBtn.classList.toggle('is-active', !!value);
         favoriteBtn.setAttribute('aria-pressed', String(!!value));
-        favoriteBtn.setAttribute('aria-label', value ? 'Remove from favorites' : 'Add to favorites');
-        favoriteBtn.title = value ? 'Remove from favorites' : 'Add to favorites';
+        favoriteBtn.setAttribute('aria-label', value ? T('flow.favorite.remove') : T('flow.favorite.add'));
+        favoriteBtn.title = value ? T('flow.favorite.remove') : T('flow.favorite.add');
       },
       onCaptionClear: () => {
         clearCaption();
@@ -320,7 +321,7 @@
           flashCaptionError();
         }
       },
-      confirmCaptionReplace: () => TikLocalUI.confirm({ title: 'Replace the existing title?', message: 'The current title and tags will be regenerated.', confirmLabel: 'Replace' }),
+      confirmCaptionReplace: () => TikLocalUI.confirm({ title: T('flow.caption.replace_title'), message: T('flow.caption.replace_copy'), confirmLabel: T('flow.caption.replace_action') }),
     });
 
 
@@ -918,7 +919,7 @@
             media.appendChild(video);
             const badge = document.createElement('div');
             badge.className = 'image-group-live-badge';
-            badge.textContent = '实况';
+            badge.textContent = T('flow.badge.live');
             media.appendChild(badge);
             media._liveVideo = video;
             media._loadImage = cover;
@@ -1089,10 +1090,10 @@
         video.dataset.name = item.name;
         const badge = document.createElement('div');
         badge.className = 'feed-live-badge';
-        badge.textContent = '实况';
+        badge.textContent = T('flow.badge.live');
         const hint = document.createElement('div');
         hint.className = 'feed-live-hint';
-        hint.textContent = '长按开关声音';
+        hint.textContent = T('flow.hint.long_press_sound');
         wrap.appendChild(cover);
         wrap.appendChild(video);
         wrap.appendChild(badge);
@@ -1242,8 +1243,8 @@
         if (feedItems.length) {
           hideFlowStatus();
         } else if (!flowSession.hasMore()) {
-          if (feedMode) showFlowStatus('empty', 'Nothing forgotten yet', 'Media older than six months that you have not seen for as long shows up here.');
-          else showFlowStatus('empty', 'There is nothing to browse yet', 'Add media and refresh the index to see it here.');
+          if (feedMode) showFlowStatus('empty', T('flow.state.forgotten_empty_title'), T('flow.state.forgotten_empty_detail'));
+          else showFlowStatus('empty', T('flow.state.empty_title'), T('flow.state.empty_detail'));
         }
         return result;
       } catch (error) {
@@ -1251,7 +1252,7 @@
         flowLoadingTimer = null;
         const reachedEnd = getCurrentIndex() >= feedItems.length - 1;
         if (isInitialLoad || reachedEnd) {
-          showFlowStatus('error', 'Your media could not be loaded', 'Try again or browse the existing media in your library.');
+          showFlowStatus('error', T('flow.state.error_title'), T('flow.state.error_detail'));
         }
         return null;
       }
@@ -1268,15 +1269,15 @@
         return;
       }
       if (quietSkips >= maxQuietSkips) {
-        showFlowStatus('media-error', 'This media cannot be opened', 'The file may have moved, be offline, or use an unsupported format.');
+        showFlowStatus('media-error', T('flow.state.media_error_title'), T('flow.state.media_error_detail'));
         return;
       }
       if (item.type === 'image_group') {
-        showHud("Can't show this image", 1600);
+        showHud(T('flow.hud.cant_show_image'), 1600);
         return;
       }
       quietSkips += 1;
-      showHud(`Can't play this ${item.type === 'video' ? 'video' : 'image'} here · skipped`, 1600);
+      showHud(T('flow.hud.cant_play', { kind: item.type === 'video' ? T('flow.kind.video') : T('flow.kind.image') }), 1600);
       skipTimer = setTimeout(() => {
         skipTimer = null;
         if (currentItem() !== item) return;
@@ -1308,7 +1309,7 @@
 
     async function retryFlowLoad() {
       flowSession.setHasMore(true);
-      showFlowStatus('loading', 'Reloading');
+      showFlowStatus('loading', T('flow.state.reloading'));
       const result = await loadFeed();
       if (result && feedItems.length && getCurrentIndex() < 0) {
         await showItem(0);
@@ -1392,7 +1393,7 @@
           // Autoplay with sound can be refused; fall back to a muted playback.
           video.muted = true;
           video.play().then(() => {
-            showHud('已静音自动播放 · 长按开启声音', 1600);
+            showHud(T('flow.hud.autoplay_muted'), 1600);
           }).catch(() => stopLivePlayback());
         });
       }
@@ -1417,7 +1418,7 @@
         if (item?.type === 'live' && item.el) item.el.classList.add('live-playing');
         playLiveVideo(video);
       }
-      showHud(video.muted ? '实况已静音' : '实况声音已开启', 900);
+      showHud(video.muted ? T('flow.hud.live_muted') : T('flow.hud.live_sound_on'), 900);
       navigator.vibrate?.(10);
       return true;
     }
@@ -1709,7 +1710,7 @@
         }]);
       } catch (error) {
         if (favoriteBtn.dataset.value === name) {
-          favoriteBtn.title = 'Favorite was not saved. Please try again.';
+          favoriteBtn.title = T('flow.favorite.save_failed');
           favoriteBtn.setAttribute('aria-label', favoriteBtn.title);
         }
       } finally {

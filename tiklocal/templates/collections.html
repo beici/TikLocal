@@ -12,8 +12,8 @@
   <section id="collections-state" class="collections-state" aria-live="polite">
     <div>
       <div class="collections-state-icon"><i data-feather="loader"></i></div>
-      <div id="collections-state-title" class="collections-state-title">Loading collections</div>
-      <p id="collections-state-copy" class="collections-state-copy">Your organization stays on this device.</p>
+      <div id="collections-state-title" class="collections-state-title">{{ t('saved.state.loading_title') }}</div>
+      <p id="collections-state-copy" class="collections-state-copy">{{ t('saved.state.loading_copy') }}</p>
       <button id="collections-state-action" class="ghost-chip collections-state-action" type="button" hidden></button>
     </div>
   </section>
@@ -21,23 +21,23 @@
 
 <div id="create-modal" class="modal-mask" aria-hidden="true">
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="create-modal-title">
-    <h2 id="create-modal-title" class="modal-title">New Collection</h2>
-    <input id="create-name" class="field mb-2" type="text" maxlength="80" placeholder="For example: Inspiration" />
-    <textarea id="create-description" class="field" rows="3" maxlength="280" placeholder="Optional description"></textarea>
+    <h2 id="create-modal-title" class="modal-title">{{ t('saved.new_collection') }}</h2>
+    <input id="create-name" class="field mb-2" type="text" maxlength="80" placeholder="{{ t('saved.create.name_placeholder') }}" />
+    <textarea id="create-description" class="field" rows="3" maxlength="280" placeholder="{{ t('saved.create.description_placeholder') }}"></textarea>
     <div class="modal-actions">
-      <button id="cancel-create" class="ghost-chip" type="button">Cancel</button>
-      <button id="submit-create" class="ghost-chip modal-primary" type="button">Create</button>
+      <button id="cancel-create" class="ghost-chip" type="button">{{ t('common.cancel') }}</button>
+      <button id="submit-create" class="ghost-chip modal-primary" type="button">{{ t('saved.create.submit') }}</button>
     </div>
   </div>
 </div>
 
 <div id="rename-modal" class="modal-mask" aria-hidden="true">
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rename-modal-title">
-    <h2 id="rename-modal-title" class="modal-title">Rename Collection</h2>
-    <input id="rename-name" class="field" type="text" maxlength="80" placeholder="Enter a new name" />
+    <h2 id="rename-modal-title" class="modal-title">{{ t('saved.rename.title') }}</h2>
+    <input id="rename-name" class="field" type="text" maxlength="80" placeholder="{{ t('saved.rename.placeholder') }}" />
     <div class="modal-actions">
-      <button id="cancel-rename" class="ghost-chip" type="button">Cancel</button>
-      <button id="submit-rename" class="ghost-chip modal-primary" type="button">Save</button>
+      <button id="cancel-rename" class="ghost-chip" type="button">{{ t('common.cancel') }}</button>
+      <button id="submit-rename" class="ghost-chip modal-primary" type="button">{{ t('common.save') }}</button>
     </div>
   </div>
 </div>

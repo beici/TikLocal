@@ -10,34 +10,34 @@
   {% if scope == 'all' and library_view == 'timeline' %}
   <header class="timeline-masthead">
     <div class="timeline-masthead-copy">
-      <p class="timeline-kicker">PRIVATE ARCHIVE</p>
-      <h1>Moments in Time</h1>
-      <p class="timeline-intro">Move through the months and rediscover moments kept close.</p>
+      <p class="timeline-kicker">{{ t('library.timeline.kicker') }}</p>
+      <h1>{{ t('library.timeline.title') }}</h1>
+      <p class="timeline-intro">{{ t('library.timeline.intro') }}</p>
     </div>
-    <nav class="library-view-switch" aria-label="Library view">
-      <a class="is-active" href="/library" aria-current="page">Timeline</a>
-      <a href="/library?view=explore">Explore</a>
+    <nav class="library-view-switch" aria-label="{{ t('library.view.label') }}">
+      <a class="is-active" href="/library" aria-current="page">{{ t('library.view.timeline') }}</a>
+      <a href="/library?view=explore">{{ t('library.view.explore') }}</a>
     </nav>
   </header>
   <div class="timeline-sticky-bar" id="timeline-sticky-bar">
-    <button class="timeline-current-date" id="timeline-current-date" type="button" aria-label="Choose year">
-      <span id="timeline-current-label">Recent</span>
+    <button class="timeline-current-date" id="timeline-current-date" type="button" aria-label="{{ t('library.timeline.choose_year') }}">
+      <span id="timeline-current-label">{{ t('library.timeline.recent') }}</span>
       <i data-feather="chevron-down" aria-hidden="true"></i>
     </button>
-    <span class="timeline-time-basis">By media date</span>
+    <span class="timeline-time-basis">{{ t('library.timeline.time_basis') }}</span>
   </div>
   <div class="timeline-year-popover" id="timeline-year-popover" hidden>
     <div class="timeline-year-list" id="timeline-year-list"></div>
   </div>
-  <section id="timeline-stream" class="timeline-stream" aria-label="Browse media by month"></section>
+  <section id="timeline-stream" class="timeline-stream" aria-label="{{ t('library.timeline.browse_label') }}"></section>
   {% elif scope == 'all' and library_view == 'month' %}
   <header class="month-detail-header">
-    <a class="month-detail-back" href="/library?view=timeline#month-{{ timeline_month }}" aria-label="Return to timeline">
+    <a class="month-detail-back" href="/library?view=timeline#month-{{ timeline_month }}" aria-label="{{ t('library.timeline.back') }}">
       <i data-feather="arrow-left" aria-hidden="true"></i>
-      <span>Timeline</span>
+      <span>{{ t('library.view.timeline') }}</span>
     </a>
     <div>
-      <p>MONTH ARCHIVE</p>
+      <p>{{ t('library.month.kicker') }}</p>
       <h1 data-month-heading="{{ timeline_month }}">{{ timeline_month }}</h1>
     </div>
   </header>
@@ -46,52 +46,52 @@
     <div id="library-toolbar" class="library-toolbar{% if request.args.get('q', '') %} is-searching is-search-open{% endif %}">
     <div class="explore-heading-row">
       <div>
-        <p class="explore-kicker">DISCOVER</p>
-        <h1 class="explore-title">Explore Your Library</h1>
+        <p class="explore-kicker">{{ t('library.explore.kicker') }}</p>
+        <h1 class="explore-title">{{ t('library.explore.title') }}</h1>
       </div>
-      <nav class="library-view-switch" aria-label="Library view">
-        <a href="/library">Timeline</a>
-        <a class="is-active" href="/library?view=explore" aria-current="page">Explore</a>
+      <nav class="library-view-switch" aria-label="{{ t('library.view.label') }}">
+        <a href="/library">{{ t('library.view.timeline') }}</a>
+        <a class="is-active" href="/library?view=explore" aria-current="page">{{ t('library.view.explore') }}</a>
       </nav>
     </div>
     <div class="library-toolbar-row">
-    <div class="mode-tabs" id="mode-tabs" aria-label="Library browsing mode">
-      <button type="button" class="mode-tab" data-mode="all">All</button>
-      <button type="button" class="mode-tab" data-mode="image_random">Random Images</button>
-      <button type="button" class="mode-tab" data-mode="video_latest">Latest Videos</button>
-      <button type="button" class="mode-tab" data-mode="big_files">Large Files</button>
+    <div class="mode-tabs" id="mode-tabs" aria-label="{{ t('library.mode.label') }}">
+      <button type="button" class="mode-tab" data-mode="all">{{ t('common.all') }}</button>
+      <button type="button" class="mode-tab" data-mode="image_random">{{ t('library.mode.random_images') }}</button>
+      <button type="button" class="mode-tab" data-mode="video_latest">{{ t('library.mode.latest_videos') }}</button>
+      <button type="button" class="mode-tab" data-mode="big_files">{{ t('library.mode.big_files') }}</button>
     </div>
-    <button id="library-search-toggle" class="library-search-toggle" type="button" aria-label="Search library" aria-controls="library-search" aria-expanded="{% if request.args.get('q', '') %}true{% else %}false{% endif %}" title="Search">
+    <button id="library-search-toggle" class="library-search-toggle" type="button" aria-label="{{ t('library.search.label') }}" aria-controls="library-search" aria-expanded="{% if request.args.get('q', '') %}true{% else %}false{% endif %}" title="{{ t('common.search') }}">
       <i data-feather="search" aria-hidden="true"></i>
     </button>
     </div>
     <div id="library-search" class="library-search" role="search">
       <i data-feather="search" class="library-search-icon" aria-hidden="true"></i>
-      <label class="sr-only" for="library-search-input">Search library</label>
-      <input id="library-search-input" type="search" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Search filenames or paths" value="{{ request.args.get('q', '') }}">
-      <button id="library-search-clear" class="library-search-clear" type="button" aria-label="Clear search" title="Clear search"{% if not request.args.get('q', '') %} hidden{% endif %}>
+      <label class="sr-only" for="library-search-input">{{ t('library.search.label') }}</label>
+      <input id="library-search-input" type="search" maxlength="200" autocomplete="off" spellcheck="false" placeholder="{{ t('library.search.placeholder') }}" value="{{ request.args.get('q', '') }}">
+      <button id="library-search-clear" class="library-search-clear" type="button" aria-label="{{ t('library.search.clear') }}" title="{{ t('library.search.clear') }}"{% if not request.args.get('q', '') %} hidden{% endif %}>
         <i data-feather="x" aria-hidden="true"></i>
       </button>
     </div>
     {% if blogs %}
-    <nav id="blog-chips" class="blog-chips" aria-label="Browse by blogger">
-      <a class="blog-chip{% if not blog %} is-active{% endif %}" href="/library?view=explore">全部</a>
+    <nav id="blog-chips" class="blog-chips" aria-label="{{ t('library.blog.label') }}">
+      <a class="blog-chip{% if not blog %} is-active{% endif %}" href="/library?view=explore">{{ t('common.all') }}</a>
       {% for chip in blogs %}
-      <a class="blog-chip{% if blog == chip.id %} is-active{% endif %}" href="/library?view=explore&blog={{ chip.id }}" title="{{ chip.count }} 条媒体">
+      <a class="blog-chip{% if blog == chip.id %} is-active{% endif %}" href="/library?view=explore&blog={{ chip.id }}" title="{{ t('library.media_items', n=chip.count) }}">
         {{ chip.name }}<span class="blog-chip-count">{{ chip.count }}</span>
       </a>
       {% endfor %}
       {% if blog %}
       <a class="blog-chip blog-chip-flow" href="/flow?blog={{ blog }}">
-        <i data-feather="zap" aria-hidden="true"></i>去刷
+        <i data-feather="zap" aria-hidden="true"></i>{{ t('library.blog.flow') }}
       </a>
       {% endif %}
     </nav>
     {% endif %}
     {% if library_collections %}
-    <nav id="library-collections" class="blog-chips library-collections" aria-label="Browse by collection">
+    <nav id="library-collections" class="blog-chips library-collections" aria-label="{{ t('library.collections.label') }}">
       {% for chip in library_collections %}
-      <a class="blog-chip" href="/collection/{{ chip.id }}" title="{{ chip.item_count }} 条媒体">
+      <a class="blog-chip" href="/collection/{{ chip.id }}" title="{{ t('library.media_items', n=chip.item_count) }}">
         {{ chip.name }}<span class="blog-chip-count">{{ chip.item_count }}</span>
       </a>
       {% endfor %}
@@ -103,17 +103,17 @@
   {% set saved_active = 'favorite' %}
   {% include '_saved_header.html' %}
   {% if favorite_collections %}
-  <section class="favorite-toolbar" aria-label="Filter favorites by collection">
+  <section class="favorite-toolbar" aria-label="{{ t('library.filter.label') }}">
     <nav id="favorite-collection-bar" class="favorite-collection-bar">
-      <a class="favorite-collection-chip{% if not collection_id %} is-active{% endif %}" data-collection-id="" href="/favorite">全部</a>
+      <a class="favorite-collection-chip{% if not collection_id %} is-active{% endif %}" data-collection-id="" href="/favorite">{{ t('common.all') }}</a>
       {% for chip in favorite_collections %}
-      <a class="favorite-collection-chip{% if collection_id == chip.id %} is-active{% endif %}" data-collection-id="{{ chip.id }}" href="/favorite?collection={{ chip.id }}" title="{{ chip.item_count }} 条媒体">
+      <a class="favorite-collection-chip{% if collection_id == chip.id %} is-active{% endif %}" data-collection-id="{{ chip.id }}" href="/favorite?collection={{ chip.id }}" title="{{ t('library.media_items', n=chip.item_count) }}">
         {{ chip.name }}<span class="favorite-collection-count">{{ chip.item_count }}</span>
       </a>
       {% endfor %}
     </nav>
     <button id="organize-toggle" class="organize-toggle" type="button">
-      <i data-feather="check-square" aria-hidden="true"></i><span>整理</span>
+      <i data-feather="check-square" aria-hidden="true"></i><span>{{ t('library.organize.toggle') }}</span>
     </button>
   </section>
   {% endif %}
@@ -122,10 +122,10 @@
     <div class="collection-nav">
       <a class="collection-nav-back" href="/collections">
         <i data-feather="arrow-left"></i>
-        <span>All Collections</span>
+        <span>{{ t('library.collection.all') }}</span>
       </a>
       <button id="organize-toggle" class="organize-toggle" type="button">
-        <i data-feather="check-square" aria-hidden="true"></i><span>整理</span>
+        <i data-feather="check-square" aria-hidden="true"></i><span>{{ t('library.organize.toggle') }}</span>
       </button>
     </div>
     <div class="collection-identity">
@@ -144,7 +144,7 @@
       </div>
       <div class="collection-identity-copy">
         <h1 class="collection-identity-title">{{ collection_name }}</h1>
-        <div class="collection-identity-count">{{ collection_count }} media items</div>
+        <div class="collection-identity-count">{{ t('library.media_items', n=collection_count) }}</div>
         {% if collection_description %}<p class="collection-identity-description">{{ collection_description }}</p>{% endif %}
       </div>
     </div>
@@ -152,35 +152,35 @@
   {% endif %}
 
   {% if scope == 'all' and library_view == 'explore' and similarity_enabled %}
-  <section id="library-discoveries" class="mx-auto max-w-6xl px-2 py-5" aria-label="Related photos" hidden>
+  <section id="library-discoveries" class="mx-auto max-w-6xl px-2 py-5" aria-label="{{ t('library.discoveries.title') }}" hidden>
     <div class="mb-3 flex items-baseline justify-between gap-3">
-      <h2 class="text-lg font-semibold">Related photos</h2>
-      <a href="{{ url_for('similarity_view') }}" class="text-sm underline">View all</a>
+      <h2 class="text-lg font-semibold">{{ t('library.discoveries.title') }}</h2>
+      <a href="{{ url_for('similarity_view') }}" class="text-sm underline">{{ t('library.discoveries.view_all') }}</a>
     </div>
     <div id="library-discoveries-grid" class="grid max-w-[880px] grid-cols-2 gap-2 md:grid-cols-4"></div>
   </section>
   <details id="semantic-search-panel" class="embedding-settings mx-auto max-w-6xl px-2 py-3" data-theme-sync>
-    <summary class="cursor-pointer text-sm underline">Search by description</summary>
+    <summary class="cursor-pointer text-sm underline">{{ t('library.semantic.summary') }}</summary>
     <div class="max-w-[760px] pt-3">
     {% if media_search_available %}
       <form id="image-search-form" class="flex flex-wrap sm:flex-nowrap gap-2 items-center">
-        <label for="image-search-query" class="sr-only">Describe media</label>
-        <input id="image-search-query" class="dui-input w-full sm:flex-1 min-w-0" type="search" maxlength="200" required placeholder="Describe what you want to find">
-        <label for="media-search-type" class="sr-only">Media type</label>
-        <select id="media-search-type" class="dui-select dui-select-sm" aria-label="Media type">
-          <option value="all">All media</option>
-          <option value="image">Photos</option>
-          <option value="video">Videos</option>
+        <label for="image-search-query" class="sr-only">{{ t('library.semantic.query_label') }}</label>
+        <input id="image-search-query" class="dui-input w-full sm:flex-1 min-w-0" type="search" maxlength="200" required placeholder="{{ t('library.semantic.placeholder') }}">
+        <label for="media-search-type" class="sr-only">{{ t('library.semantic.media_type') }}</label>
+        <select id="media-search-type" class="dui-select dui-select-sm" aria-label="{{ t('library.semantic.media_type') }}">
+          <option value="all">{{ t('library.semantic.type_all') }}</option>
+          <option value="image">{{ t('library.semantic.type_images') }}</option>
+          <option value="video">{{ t('library.semantic.type_videos') }}</option>
         </select>
-        <button class="dui-btn" type="submit">Search</button>
+        <button class="dui-btn" type="submit">{{ t('common.search') }}</button>
       </form>
       <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-2 text-sm">
-        <p id="image-search-status" class="opacity-70" role="status" aria-live="polite">Each search calls the selected model.</p>
-        <button id="image-search-reset" class="dui-btn dui-btn-ghost dui-btn-sm px-0" type="button" hidden>Show library</button>
-        <a id="image-search-setup" class="underline" href="{{ url_for('similarity_view') }}" hidden>Similar Images</a>
+        <p id="image-search-status" class="opacity-70" role="status" aria-live="polite">{{ t('library.semantic.status_hint') }}</p>
+        <button id="image-search-reset" class="dui-btn dui-btn-ghost dui-btn-sm px-0" type="button" hidden>{{ t('library.semantic.show_library') }}</button>
+        <a id="image-search-setup" class="underline" href="{{ url_for('similarity_view') }}" hidden>{{ t('library.semantic.similar_images') }}</a>
       </div>
     {% else %}
-      <p class="text-sm opacity-70"><a class="underline" href="{{ url_for('similarity_view') }}">Prepare media</a> to search by description.</p>
+      <p class="text-sm opacity-70"><a class="underline" href="{{ url_for('similarity_view') }}">{{ t('library.semantic.prepare_link') }}</a> {{ t('library.semantic.prepare_suffix') }}</p>
     {% endif %}
     </div>
   </details>
@@ -190,10 +190,10 @@
   <section id="library-grid" class="masonry-grid{% if scope in ['favorite', 'collection'] %} saved-content{% endif %}"></section>
   {% endif %}
   <div id="library-loading" class="library-loading" aria-live="polite">
-    <div id="library-status-text">Loading...</div>
+    <div id="library-status-text">{{ t('library.status.loading') }}</div>
     <div id="library-status-actions" class="library-status-actions" hidden>
-      <button id="library-retry" class="library-status-action" type="button" hidden>Reload</button>
-      <button id="library-clear-search" class="library-status-action" type="button" hidden>Clear Search</button>
+      <button id="library-retry" class="library-status-action" type="button" hidden>{{ t('library.status.reload') }}</button>
+      <button id="library-clear-search" class="library-status-action" type="button" hidden>{{ t('library.status.clear_search') }}</button>
     </div>
   </div>
   <div id="library-sentinel" style="height: 1px;"></div>
@@ -201,27 +201,27 @@
 
 {% if scope in ['favorite', 'collection'] %}
 <div id="organize-bar" class="organize-bar" hidden>
-  <span class="organize-count" id="organize-count">已选 0 项</span>
+  <span class="organize-count" id="organize-count">{{ t('library.organize.selected', n=0) }}</span>
   <div class="organize-actions">
-    <button id="organize-add" class="organize-btn" type="button" disabled>加入合集</button>
-    <button id="organize-move" class="organize-btn" type="button" disabled hidden>移动到合集</button>
-    <button id="organize-remove" class="organize-btn organize-btn-danger" type="button" disabled hidden>移出本合集</button>
-    <button id="organize-select-all" class="organize-btn" type="button">全选</button>
-    <button id="organize-done" class="organize-btn organize-btn-primary" type="button">完成</button>
+    <button id="organize-add" class="organize-btn" type="button" disabled>{{ t('library.organize.add') }}</button>
+    <button id="organize-move" class="organize-btn" type="button" disabled hidden>{{ t('library.organize.move') }}</button>
+    <button id="organize-remove" class="organize-btn organize-btn-danger" type="button" disabled hidden>{{ t('library.organize.remove') }}</button>
+    <button id="organize-select-all" class="organize-btn" type="button">{{ t('library.organize.select_all') }}</button>
+    <button id="organize-done" class="organize-btn organize-btn-primary" type="button">{{ t('library.organize.done') }}</button>
   </div>
 </div>
 <div id="organize-sheet" class="organize-sheet" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="organize-sheet-title">
   <div class="organize-sheet-card">
     <div class="organize-sheet-header">
-      <h3 id="organize-sheet-title">加入合集</h3>
-      <button id="organize-sheet-close" class="organize-sheet-close" type="button" aria-label="Close">
+      <h3 id="organize-sheet-title">{{ t('library.organize.add') }}</h3>
+      <button id="organize-sheet-close" class="organize-sheet-close" type="button" aria-label="{{ t('common.close') }}">
         <i data-feather="x"></i>
       </button>
     </div>
     <div id="organize-sheet-list" class="organize-sheet-list"></div>
     <div class="organize-sheet-footer">
-      <button id="organize-sheet-cancel" class="organize-btn" type="button">取消</button>
-      <button id="organize-sheet-confirm" class="organize-btn organize-btn-primary" type="button">确认</button>
+      <button id="organize-sheet-cancel" class="organize-btn" type="button">{{ t('common.cancel') }}</button>
+      <button id="organize-sheet-confirm" class="organize-btn organize-btn-primary" type="button">{{ t('common.confirm') }}</button>
     </div>
   </div>
 </div>
@@ -237,7 +237,7 @@
     </div>
   </div>
 
-  <button id="quick-close-top" type="button" title="Close">
+  <button id="quick-close-top" type="button" title="{{ t('common.close') }}">
     <i data-feather="x"></i>
   </button>
   <div class="quick-counter" id="quick-counter">1 / 1</div>
@@ -253,8 +253,8 @@
   </div>
 
   <div class="quick-actions">
-    <button id="quick-speed" class="quick-btn" type="button" title="Playback speed">1x</button>
-    <button id="quick-caption" class="quick-btn" type="button" title="Generate Title" hidden>
+    <button id="quick-speed" class="quick-btn" type="button" title="{{ t('library.quick.speed') }}">1x</button>
+    <button id="quick-caption" class="quick-btn" type="button" title="{{ t('library.quick.caption') }}" hidden>
       <i data-feather="zap"></i>
     </button>
 
@@ -263,26 +263,26 @@
         <button type="button" class="quick-zoom-btn active" data-level="2.5">2.5x</button>
         <button type="button" class="quick-zoom-btn" data-level="5">5x</button>
       </div>
-      <button id="quick-magnifier-toggle" class="quick-btn" type="button" title="Magnifier">
+      <button id="quick-magnifier-toggle" class="quick-btn" type="button" title="{{ t('library.quick.magnifier') }}">
         <i data-feather="search"></i>
       </button>
     </div>
 
-    <button id="quick-favorite" class="quick-btn" type="button" title="Add to Favorites">
+    <button id="quick-favorite" class="quick-btn" type="button" title="{{ t('library.quick.favorite_add') }}">
       <i data-feather="heart"></i>
     </button>
-    <button id="quick-collection" class="quick-btn" type="button" title="Add to Collection">
+    <button id="quick-collection" class="quick-btn" type="button" title="{{ t('library.collection.add') }}">
       <i data-feather="bookmark"></i>
       <span class="collection-count" id="quick-collection-count">0</span>
     </button>
-    <button id="quick-set-cover" class="quick-btn is-hidden" type="button" title="Set as Collection Cover">
+    <button id="quick-set-cover" class="quick-btn is-hidden" type="button" title="{{ t('library.quick.set_cover') }}">
       <i class="set-cover-default-icon" data-feather="image"></i>
       <i class="set-cover-current-icon" data-feather="check"></i>
     </button>
-    <a id="quick-source" class="quick-btn is-hidden" href="#" target="_blank" rel="noopener noreferrer" title="View Source">
+    <a id="quick-source" class="quick-btn is-hidden" href="#" target="_blank" rel="noopener noreferrer" title="{{ t('library.quick.source') }}">
       <i data-feather="external-link"></i>
     </a>
-    <a id="quick-detail" class="quick-btn" href="#" title="View Details">
+    <a id="quick-detail" class="quick-btn" href="#" title="{{ t('library.quick.detail') }}">
       <i data-feather="info"></i>
     </a>
   </div>
@@ -302,17 +302,17 @@
     <div class="coll-drag-handle"></div>
     <div class="quick-collection-header">
       <div class="quick-collection-title-row">
-        <h3>Add to Collection</h3>
+        <h3>{{ t('library.collection.add') }}</h3>
         <button id="quick-collection-close" type="button" class="quick-collection-close">
           <i data-feather="x"></i>
         </button>
       </div>
-      <div id="quick-collection-meta" class="quick-collection-meta">Not in any collections</div>
+      <div id="quick-collection-meta" class="quick-collection-meta">{{ t('library.collection.none') }}</div>
     </div>
     <div id="quick-collection-list" class="quick-collection-list"></div>
     <div class="quick-collection-create">
-      <input id="quick-collection-name" type="text" maxlength="80" placeholder="New collection name" />
-      <button id="quick-collection-create-btn" type="button">Create</button>
+      <input id="quick-collection-name" type="text" maxlength="80" placeholder="{{ t('library.collection.name_placeholder') }}" />
+      <button id="quick-collection-create-btn" type="button">{{ t('saved.create.submit') }}</button>
     </div>
   </div>
 </div>

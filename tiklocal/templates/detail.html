@@ -9,19 +9,19 @@
 <div class="detail-shell">
   <div class="detail-container">
     <header class="detail-header">
-      <button onclick="history.back()" class="material-icon-btn" aria-label="Back" type="button">
+      <button onclick="history.back()" class="material-icon-btn" aria-label="{{ t('detail.back') }}" type="button">
         <i data-feather="arrow-left" class="w-5 h-5"></i>
       </button>
 
       <div class="detail-header-actions">
         {% if previous_item %}
-        <a href="/detail/{{ previous_item_path_encoded }}" class="material-icon-btn" aria-label="Previous video">
+        <a href="/detail/{{ previous_item_path_encoded }}" class="material-icon-btn" aria-label="{{ t('detail.previous_video') }}">
           <i data-feather="chevron-left" class="w-5 h-5"></i>
         </a>
         {% endif %}
 
         {% if next_item %}
-        <a href="/detail/{{ next_item_path_encoded }}" class="material-icon-btn" aria-label="Next video">
+        <a href="/detail/{{ next_item_path_encoded }}" class="material-icon-btn" aria-label="{{ t('detail.next_video') }}">
           <i data-feather="chevron-right" class="w-5 h-5"></i>
         </a>
         {% endif %}
@@ -29,44 +29,44 @@
         <button
           id="favorite-btn"
           class="favorite-btn material-icon-btn"
-          aria-label="Add to favorites"
+          aria-label="{{ t('detail.favorite_add') }}"
           type="button"
         >
           <i data-feather="heart" class="w-5 h-5"></i>
-          <span id="favorite-text" class="sr-only">Add to favorites</span>
+          <span id="favorite-text" class="sr-only">{{ t('detail.favorite_add') }}</span>
         </button>
 
-        <button id="pip-btn" class="material-icon-btn" aria-label="Picture in picture" type="button">
+        <button id="pip-btn" class="material-icon-btn" aria-label="{{ t('detail.pip') }}" type="button">
           <i data-feather="minimize-2" class="w-5 h-5"></i>
         </button>
 
-        <button id="fullscreen-btn" class="material-icon-btn" aria-label="Play fullscreen" type="button">
+        <button id="fullscreen-btn" class="material-icon-btn" aria-label="{{ t('detail.fullscreen') }}" type="button">
           <i data-feather="maximize" class="w-5 h-5"></i>
         </button>
 
-        <button id="more-menu-btn" class="material-icon-btn" aria-label="More actions" type="button" aria-haspopup="menu" aria-controls="detail-action-menu" aria-expanded="false">
+        <button id="more-menu-btn" class="material-icon-btn" aria-label="{{ t('common.more_actions') }}" type="button" aria-haspopup="menu" aria-controls="detail-action-menu" aria-expanded="false">
           <i data-feather="more-vertical" class="w-5 h-5"></i>
         </button>
 
-        <div id="detail-action-menu" class="detail-action-menu" role="menu" aria-label="Video actions" hidden>
+        <div id="detail-action-menu" class="detail-action-menu" role="menu" aria-label="{{ t('detail.video_actions') }}" hidden>
           <button id="set-thumb-btn" class="detail-action-item" type="button" role="menuitem">
             <i data-feather="camera" class="w-4 h-4"></i>
-            <span>Use Current Frame as Cover</span>
+            <span>{{ t('detail.use_frame') }}</span>
           </button>
           <button id="copy-link-btn" class="detail-action-item" type="button" role="menuitem">
             <i data-feather="link" class="w-4 h-4"></i>
-            <span>Copy Link</span>
+            <span>{{ t('detail.copy_link') }}</span>
           </button>
           {% if source_meta and source_meta.url %}
           <a href="{{ source_meta.url }}" target="_blank" rel="noopener noreferrer" class="detail-action-item" role="menuitem">
             <i data-feather="external-link" class="w-4 h-4"></i>
-            <span>View Source</span>
+            <span>{{ t('detail.view_source') }}</span>
           </a>
           {% endif %}
           <div class="detail-action-divider" role="separator"></div>
           <button onclick="confirmDelete()" class="detail-action-item is-danger" type="button" role="menuitem">
             <i data-feather="trash-2" class="w-4 h-4"></i>
-            <span>Delete Video</span>
+            <span>{{ t('detail.delete_video') }}</span>
           </button>
         </div>
       </div>
@@ -83,14 +83,14 @@
             src="/media/{{ file_path_encoded }}"
             poster="/thumb?uri={{ file_query_encoded }}"
           >
-            Your browser does not support video playback.
+            {{ t('detail.no_video_support') }}
           </video>
         </div>
       </main>
 
       <aside class="detail-aside">
         <section>
-          <p class="detail-label">Video</p>
+          <p class="detail-label">{{ t('detail.label.video') }}</p>
           <h1 class="detail-title detail-wrap-anywhere">
             {{ file.rsplit('/', 1)[-1].rsplit('.', 1)[0] }}
           </h1>
@@ -98,16 +98,16 @@
 
         {% if source_meta and source_meta.url %}
         <section>
-          <p class="detail-label">Source</p>
+          <p class="detail-label">{{ t('detail.label.source') }}</p>
           <a href="{{ source_meta.url }}" target="_blank" rel="noopener noreferrer" class="detail-source-link">
             <i data-feather="external-link" class="w-4 h-4"></i>
-            <span>{{ source_meta.source_domain or 'View Source' }}</span>
+            <span>{{ source_meta.source_domain or t('detail.view_source') }}</span>
           </a>
         </section>
         {% endif %}
 
         <section>
-          <p class="detail-label">File</p>
+          <p class="detail-label">{{ t('detail.label.file') }}</p>
           <div class="detail-meta">
             <div class="detail-meta-path">{{ file }}</div>
             <div>{{ size | filesizeformat }}</div>
@@ -116,7 +116,7 @@
         </section>
 
         <section>
-          <p class="detail-label">Speed</p>
+          <p class="detail-label">{{ t('detail.label.speed') }}</p>
           <div class="detail-segment">
             <button class="speed-btn" data-speed="0.5" type="button">0.5x</button>
             <button class="speed-btn is-active" data-speed="1" type="button">1x</button>
@@ -126,16 +126,16 @@
         </section>
 
         {% if previous_item or next_item %}
-        <nav class="detail-pager" aria-label="Video navigation">
+        <nav class="detail-pager" aria-label="{{ t('detail.video_nav') }}">
           {% if previous_item %}
           <a href="/detail/{{ previous_item_path_encoded }}" class="detail-pill">
             <i data-feather="chevron-left" class="w-4 h-4"></i>
-            Previous
+            {{ t('detail.previous') }}
           </a>
           {% endif %}
           {% if next_item %}
           <a href="/detail/{{ next_item_path_encoded }}" class="detail-pill is-next">
-            Next
+            {{ t('detail.next') }}
             <i data-feather="chevron-right" class="w-4 h-4"></i>
           </a>
           {% endif %}

@@ -8,6 +8,7 @@ from urllib.parse import quote, unquote
 
 from flask import redirect, render_template, request, send_file
 
+from tiklocal.i18n import t
 from tiklocal.services.embedded_metadata import read_embedded_generation
 from tiklocal.services.library import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from tiklocal.web.media_payloads import media_urls
@@ -144,9 +145,9 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         try:
             uri = trash_service.restore(entry_id)
         except KeyError:
-            return {'error': 'Not in trash'}, 404
+            return {'error': t('detail.error.not_in_trash')}, 404
         except FileExistsError:
-            return {'error': 'A file already exists at the original location'}, 409
+            return {'error': t('detail.error.trash_conflict')}, 409
         library_indexer.register_uris([uri])
         return {'uri': uri, 'url': detail_url(uri)}
 
@@ -155,7 +156,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         try:
             purge(entry_id)
         except KeyError:
-            return {'error': 'Not in trash'}, 404
+            return {'error': t('detail.error.not_in_trash')}, 404
         return {'ok': True}
 
     @app.route('/api/trash', methods=['DELETE'])
@@ -209,7 +210,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
     def api_set_thumbnail(name):
         name = library_service.find_existing_uri(name)
         target = library_service.resolve_path(name)
-        if not target: return {'success': False, 'error': 'Invalid path'}, 400
+        if not target: return {'success': False, 'error': t('detail.error.invalid_path')}, 400
 
         payload = request.get_json(silent=True) or {}
         ts = payload.get('time')
@@ -218,4 +219,4 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
 
         if success:
              return {'success': True, 'url': f"{media_urls(name)['thumb_url']}&v={int(datetime.datetime.now().timestamp())}"}
-        return {'success': False, 'error': 'Failed to generate'}, 500
+        return {'success': False, 'error': t('detail.error.thumbnail_generate')}, 500

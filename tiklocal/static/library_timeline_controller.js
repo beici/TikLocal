@@ -1,4 +1,6 @@
 (() => {
+  const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
+  const dateLocale = () => (document.documentElement.lang === 'en' ? 'en' : 'zh-CN');
   const boot = window.__TIKLOCAL_TIMELINE_BOOT__ || {};
   delete window.__TIKLOCAL_TIMELINE_BOOT__;
 
@@ -31,7 +33,21 @@
 
   function formatCount(value) {
     const count = Number(value || 0);
-    return new Intl.NumberFormat('en', { notation: count > 9999 ? 'compact' : 'standard' }).format(count) + ' items';
+    const formatted = new Intl.NumberFormat('en', { notation: count > 9999 ? 'compact' : 'standard' }).format(count);
+    return T('library.timeline.items', { n: formatted });
+  }
+
+  function uiLocale() {
+    return document.documentElement.lang === 'en' ? 'en' : 'zh-CN';
+  }
+
+  // zh keeps the "10 月" shape, en reads better as a month name ("October").
+  function formatMonthTitle(parts) {
+    if (uiLocale() !== 'en') {
+      return { number: String(parts.month), unit: T('library.timeline.month_unit') };
+    }
+    const name = new Intl.DateTimeFormat('en', { month: 'long' }).format(new Date(Number(parts.year), parts.month - 1, 1));
+    return { number: name, unit: '' };
   }
 
   function monthUrl(monthKey, focusName = '') {
@@ -67,8 +83,8 @@
     const meta = document.createElement('span');
     const summary = years.find((item) => String(item.year) === year);
     meta.textContent = summary
-      ? `${summary.month_count} months · ${formatCount(summary.count)}`
-      : 'PRIVATE ARCHIVE';
+      ? `${T('library.timeline.months', { n: summary.month_count })} · ${formatCount(summary.count)}`
+      : T('library.timeline.kicker');
     marker.append(title, meta);
     stream.appendChild(marker);
   }
@@ -77,7 +93,7 @@
     const tile = document.createElement('button');
     tile.type = 'button';
     tile.className = `timeline-tile${index === 0 && visibleCount >= 5 ? ' is-hero' : ''}`;
-    tile.setAttribute('aria-label', `Open media from ${month.key}`);
+    tile.setAttribute('aria-label', T('library.timeline.open_media', { month: month.key }));
 
     const image = document.createElement('img');
     image.dataset.src = String(item.thumb_url || '');
@@ -131,11 +147,16 @@
     title.className = 'timeline-month-title';
     title.href = monthUrl(month.key);
     title.addEventListener('click', () => rememberPosition(month.key));
-    title.innerHTML = `<span class="timeline-month-number">${parts.month}</span><span class="timeline-month-unit">month</span>`;
+    const monthTitle = formatMonthTitle(parts);
+    title.innerHTML = `<span class="timeline-month-number"></span><span class="timeline-month-unit"></span>`;
+    title.querySelector('.timeline-month-number').textContent = monthTitle.number;
+    title.querySelector('.timeline-month-unit').textContent = monthTitle.unit;
 
     const meta = document.createElement('span');
     meta.className = 'timeline-month-meta';
-    const videoText = Number(month.video_count || 0) > 0 ? ` · ${month.video_count} videos` : '';
+    const videoText = Number(month.video_count || 0) > 0
+      ? ` · ${T('library.timeline.videos', { n: month.video_count })}`
+      : '';
     meta.textContent = `${formatCount(month.count)}${videoText}`;
     head.append(title, meta);
 
@@ -150,7 +171,8 @@
     const open = document.createElement('a');
     open.className = 'timeline-open-month';
     open.href = monthUrl(month.key);
-    open.innerHTML = `<span>View all ${formatCount(month.count)} from this month</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M13 6l6 6-6 6"/></svg>`;
+    open.innerHTML = '<span></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
+    open.querySelector('span').textContent = T('library.timeline.view_all_month', { n: formatCount(month.count) });
     open.addEventListener('click', () => rememberPosition(month.key));
     foot.appendChild(open);
 
@@ -185,7 +207,7 @@
   async function loadMore() {
     if (loadingMore || !hasMore || !nextBefore) return;
     loadingMore = true;
-    statusText.textContent = 'Opening earlier months…';
+    statusText.textContent = T('library.timeline.opening');
     loading.hidden = false;
     try {
       const params = new URLSearchParams({ before: nextBefore, limit: '8', preview_limit: '18' });
@@ -199,10 +221,10 @@
       hasMore = data.has_more === true;
       nextBefore = String(data.next_before || '');
       renderMonths(incoming);
-      statusText.textContent = hasMore ? 'Keep scrolling to visit earlier moments' : "You've reached the beginning of your library";
+      statusText.textContent = hasMore ? T('library.timeline.keep_scrolling') : T('library.timeline.beginning');
       renderYears();
     } catch (error) {
-      statusText.textContent = 'Earlier months could not be opened. Scroll down to try again.';
+      statusText.textContent = T('library.timeline.load_failed');
     } finally {
       loadingMore = false;
     }
@@ -283,7 +305,7 @@
       .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
     const month = visible[0]?.target?.dataset?.month;
     const parts = monthParts(month);
-    if (parts) currentLabel.textContent = new Intl.DateTimeFormat('en', { year: 'numeric', month: 'long' }).format(new Date(parts.year, parts.month - 1, 1));
+    if (parts) currentLabel.textContent = new Intl.DateTimeFormat(dateLocale(), { year: 'numeric', month: 'long' }).format(new Date(parts.year, parts.month - 1, 1));
   }, { rootMargin: '-10% 0px -68% 0px', threshold: 0 });
 
   const loadObserver = new IntersectionObserver((entries) => {
@@ -311,12 +333,13 @@
   }, { passive: true });
 
   if (!months.length) {
-    stream.innerHTML = '<div class="timeline-empty">There are no photos or videos for the timeline yet.</div>';
+    stream.innerHTML = '<div class="timeline-empty"></div>';
+    stream.querySelector('.timeline-empty').textContent = T('library.timeline.empty');
     loading.hidden = true;
   } else {
     renderMonths(months);
     renderYears();
-    statusText.textContent = hasMore ? 'Keep scrolling to visit earlier moments' : "You've reached the beginning of your library";
+    statusText.textContent = hasMore ? T('library.timeline.keep_scrolling') : T('library.timeline.beginning');
     loadObserver.observe(sentinel);
     restorePosition();
   }

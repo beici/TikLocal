@@ -1,3 +1,4 @@
+const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
 const detailBoot = window.__TIKLOCAL_DETAIL_BOOT__ || {};
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -58,16 +59,16 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateFavoriteUI() {
     if (isFavorited) {
       favoriteBtn?.classList.add('active');
-      favoriteBtn?.setAttribute('aria-label', 'Remove from favorites');
-      if (favoriteText) favoriteText.textContent = 'Remove from favorites';
+      favoriteBtn?.setAttribute('aria-label', T('detail.favorite_remove'));
+      if (favoriteText) favoriteText.textContent = T('detail.favorite_remove');
       if (typeof feather !== 'undefined' && feather.icons && feather.icons.heart) {
         const icon = favoriteBtn?.querySelector('svg');
         if (icon) icon.innerHTML = feather.icons.heart.toSvg();
       }
     } else {
       favoriteBtn?.classList.remove('active');
-      favoriteBtn?.setAttribute('aria-label', 'Add to favorites');
-      if (favoriteText) favoriteText.textContent = 'Add to favorites';
+      favoriteBtn?.setAttribute('aria-label', T('detail.favorite_add'));
+      if (favoriteText) favoriteText.textContent = T('detail.favorite_add');
       if (typeof feather !== 'undefined' && feather.icons && feather.icons.heart) {
         const icon = favoriteBtn?.querySelector('svg');
         if (icon) icon.innerHTML = feather.icons.heart.toSvg();
@@ -88,10 +89,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!response.ok || typeof data.favorite !== 'boolean') throw new Error('Failed to save favorite');
       isFavorited = data.favorite;
       updateFavoriteUI();
-      TikLocalUI.toast(isFavorited ? 'Added to favorites' : 'Removed from favorites', 'success');
+      TikLocalUI.toast(isFavorited ? T('detail.favorite_added') : T('detail.favorite_removed'), 'success');
     } catch (error) {
       console.error('Failed to update favorite:', error);
-      TikLocalUI.toast('The action failed. Please try again.', 'error');
+      TikLocalUI.toast(T('common.action_failed'), 'error');
     } finally {
       favoriteBtn.disabled = false;
     }
@@ -128,7 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
         await mainVideo.requestPictureInPicture();
       }
     } catch (error) {
-      TikLocalUI.toast('Picture in picture is not supported', 'error');
+      TikLocalUI.toast(T('detail.pip_unsupported'), 'error');
     }
   });
 
@@ -139,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const speed = parseFloat(btn.dataset.speed);
       mainVideo.playbackRate = speed;
       speedBtns.forEach(b => b.classList.toggle('is-active', b === btn));
-      TikLocalUI.toast(`Playback speed set to ${speed}x`, 'info');
+      TikLocalUI.toast(T('detail.speed_set', { speed }), 'info');
     });
   });
 
@@ -149,9 +150,9 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const url = window.location.origin + '/media?uri=' + encodeURIComponent(fileName);
       await navigator.clipboard.writeText(url);
-      TikLocalUI.toast('Link copied to clipboard', 'success');
+      TikLocalUI.toast(T('common.link_copied'), 'success');
     } catch (err) {
-      TikLocalUI.toast('Copy failed. Please copy the link manually.', 'error');
+      TikLocalUI.toast(T('common.copy_failed'), 'error');
     }
   });
 
@@ -224,12 +225,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (resp.ok && data.success) {
         // Force a poster cache refresh.
         mainVideo.setAttribute('poster', `/thumb?uri=${encodeURIComponent(fileName)}&v=${Date.now()}`);
-        TikLocalUI.toast('Thumbnail updated', 'success');
+        TikLocalUI.toast(T('detail.thumbnail_updated'), 'success');
       } else {
-        TikLocalUI.toast(data.error || 'Failed to generate thumbnail', 'error');
+        TikLocalUI.toast(data.error || T('detail.thumbnail_failed'), 'error');
       }
     } catch (e) {
-      TikLocalUI.toast('An error occurred. Please try again later.', 'error');
+      TikLocalUI.toast(T('common.error_try_later'), 'error');
     }
   });
 });

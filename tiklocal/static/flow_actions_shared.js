@@ -1,6 +1,8 @@
 (function (global) {
   'use strict';
 
+  const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
+
   function encodeName(name) {
     return encodeURIComponent(String(name || ''));
   }
@@ -19,7 +21,7 @@
     var response = await fetch('/api/favorite/' + encoded);
     var data = await readJsonResponse(response);
     if (!response.ok || !data || typeof data.favorite !== 'boolean') {
-      throw new Error((data && data.error) || 'The favorite could not be updated. Please try again.');
+      throw new Error((data && data.error) || T('flow.error.favorite_update'));
     }
     return data.favorite;
   }
@@ -30,7 +32,7 @@
     var response = await fetch('/api/favorite/' + encoded, { method: 'POST' });
     var data = await readJsonResponse(response);
     if (!response.ok || !data || typeof data.favorite !== 'boolean') {
-      throw new Error((data && data.error) || 'The favorite could not be updated. Please try again.');
+      throw new Error((data && data.error) || T('flow.error.favorite_update'));
     }
     return data.favorite;
   }
@@ -49,7 +51,7 @@
     if (!encoded) return { success: false, error: 'missing uri' };
     var response = await fetch('/api/image/metadata?uri=' + encoded);
     var data = await readJsonResponse(response);
-    if (!response.ok || !data || !data.success) throw new Error((data && data.error) || 'Title request failed');
+    if (!response.ok || !data || !data.success) throw new Error((data && data.error) || T('flow.error.title_request'));
     return data;
   }
 
@@ -62,7 +64,7 @@
       body: JSON.stringify({ uri: uri, force: conf.force !== false, prompt_override: conf.promptOverride }),
     });
     var data = await readJsonResponse(response);
-    if (!response.ok || !data || !data.success) throw new Error((data && data.error) || 'Title request failed');
+    if (!response.ok || !data || !data.success) throw new Error((data && data.error) || T('flow.error.title_request'));
     return data;
   }
 

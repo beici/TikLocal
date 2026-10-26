@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 from flask import render_template, request
 
+from tiklocal.i18n import t
 from tiklocal.services.collections import normalize_collection_mutation_uris
 from tiklocal.services.library import IMAGE_EXTENSIONS
 from tiklocal.services.media_naming import blogger_display_name
@@ -94,9 +95,9 @@ def register_library_routes(
             mode_seed=page['seed'],
             min_mb=min_mb,
             empty_message={
-                'all': 'There is no media to display yet.',
-                'favorite': 'You have no favorite media yet.',
-                'collection': 'This collection has no media to display yet.',
+                'all': t('library.empty.all'),
+                'favorite': t('library.empty.favorite'),
+                'collection': t('library.empty.collection'),
             }[scope],
             initial_items=page['items'],
             initial_has_more=page['has_more'],
@@ -271,7 +272,7 @@ def register_library_routes(
     def collection_detail_view(collection_id):
         collection = collection_store.get(collection_id)
         if not collection:
-            return "Collection not found", 404
+            return t('library.collection.not_found'), 404
         page = _build_library_page(
             collection_id=collection_id,
             limit=read_int_arg('limit', 24, minimum=12, maximum=96),
@@ -287,7 +288,7 @@ def register_library_routes(
         if scope == 'collection':
             collection_id = str(request.args.get('collection_id', '')).strip()
             if not collection_id:
-                return {'success': False, 'error': 'collection_id cannot be empty.'}, 400
+                return {'success': False, 'error': t('library.error.collection_id_required')}, 400
         page = _build_library_page(
             favorites_only=scope == 'favorite', collection_id=collection_id,
             **_read_page_options(scope),
@@ -347,7 +348,7 @@ def register_library_routes(
                 return {'favorite': favorite_service.is_favorite(name)}
             return {'success': True, 'favorite': favorite_service.toggle(name)}
         except (OSError, ValueError):
-            return {'success': False, 'error': 'Favorites could not be saved or read. Please try again later.'}, 503
+            return {'success': False, 'error': t('library.error.favorite_failed')}, 503
 
     @app.route('/api/collections', methods=['GET', 'POST'])
     def api_collections():
@@ -360,7 +361,7 @@ def register_library_routes(
         name = str(payload.get('name', '')).strip()
         description = str(payload.get('description', '')).strip()
         if not name:
-            return {'success': False, 'error': 'name cannot be empty.'}, 400
+            return {'success': False, 'error': t('library.error.name_required')}, 400
         try:
             created = collection_store.create(name=name, description=description)
         except ValueError as exc:
@@ -372,13 +373,13 @@ def register_library_routes(
         if request.method == 'GET':
             found = collection_store.get(collection_id)
             if not found:
-                return {'success': False, 'error': 'Collection not found'}, 404
+                return {'success': False, 'error': t('library.collection.not_found')}, 404
             return {'success': True, 'data': {'item': _serialize_collection_summary(found)}}
 
         if request.method == 'DELETE':
             deleted = collection_store.delete(collection_id)
             if not deleted:
-                return {'success': False, 'error': 'Collection not found'}, 404
+                return {'success': False, 'error': t('library.collection.not_found')}, 404
             return {'success': True, 'data': {'deleted': True}}
 
         payload = request.get_json(silent=True) or {}
@@ -395,7 +396,7 @@ def register_library_routes(
         except ValueError as exc:
             return {'success': False, 'error': str(exc)}, 400
         if not updated:
-            return {'success': False, 'error': 'Collection not found'}, 404
+            return {'success': False, 'error': t('library.collection.not_found')}, 404
         return {'success': True, 'data': {'item': _serialize_collection_summary(updated)}}
 
     @app.route('/api/collections/<collection_id>/items', methods=['GET', 'POST', 'DELETE'])
@@ -403,7 +404,7 @@ def register_library_routes(
         if request.method == 'GET':
             found = collection_store.get(collection_id)
             if not found:
-                return {'success': False, 'error': 'Collection not found'}, 404
+                return {'success': False, 'error': t('library.collection.not_found')}, 404
             offset = read_int_arg('offset', 0, minimum=0)
             limit = read_int_arg('limit', 24, minimum=12, maximum=96)
             page = _build_library_page(
@@ -419,21 +420,21 @@ def register_library_routes(
             for uri in normalize_collection_mutation_uris(payload.get('uris'))
         ]
         if not uris:
-            return {'success': False, 'error': 'uris cannot be empty.'}, 400
+            return {'success': False, 'error': t('library.error.uris_required')}, 400
 
         if request.method == 'POST':
             updated = collection_store.add_items(collection_id, uris)
         else:
             updated = collection_store.remove_items(collection_id, uris)
         if not updated:
-            return {'success': False, 'error': 'Collection not found'}, 404
+            return {'success': False, 'error': t('library.collection.not_found')}, 404
         return {'success': True, 'data': {'item': _serialize_collection_summary(updated)}}
 
     @app.route('/api/collections/by-media')
     def api_collections_by_media():
         uri = str(request.args.get('uri', '')).strip()
         if not uri:
-            return {'success': False, 'error': 'uri cannot be empty.'}, 400
+            return {'success': False, 'error': t('library.error.uri_required')}, 400
         canonical_uri = library_service.canonicalize_uri(uri)
         items = collection_store.list_for_media(canonical_uri)
         if not items:

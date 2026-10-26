@@ -1,6 +1,8 @@
 (function (global) {
   'use strict';
 
+  const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
+
   var folderIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
   var checkIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
   // Ignore the click that opened the sheet so it does not land on the backdrop and close it again.
@@ -24,7 +26,7 @@
       payload = null;
     }
     if (!response.ok || !(payload && payload.success)) {
-      throw new Error((payload && payload.error) || 'Request failed');
+      throw new Error((payload && payload.error) || T('flow.error.request'));
     }
     return payload.data || {};
   }
@@ -59,11 +61,13 @@
       var count = names.length;
       var preview = names.slice(0, 2).join(', ');
       var rest = count - 2;
-      var label = rest > 0 ? 'In: ' + preview + ' +' + rest : 'In: ' + preview;
+      var label = rest > 0
+        ? T('flow.collection.in_list_more', { names: preview, rest: rest })
+        : T('flow.collection.in_list', { names: preview });
       button.classList.toggle('has-collection', count > 0);
       countEl.textContent = count > 99 ? '99+' : String(count);
-      button.title = count > 0 ? label : 'Add to Collection';
-      if (meta) meta.textContent = count > 0 ? label : 'Not in any collections';
+      button.title = count > 0 ? label : T('flow.collection.add');
+      if (meta) meta.textContent = count > 0 ? label : T('flow.collection.not_in_any');
     }
 
     function showState(state) {
@@ -117,7 +121,7 @@
 
     function render() {
       if (!catalog.length) {
-        showMessage('No collections yet. Create one first.');
+        showMessage(T('flow.collection.empty'));
         return;
       }
       list.innerHTML = catalog.map(function (item) {
@@ -126,7 +130,7 @@
         var selected = selectedIds.has(id);
         return '<label class="' + itemClass + (selected ? ' is-selected' : '') + '" data-id="' + escapeHtml(id) + '">'
           + '<span class="coll-icon">' + folderIcon + '</span>'
-          + '<span class="coll-name">' + escapeHtml(String(item.name || 'Untitled collection')) + '</span>'
+          + '<span class="coll-name">' + escapeHtml(String(item.name || T('flow.collection.untitled'))) + '</span>'
           + '<em class="coll-count">' + (count > 0 ? count : '') + '</em>'
           + '<span class="coll-check">' + checkIcon + '</span>'
           + '<input type="checkbox"' + (selected ? ' checked' : '') + ' />'
@@ -140,14 +144,14 @@
       openedAt = Date.now();
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
-      showMessage('Loading...');
+      showMessage(T('flow.collection.loading'));
       try {
         var results = await Promise.all([request('/api/collections'), membership(uri, true)]);
         catalog = Array.isArray(results[0].items) ? results[0].items : [];
         showState(results[1]);
         render();
       } catch (error) {
-        showMessage('Failed to load. Please try again.');
+        showMessage(T('flow.error.load'));
       }
     }
 

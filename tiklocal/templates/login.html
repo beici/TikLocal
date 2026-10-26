@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ locale or 'zh' }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -8,50 +8,54 @@
   <link rel="icon" href="{{ static_asset('brand/favicon.svg') }}" type="image/svg+xml">
   <link rel="apple-touch-icon" href="{{ static_asset('brand/apple-touch-icon.png') }}">
   <script src="{{ url_for('static', filename='retire_pwa.js') }}"></script>
-  <title>Enter TikLocal · {{ instance_name }}</title>
+  <script>
+    window.__TIKLOCAL_I18N__ = {{ i18n_js|tojson }};
+  </script>
+  <script src="{{ static_asset('i18n.js') }}"></script>
+  <title>{{ t('login.title') }} · {{ instance_name }}</title>
   <link rel="stylesheet" href="{{ static_asset('login.css') }}">
 </head>
 <body>
   <main class="login-shell">
-    <section class="login-scene" aria-label="TikLocal private media space">
+    <section class="login-scene" aria-label="{{ t('login.scene_aria') }}">
       <div class="scene-top">
         <div class="wordmark"><span class="wordmark-mark">{% include 'brand_mark.html' %}</span><span><span class="wordmark-tik">tik</span>Local</span></div>
-        <span class="scene-index">PRIVATE / 01</span>
+        <span class="scene-index">{{ t('login.scene_index') }}</span>
       </div>
       <div class="scene-copy">
-        <p class="scene-kicker">YOUR PRIVATE FREQUENCY</p>
-        <h1>A moment<em>just for you.</em></h1>
+        <p class="scene-kicker">{{ t('login.scene_tagline') }}</p>
+        <h1>{{ t('login.scene_headline') }}<em>{{ t('login.scene_headline_em') }}</em></h1>
       </div>
       <div class="scene-foot">
-        <span class="private-signal">Local media space locked</span>
-        <span>FLOW · RADIO · LIBRARY</span>
+        <span class="private-signal">{{ t('login.scene_locked') }}</span>
+        <span>{{ t('login.scene_features') }}</span>
       </div>
     </section>
 
     <section class="login-panel" aria-labelledby="login-title">
       <div class="login-card">
-        <div class="login-overline"><span>Access portal</span><span>TL—LOCAL</span></div>
-        <h2 id="login-title">Welcome back.</h2>
-        <p class="login-intro">Enter this TikLocal instance's access password to continue browsing your media and collections.</p>
+        <div class="login-overline"><span>{{ t('login.overline') }}</span><span>TL—LOCAL</span></div>
+        <h2 id="login-title">{{ t('login.heading') }}</h2>
+        <p class="login-intro">{{ t('login.intro') }}</p>
 
         <form method="post" action="{{ url_for('login_view') }}">
           <input type="hidden" name="_csrf_token" value="{{ csrf_value }}">
           <input type="hidden" name="next" value="{{ next_url }}">
           {% if error %}<div class="login-error" role="alert">{{ error }}</div>{% endif %}
-          <label class="field-label" for="password">Access Password</label>
+          <label class="field-label" for="password">{{ t('login.password_label') }}</label>
           <div class="password-field">
             <input id="password" name="password" type="password" autocomplete="current-password" required aria-describedby="login-help">
-            <button class="password-toggle" type="button" aria-label="Show password" aria-pressed="false">
+            <button class="password-toggle" type="button" aria-label="{{ t('login.show_password') }}" aria-pressed="false">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-5 9.5-5 9.5 5 9.5 5-3.4 5-9.5 5-9.5-5-9.5-5Z"/><circle cx="12" cy="12" r="2.5"/></svg>
             </button>
           </div>
           <div class="login-options">
-            <label class="remember"><input type="checkbox" name="remember" value="1" checked><span>Keep me signed in on this device</span></label>
-            <span class="local-note">PRIVATE LAN</span>
+            <label class="remember"><input type="checkbox" name="remember" value="1" checked><span>{{ t('login.remember') }}</span></label>
+            <span class="local-note">{{ t('login.lan_note') }}</span>
           </div>
-          <button class="login-submit" type="submit"><span>Enter TikLocal</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+          <button class="login-submit" type="submit"><span>{{ t('login.submit') }}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
         </form>
-        <p class="login-help" id="login-help">Forgot the password? Run <code>tiklocal auth set-password</code> on the computer hosting TikLocal.</p>
+        <p class="login-help" id="login-help">{{ t('login.help_before') }} <code>tiklocal auth set-password</code>{{ t('login.help_after') }}</p>
       </div>
     </section>
   </main>

@@ -1,4 +1,5 @@
 (() => {
+  const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
   const ACTIVE_STATUSES = new Set(['queued', 'running']);
   const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
   let pollTimer = null;
@@ -6,8 +7,8 @@
   let dependencyMeta = { yt_dlp_available: false, gallery_dl_available: false, ffmpeg_available: false, tiktok_downloader: null };
   let selectedEngine = 'yt-dlp';
   let selectedTab = 'post';
-  const DEFAULT_PLACEHOLDER = 'Paste an image or video URL…';
-  const TIKTOK_PLACEHOLDER = '粘贴抖音博主主页 / 作品 / 合集链接…';
+  const DEFAULT_PLACEHOLDER = T('download.url_placeholder');
+  const TIKTOK_PLACEHOLDER = T('download.tiktok_placeholder');
 
   function escapeHtml(value) {
     return String(value ?? '')
@@ -25,16 +26,16 @@
     });
     const payload = await response.json();
     if (!response.ok || !payload.success) {
-      throw new Error(payload.error || `Request failed (${response.status})`);
+      throw new Error(payload.error || T('download.request_failed', { status: response.status }));
     }
     return payload.data || {};
   }
 
   function safeHostname(url) {
     try {
-      return new URL(url).hostname.replace(/^www\./, '') || 'External link';
+      return new URL(url).hostname.replace(/^www\./, '') || T('download.external_link');
     } catch (_) {
-      return 'External link';
+      return T('download.external_link');
     }
   }
 
@@ -79,13 +80,15 @@
   function statusCopy(job) {
     const fileCount = Number.isInteger(job.file_count) ? job.file_count : outputFiles(job).length;
     const labels = {
-      queued: 'Waiting to start',
-      running: typeof job.progress_percent === 'number' ? `${Math.round(job.progress_percent)}% complete` : 'Downloading',
-      success: fileCount > 0 ? `Saved ${fileCount} files` : 'Saved to the media library',
-      failed: 'Download failed',
-      canceled: 'Canceled',
+      queued: T('download.status.queued'),
+      running: typeof job.progress_percent === 'number'
+        ? T('download.status.progress', { pct: Math.round(job.progress_percent) })
+        : T('download.status.downloading'),
+      success: fileCount > 0 ? T('download.status.saved_files', { n: fileCount }) : T('download.status.saved'),
+      failed: T('download.status.failed'),
+      canceled: T('download.status.canceled'),
     };
-    return labels[job.status] || 'Unknown status';
+    return labels[job.status] || T('download.status.unknown');
   }
 
   function renderJob(job) {
@@ -99,25 +102,25 @@
       ? 'is-running'
       : (job.status === 'failed' ? 'is-failed' : '');
     const time = formatTime(job.finished_at || job.created_at);
-    const sourceAction = `<a class="download-action" href="${escapeHtml(job.url)}" target="_blank" rel="noopener noreferrer"><i data-feather="external-link"></i><span>Visit Source</span></a>`;
+    const sourceAction = `<a class="download-action" href="${escapeHtml(job.url)}" target="_blank" rel="noopener noreferrer"><i data-feather="external-link"></i><span>${escapeHtml(T('download.visit_source'))}</span></a>`;
     const menu = !isActive ? `
       <div class="download-job-menu">
-        <button class="download-icon-btn" type="button" data-action="menu" data-job-id="${escapeHtml(job.id)}" aria-label="More actions" aria-expanded="false"><i data-feather="more-horizontal"></i></button>
+        <button class="download-icon-btn" type="button" data-action="menu" data-job-id="${escapeHtml(job.id)}" aria-label="${escapeHtml(T('common.more_actions'))}" aria-expanded="false"><i data-feather="more-horizontal"></i></button>
         <div class="download-job-menu-panel" hidden>
-          <button class="download-menu-action" type="button" data-action="delete" data-job-id="${escapeHtml(job.id)}">Remove Record</button>
+          <button class="download-menu-action" type="button" data-action="delete" data-job-id="${escapeHtml(job.id)}">${escapeHtml(T('download.remove_record'))}</button>
         </div>
       </div>` : '';
 
     let actions = '';
     if (isActive) {
-      actions = `${sourceAction}<button class="download-action" type="button" data-action="cancel" data-job-id="${escapeHtml(job.id)}">Cancel</button>`;
+      actions = `${sourceAction}<button class="download-action" type="button" data-action="cancel" data-job-id="${escapeHtml(job.id)}">${escapeHtml(T('common.cancel'))}</button>`;
     } else if (job.status === 'success' && firstFile) {
       actions = `
-        <a class="download-action" href="${buildMediaHref(firstFile)}"><i data-feather="eye"></i><span>View Media</span></a>
+        <a class="download-action" href="${buildMediaHref(firstFile)}"><i data-feather="eye"></i><span>${escapeHtml(T('download.view_media'))}</span></a>
         ${sourceAction}${menu}`;
     } else {
       actions = `
-        ${(job.status === 'failed' || job.status === 'canceled') ? `<button class="download-action is-retry" type="button" data-action="retry" data-job-id="${escapeHtml(job.id)}"><i data-feather="rotate-ccw"></i><span>${job.failure_stage === 'index' ? 'Register Again' : 'Download Again'}</span></button>` : ''}
+        ${(job.status === 'failed' || job.status === 'canceled') ? `<button class="download-action is-retry" type="button" data-action="retry" data-job-id="${escapeHtml(job.id)}"><i data-feather="rotate-ccw"></i><span>${escapeHtml(job.failure_stage === 'index' ? T('download.retry_register') : T('download.retry_download'))}</span></button>` : ''}
         ${sourceAction}${menu}`;
     }
 
@@ -131,7 +134,7 @@
           </div>
           <p class="download-job-copy">${escapeHtml(statusCopy(job))}</p>
           ${progress !== null && isActive ? `<div class="download-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.toFixed(0)}"><div class="download-progress-bar" style="width:${progress.toFixed(1)}%"></div></div>` : ''}
-          ${files.length > 1 ? `<div class="download-job-meta"><span>${files.length} items</span></div>` : ''}
+          ${files.length > 1 ? `<div class="download-job-meta"><span>${escapeHtml(T('download.items_count', { n: files.length }))}</span></div>` : ''}
           ${job.error_message ? `<p class="download-error">${escapeHtml(job.error_message)}</p>` : ''}
           <div class="download-job-actions">${actions}</div>
         </div>
@@ -142,8 +145,8 @@
     return `
       <div class="download-empty">
         <div class="download-empty-icon"><i data-feather="download-cloud"></i></div>
-        <div class="download-empty-title">No download history yet</div>
-        <div class="download-empty-copy">Paste a link to add new media directly to your local library.</div>
+        <div class="download-empty-title">${escapeHtml(T('download.empty_title'))}</div>
+        <div class="download-empty-copy">${escapeHtml(T('download.empty_copy'))}</div>
       </div>`;
   }
 
@@ -167,9 +170,9 @@
     const historyFooter = document.getElementById('history-footer');
 
     activeSection.hidden = activeJobs.length === 0;
-    document.getElementById('active-count').textContent = activeJobs.length ? `${activeJobs.length} items` : '';
+    document.getElementById('active-count').textContent = activeJobs.length ? T('download.items_count', { n: activeJobs.length }) : '';
     activeList.innerHTML = activeJobs.map(renderJob).join('');
-    document.getElementById('history-count').textContent = historyJobs.length ? `${historyJobs.length} items` : '';
+    document.getElementById('history-count').textContent = historyJobs.length ? T('download.items_count', { n: historyJobs.length }) : '';
     historyList.innerHTML = historyJobs.length ? historyJobs.map(renderJob).join('') : emptyHistory();
     historyFooter.hidden = historyJobs.length === 0;
     window.feather?.replace();
@@ -210,19 +213,19 @@
     try {
       const url = new URL(value);
       if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
-      status.textContent = `Recognized · ${safeHostname(value)}`;
+      status.textContent = T('download.detected', { host: safeHostname(value) });
       return true;
     } catch (_) {
-      status.textContent = 'Enter a complete HTTP or HTTPS URL';
+      status.textContent = T('download.invalid_url');
       status.classList.add('is-error');
       return false;
     }
   }
 
   function engineLabel(engine) {
-    if (engine === 'gallery-dl') return 'Images';
-    if (engine === 'tiktok-downloader') return '博主';
-    return 'Video';
+    if (engine === 'gallery-dl') return T('download.engine.images');
+    if (engine === 'tiktok-downloader') return T('download.engine.tiktok');
+    return T('download.engine.video');
   }
 
   function tiktokStatus() {
@@ -246,15 +249,15 @@
     let unavailable = false;
     if (selectedEngine === 'gallery-dl' && !dependencyMeta.gallery_dl_available) {
       unavailable = true;
-      alertCopy.textContent = 'The image download component is not ready';
+      alertCopy.textContent = T('download.alert.image_not_ready');
     } else if (selectedEngine === 'tiktok-downloader') {
       const status = tiktokStatus();
       if (!status || !status.configured) {
         unavailable = true;
-        alertCopy.textContent = 'TikTokDownloader 未配置，请先在设置中填写服务地址';
+        alertCopy.textContent = T('download.alert.tiktok_unconfigured');
       } else if (!status.reachable) {
         unavailable = true;
-        alertCopy.textContent = '无法连接 TikTokDownloader 服务，请确认服务已启动';
+        alertCopy.textContent = T('download.alert.tiktok_unreachable');
       }
     }
     alert.hidden = !unavailable;
@@ -278,7 +281,7 @@
     });
   }
 
-  function confirmClear({ title = 'Clear download history?', copy = 'Local media files will be kept.' } = {}) {
+  function confirmClear({ title = T('download.confirm_clear_title'), copy = T('download.confirm_clear_copy') } = {}) {
     const mask = document.getElementById('download-confirm');
     const titleElement = document.getElementById('download-confirm-title');
     const copyElement = document.getElementById('download-confirm-copy');
@@ -328,7 +331,7 @@
       if (action === 'cancel') await api(`/api/download/jobs/${jobId}/cancel`, { method: 'POST' });
       if (action === 'retry') {
         await api(`/api/download/jobs/${jobId}/retry`, { method: 'POST' });
-        TikLocalUI.toast('Retry submitted');
+        TikLocalUI.toast(T('download.retry_submitted'));
       }
       if (action === 'delete') await api(`/api/download/jobs/${jobId}`, { method: 'DELETE' });
       lastJobsSignature = '';
@@ -361,22 +364,22 @@
       if (!url) return;
       if (!updateDetectedSite(urlInput)) return;
       if (selectedEngine === 'gallery-dl' && !dependencyMeta.gallery_dl_available) {
-        TikLocalUI.toast('The image download component is not installed.', 'error');
+        TikLocalUI.toast(T('download.error.image_missing'), 'error');
         return;
       }
       if (selectedEngine === 'tiktok-downloader') {
         const status = tiktokStatus();
         if (!status || !status.configured) {
-          TikLocalUI.toast('TikTokDownloader 未配置，请先在设置中填写服务地址', 'error');
+          TikLocalUI.toast(T('download.alert.tiktok_unconfigured'), 'error');
           return;
         }
         if (!status.reachable) {
-          TikLocalUI.toast('无法连接 TikTokDownloader 服务，请确认服务已启动', 'error');
+          TikLocalUI.toast(T('download.alert.tiktok_unreachable'), 'error');
           return;
         }
       }
       submitButton.disabled = true;
-      submitButton.textContent = 'Adding…';
+      submitButton.textContent = T('download.adding');
       try {
         if (selectedEngine === 'tiktok-downloader') {
           const countSelect = document.getElementById('tiktok-count');
@@ -384,11 +387,11 @@
             method: 'POST',
             body: JSON.stringify({ url, tab: selectedTab, count: Number(countSelect?.value || '18') }),
           });
-          TikLocalUI.toast(`已加入 ${data.queued || 0} 个下载任务`);
+          TikLocalUI.toast(T('download.tiktok_queued', { n: data.queued || 0 }));
         } else {
           const payload = { url, save_mode: 'root', engine: selectedEngine, cookie_mode: 'auto' };
           await api('/api/download/jobs', { method: 'POST', body: JSON.stringify(payload) });
-          TikLocalUI.toast('Added to the download queue');
+          TikLocalUI.toast(T('download.added'));
         }
         urlInput.value = '';
         updateDetectedSite(urlInput);
@@ -398,7 +401,7 @@
         TikLocalUI.toast(error.message, 'error');
       } finally {
         submitButton.disabled = false;
-        submitButton.textContent = 'Start Download';
+        submitButton.textContent = T('download.submit_start');
         urlInput.focus();
       }
     });
@@ -412,10 +415,10 @@
     });
 
     document.getElementById('clear-history-btn')?.addEventListener('click', async () => {
-      if (!await confirmClear({ title: 'Clear all download history?', copy: 'Active jobs and local media files will be kept.' })) return;
+      if (!await confirmClear({ title: T('download.confirm_clear_all_title'), copy: T('download.confirm_clear_all_copy') })) return;
       try {
         const data = await api('/api/download/jobs/clear', { method: 'POST' });
-        TikLocalUI.toast(`Cleared ${data.deleted || 0} records`);
+        TikLocalUI.toast(T('download.cleared', { n: data.deleted || 0 }));
         lastJobsSignature = '';
         await refreshJobs({ force: true });
       } catch (error) {

@@ -7,6 +7,8 @@ from urllib.parse import urlsplit
 
 from flask import redirect, render_template, request, session, url_for
 
+from tiklocal.i18n import t
+
 
 UNSAFE_METHODS = {'POST', 'PUT', 'PATCH', 'DELETE'}
 
@@ -171,11 +173,11 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
             retry_after = limiter.retry_after(client_key)
             if retry_after:
                 minutes = max(1, (retry_after + 59) // 60)
-                error = f'Too many attempts. Try again in {minutes} minutes.'
+                error = t('login.error_too_many', minutes=minutes)
                 status = 429
             elif not auth_store.verify(request.form.get('password', '')):
                 limiter.record_failure(client_key)
-                error = 'The access password is incorrect. Please try again.'
+                error = t('login.error_wrong_password')
                 status = 401
             else:
                 limiter.clear(client_key)

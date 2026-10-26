@@ -96,7 +96,7 @@ def test_detail_route_redirects_image_to_image_view(client):
 
 
 @pytest.mark.parametrize('payload,error', [
-    ({'url': 'file:///tmp/a.mp4'}, 'HTTP and HTTPS'),
+    ({'url': 'file:///tmp/a.mp4'}, 'HTTP'),
     ({'url': 'https://example.com/video', 'engine': 'wget'}, 'engine'),
     ({'url': 'https://example.com/private', 'cookie_mode': 'manual', 'cookie_file': '../secrets.txt'}, 'cookie_file'),
 ])

@@ -1,6 +1,8 @@
 (function (global) {
   'use strict';
 
+  const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
+
   function noop() {}
 
   function defaultActions() {
@@ -118,7 +120,7 @@
       try {
         var data = await actions.getImageMetadata(key);
         if (reqId !== captionRequestId || currentCaptionUri !== key || captionRequests.has(key)) return null;
-        if (!(data && data.success)) throw new Error((data && data.error) || 'Failed to load the title');
+        if (!(data && data.success)) throw new Error((data && data.error) || T('flow.error.title_load'));
         var payload = data.data || null;
         captionCache.set(key, payload);
         onCaptionRender(payload, key);
@@ -146,7 +148,7 @@
         if (currentCaptionUri === key) onCaptionLoading(true);
         try {
           var data = await actions.generateImageMetadata(key, conf);
-          if (!(data && data.success)) throw new Error((data && data.error) || 'Failed to generate the title');
+          if (!(data && data.success)) throw new Error((data && data.error) || T('flow.error.title_generate'));
           var payload = data.data || null;
           captionCache.set(key, payload);
           if (currentCaptionUri === key) {

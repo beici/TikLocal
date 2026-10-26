@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from tiklocal.i18n import t
+
+
 DEFAULT_TIKTOK_DOWNLOADER_CONFIG: dict[str, Any] = {
     "base_url": "",
     "token": "",
@@ -52,30 +55,30 @@ class TikTokDownloaderError(Exception):
 def validate_tiktok_downloader_config(payload: Any) -> tuple[dict[str, Any] | None, str | None]:
     """Validate a ``tiktok_downloader`` config section, returning (config, error)."""
     if not isinstance(payload, dict):
-        return None, "tiktok_downloader must be an object."
+        return None, t('download.error.tiktok_config_object')
 
     section: dict[str, Any] = {}
 
     base_url = str(payload.get("base_url") or "").strip()
     if base_url and not base_url.startswith(("http://", "https://")):
-        return None, "tiktok_downloader.base_url must start with http:// or https://."
+        return None, t('download.error.tiktok_base_url')
     section["base_url"] = base_url.rstrip("/")
 
     token = payload.get("token")
     if token is None:
         token = ""
     if not isinstance(token, str) or len(token) > 512:
-        return None, "tiktok_downloader.token must be a string of at most 512 characters."
+        return None, t('download.error.tiktok_token')
     section["token"] = token
 
     timeout_sec = payload.get("timeout_sec", 15)
     if isinstance(timeout_sec, bool) or not isinstance(timeout_sec, int) or not 3 <= timeout_sec <= 60:
-        return None, "tiktok_downloader.timeout_sec must be an integer between 3 and 60."
+        return None, t('download.error.tiktok_timeout')
     section["timeout_sec"] = timeout_sec
 
     max_items = payload.get("account_max_items", 100)
     if isinstance(max_items, bool) or not isinstance(max_items, int) or not 1 <= max_items <= 500:
-        return None, "tiktok_downloader.account_max_items must be an integer between 1 and 500."
+        return None, t('download.error.tiktok_max_items')
     section["account_max_items"] = max_items
 
     return section, None
@@ -210,7 +213,7 @@ class TikTokDownloaderClient:
 
     def fetch_account(self, sec_user_id: str, tab: str = "post", count: int = 18, platform: str = "douyin") -> list[dict[str, Any]]:
         if tab not in TIKTOK_DOWNLOADER_TABS:
-            raise ValueError("tab must be post, favorite, or collection.")
+            raise ValueError(t('download.error.tiktok_tab'))
         return self._fetch_items(f"/{platform}/account", {"sec_user_id": str(sec_user_id), "tab": tab, "count": int(count)})
 
     def fetch_mix(self, mix_id: str, count: int = 18, platform: str = "douyin") -> list[dict[str, Any]]:
@@ -365,13 +368,13 @@ class TikTokDownloadService:
                 raise TikTokDownloaderError("TikTokDownloader could not resolve the shared link.")
             target = resolved
         if not target:
-            raise ValueError("Unsupported link. Paste a Douyin video, profile, or collection link.")
+            raise ValueError(t('download.error.tiktok_link'))
         return target
 
     def enqueue_from_url(self, url: str, tab: str = "post", count: int = 18) -> dict[str, Any]:
         """Resolve a link into works and enqueue one direct-download job per work."""
         if tab not in TIKTOK_DOWNLOADER_TABS:
-            raise ValueError("tab must be post, favorite, or collection.")
+            raise ValueError(t('download.error.tiktok_tab'))
         config = self.get_config()
         if not config["base_url"]:
             raise TikTokDownloaderError("TikTokDownloader service is not configured.")

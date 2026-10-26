@@ -12,6 +12,7 @@ from typing import Any
 
 from PIL import Image
 
+from tiklocal.i18n import t
 from tiklocal.services.json_storage import write_json_atomic
 
 
@@ -77,7 +78,7 @@ def validate_prompt_config(
     include_enabled: bool = False,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(payload, dict):
-        return None, "Configuration must be a JSON object."
+        return None, t('image.error.config_object')
 
     cleaned: dict[str, Any] = {}
 
@@ -85,12 +86,12 @@ def validate_prompt_config(
         if field not in payload:
             if partial:
                 return None, None
-            return None, f"Missing field: {field}"
+            return None, t('image.error.field_missing', field=field)
         value = str(payload.get(field, "")).strip()
         if not value:
-            return None, f"{field} cannot be empty."
+            return None, t('image.error.field_empty', field=field)
         if len(value) > max_length:
-            return None, f"{field} cannot exceed {max_length} characters."
+            return None, t('image.error.field_too_long', field=field, limit=max_length)
         return value, None
 
     system_prompt, error = _read_text("system_prompt", PROMPT_MAX_SYSTEM_LENGTH)
@@ -109,9 +110,9 @@ def validate_prompt_config(
         try:
             temperature = float(payload["temperature"])
         except (TypeError, ValueError):
-            return None, "temperature must be a number."
+            return None, t('image.error.temperature_number')
         if not (PROMPT_TEMPERATURE_MIN <= temperature <= PROMPT_TEMPERATURE_MAX):
-            return None, f"temperature must be between {PROMPT_TEMPERATURE_MIN} and {PROMPT_TEMPERATURE_MAX}."
+            return None, t('image.error.temperature')
         cleaned["temperature"] = temperature
     elif not partial:
         cleaned["temperature"] = float(DEFAULT_PROMPT_CONFIG["temperature"])
@@ -120,9 +121,9 @@ def validate_prompt_config(
         try:
             tags_limit = int(payload["tags_limit"])
         except (TypeError, ValueError):
-            return None, "tags_limit must be an integer."
+            return None, t('image.error.tags_integer')
         if not (PROMPT_TAGS_MIN <= tags_limit <= PROMPT_TAGS_MAX):
-            return None, f"tags_limit must be between {PROMPT_TAGS_MIN} and {PROMPT_TAGS_MAX}."
+            return None, t('image.error.tags_limit')
         cleaned["tags_limit"] = tags_limit
     elif not partial:
         cleaned["tags_limit"] = int(DEFAULT_PROMPT_CONFIG["tags_limit"])
@@ -131,7 +132,7 @@ def validate_prompt_config(
         if "enabled" in payload:
             value = payload["enabled"]
             if not isinstance(value, bool):
-                return None, "enabled must be a boolean."
+                return None, t('image.error.enabled_boolean')
             cleaned["enabled"] = value
         elif not partial:
             cleaned["enabled"] = bool(DEFAULT_PROMPT_CONFIG["enabled"])
@@ -145,22 +146,22 @@ def validate_llm_config(
     partial: bool = False,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(payload, dict):
-        return None, "Configuration must be a JSON object."
+        return None, t('image.error.config_object')
 
     cleaned: dict[str, Any] = {}
 
     if "base_url" in payload or not partial:
         base_url = str(payload.get("base_url", "")).strip()
         if len(base_url) > LLM_BASE_URL_MAX_LENGTH:
-            return None, f"base_url cannot exceed {LLM_BASE_URL_MAX_LENGTH} characters."
+            return None, t('image.error.base_url_too_long', limit=LLM_BASE_URL_MAX_LENGTH)
         if base_url and not (base_url.startswith("http://") or base_url.startswith("https://")):
-            return None, "base_url must start with http:// or https://."
+            return None, t('image.error.base_url_scheme')
         cleaned["base_url"] = base_url
 
     if "model_name" in payload or not partial:
         model_name = str(payload.get("model_name", "")).strip()
         if len(model_name) > LLM_MODEL_NAME_MAX_LENGTH:
-            return None, f"model_name cannot exceed {LLM_MODEL_NAME_MAX_LENGTH} characters."
+            return None, t('image.error.model_too_long', limit=LLM_MODEL_NAME_MAX_LENGTH)
         cleaned["model_name"] = model_name
 
     return cleaned, None
@@ -168,7 +169,7 @@ def validate_llm_config(
 
 def validate_vision_config(payload, *, partial=False):
     if not isinstance(payload, dict):
-        return None, "Configuration must be a JSON object."
+        return None, t('image.error.config_object')
     value = dict(payload) if partial else {**DEFAULT_VISION_CONFIG, **payload}
     if isinstance(payload.get('prompt'), dict):
         for source, target in (('system', 'system_prompt'), ('user', 'user_prompt')):
@@ -314,11 +315,11 @@ class CaptionService:
         self.base_url = base_url
         self.api_key = api_key
         if not self.api_key:
-            raise RuntimeError("OPENAI_API_KEY is not configured.")
+            raise RuntimeError(t('image.error.api_key_missing'))
         if not self.model:
-            raise RuntimeError("TIKLOCAL_LLM_MODEL is not configured.")
+            raise RuntimeError(t('image.error.model_missing'))
         if self.base_url and "openrouter.ai" in self.base_url and "/api/v1" not in self.base_url:
-            raise RuntimeError("base_url must include the full API path, such as https://openrouter.ai/api/v1")
+            raise RuntimeError(t('image.error.base_url_path'))
 
     def generate(
         self,
@@ -334,15 +335,15 @@ class CaptionService:
         system_prompt = str(effective_prompt["system_prompt"])
         user_prompt = self._render_user_prompt(str(effective_prompt["user_prompt"]), tags_limit)
         if not system_prompt.strip() or not user_prompt.strip():
-            raise RuntimeError("Configure the vision prompt first, or provide a prompt override for this request.")
+            raise RuntimeError(t('image.error.prompt_not_configured'))
 
         text = self._request_chat_completion(system_prompt, user_prompt, data_url, temperature)
         if self._looks_like_html(text):
-            raise RuntimeError("The model returned an HTML page. Check base_url and model.")
+            raise RuntimeError(t('image.error.html_response'))
 
         parsed = self._parse_output(text, tags_limit)
         if not parsed['title'] and not parsed['tags']:
-            raise RuntimeError('The model returned neither a title nor tags.')
+            raise RuntimeError(t('image.error.empty_result'))
 
         return {
             "title": parsed.get("title", ""),

@@ -449,7 +449,7 @@ def test_tiktok_enqueue_downloads_album_into_library(tiktok_client, monkeypatch)
 def test_tiktok_route_error_paths(tiktok_client, monkeypatch):
     res = tiktok_client.post("/api/download/tiktok", json={"url": "https://example.com/watch?v=1"})
     assert res.status_code == 400
-    assert "Unsupported link" in res.get_json()["error"]
+    assert res.get_json()["error"]
 
     res = tiktok_client.post("/api/download/tiktok", json={})
     assert res.status_code == 400

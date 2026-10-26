@@ -1,5 +1,6 @@
 from flask import render_template, request
 
+from tiklocal.i18n import t
 from tiklocal.services.downloader import (
     DEFAULT_DOWNLOAD_CONFIG, validate_download_config, validate_download_url,
 )
@@ -63,11 +64,11 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
     def api_download_cookies_upload():
         file = request.files.get('file')
         if not file:
-            return {'success': False, 'error': 'No upload file was provided.'}, 400
+            return {'success': False, 'error': t('download.error.no_upload_file')}, 400
 
         filename = str(file.filename or '').strip()
         if not filename:
-            return {'success': False, 'error': 'The filename cannot be empty.'}, 400
+            return {'success': False, 'error': t('download.error.filename_empty')}, 400
 
         content = file.read()
         try:
@@ -114,7 +115,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         payload = request.get_json(silent=True) or {}
         url = str(payload.get('url') or '').strip()
         if not url:
-            return {'success': False, 'error': 'url cannot be empty.'}, 400
+            return {'success': False, 'error': t('download.error.url_empty')}, 400
         tab = str(payload.get('tab') or 'post').strip() or 'post'
         try:
             count = int(payload.get('count') or 18)
@@ -144,7 +145,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         if section is None:
             section = payload
         if not isinstance(section, dict):
-            return {'success': False, 'error': 'tiktok_downloader must be an object.'}, 400
+            return {'success': False, 'error': t('download.error.tiktok_config_object')}, 400
 
         try:
             download_manager.update_config({'tiktok_downloader': section})
@@ -192,7 +193,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
     def api_source_single():
         file_rel = str(request.args.get('file', '')).strip()
         if not file_rel:
-            return {'success': False, 'error': 'file cannot be empty.'}, 400
+            return {'success': False, 'error': t('download.error.file_empty')}, 400
         file_rel = library_service.find_existing_uri(file_rel)
         source = download_manager.resolve_source_for_file(file_rel)
         return {'success': True, 'data': {'file': file_rel, 'source': source}}
@@ -202,7 +203,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         payload = request.get_json(silent=True) or {}
         files = payload.get('files')
         if not isinstance(files, list):
-            return {'success': False, 'error': 'files must be an array.'}, 400
+            return {'success': False, 'error': t('download.error.files_array')}, 400
 
         normalized: list[str] = []
         response_keys: list[tuple[str, str]] = []

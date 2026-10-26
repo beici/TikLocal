@@ -1,12 +1,15 @@
 (function () {
   'use strict';
 
+  const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
+  const dateLocale = () => (document.documentElement.lang === 'en' ? 'en' : 'zh-CN');
+
   function byId(id) { return document.getElementById(id); }
 
   function fetchJson(url) {
     return fetch(url, { headers: { Accept: 'application/json' } })
       .then(function (response) {
-        if (!response.ok) throw new Error('Request failed');
+        if (!response.ok) throw new Error(T('home.request_failed'));
         return response.json();
       });
   }
@@ -16,7 +19,7 @@
   }
 
   function mediaName(item) {
-    var raw = String(item.name || '').split('/').pop() || 'Untitled media';
+    var raw = String(item.name || '').split('/').pop() || T('home.untitled_media');
     return raw.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
   }
 
@@ -31,7 +34,7 @@
     var link = document.createElement('a');
     link.className = 'media-tile' + (extraClass ? ' ' + extraClass : '');
     link.href = item.detail_url || '/library';
-    link.setAttribute('aria-label', 'View ' + mediaName(item));
+    link.setAttribute('aria-label', T('home.view_media', { name: mediaName(item) }));
 
     var image = document.createElement('img');
     image.src = item.thumb_url;
@@ -70,7 +73,9 @@
       collage.appendChild(placeholder);
     }
     var total = Number(stats && stats.indexed_total) || items.length;
-    byId('home-flow-meta').textContent = total ? total.toLocaleString('en') + ' private moments' : 'Mixed media flow';
+    byId('home-flow-meta').textContent = total
+      ? T('home.flow.meta_count', { n: total.toLocaleString('en') })
+      : T('home.flow.meta');
   }
 
   function renderRibbon(containerId, items, extraClass) {
@@ -80,7 +85,15 @@
     if (!items.length) {
       var empty = document.createElement('div');
       empty.className = 'home-empty';
-      empty.innerHTML = '<span>It is quiet here for now.<br><a href="/settings/">Add a media source</a> and your library will begin to grow.</span>';
+      var copy = document.createElement('span');
+      copy.appendChild(document.createTextNode(T('home.empty.quiet')));
+      copy.appendChild(document.createElement('br'));
+      var source = document.createElement('a');
+      source.href = '/settings/';
+      source.textContent = T('home.empty.add_source');
+      copy.appendChild(source);
+      copy.appendChild(document.createTextNode(T('home.empty.grow')));
+      empty.appendChild(copy);
       container.appendChild(empty);
       return;
     }
@@ -92,16 +105,18 @@
     var years = (data && data.years) || [];
     if (!years.length) return;
     var date = new Date(data.date + 'T12:00:00');
-    var day = date.toLocaleDateString('en', { month: 'long', day: 'numeric' });
+    var day = date.toLocaleDateString(dateLocale(), { month: 'long', day: 'numeric' });
     byId('memories-kicker').textContent = years.length === 1
       ? day + ' · ' + agoLabel(years[0].years_ago)
-      : day + ' · across ' + years.length + ' years';
-    byId('memories-title').textContent = data.window === 'day' ? 'On This Day' : 'This Week, Years Ago';
+      : T('home.memories.across', { date: day, n: years.length });
+    byId('memories-title').textContent = data.window === 'day'
+      ? T('home.memories.title_day')
+      : T('home.memories.title_week');
     var first = years[0];
     var month = data.date.slice(5, 7);
     var link = byId('memories-link');
     link.href = '/library?view=explore&month=' + first.year + '-' + month;
-    link.firstChild.nodeValue = date.toLocaleDateString('en', { month: 'long' }) + ' ' + first.year + ' ';
+    link.firstChild.nodeValue = date.toLocaleDateString(dateLocale(), { month: 'long' }) + ' ' + first.year + ' ';
 
     var container = byId('home-memories-list');
     container.replaceChildren();
@@ -116,7 +131,7 @@
   }
 
   function agoLabel(years) {
-    return years === 1 ? 'A year ago' : years + ' years ago';
+    return years === 1 ? T('home.ago.year') : T('home.ago.years', { n: years });
   }
 
   function renderCollections(items) {
@@ -127,7 +142,11 @@
       var empty = document.createElement('a');
       empty.className = 'collection-empty';
       empty.href = '/collections';
-      empty.innerHTML = 'No collections yet.<br>Gather favorite moments into a chapter of your own.';
+      empty.append(
+        document.createTextNode(T('home.collections.empty')),
+        document.createElement('br'),
+        document.createTextNode(T('home.collections.empty_copy')),
+      );
       container.appendChild(empty);
       return;
     }
@@ -149,9 +168,9 @@
       var copy = document.createElement('span');
       copy.className = 'collection-copy';
       var title = document.createElement('strong');
-      title.textContent = item.name || 'Untitled collection';
+      title.textContent = item.name || T('home.untitled_collection');
       var count = document.createElement('span');
-      count.textContent = (Number(item.item_count) || 0) + ' media items';
+      count.textContent = T('library.media_items', { n: Number(item.item_count) || 0 });
       copy.appendChild(title);
       copy.appendChild(count);
 
@@ -165,8 +184,10 @@
   function renderStats(stats) {
     var total = Number(stats.indexed_total) || 0;
     var audio = Number(stats.audios) || 0;
-    var summary = total ? total.toLocaleString('en') + ' media items' : 'Waiting for your first media item';
-    if (audio) summary += ' · ' + audio.toLocaleString('en') + ' audio tracks';
+    var summary = total
+      ? T('library.media_items', { n: total.toLocaleString('en') })
+      : T('home.stats.waiting');
+    if (audio) summary += ' · ' + T('home.stats.audio_tracks', { n: audio.toLocaleString('en') });
     byId('home-library-summary').textContent = summary;
   }
 
@@ -178,23 +199,23 @@
     fetchJson('/api/radio/stations').then(function (payload) {
       var stations = apiData(payload).stations || [];
       var station = stations.find(function (item) { return item.id === stationId; });
-      if (station) byId('home-radio-station').textContent = station.name || 'Private Radio';
+      if (station) byId('home-radio-station').textContent = station.name || T('home.radio.station_default');
     }).catch(function () {});
 
     if (!saved.name) return;
     fetchJson('/api/radio/metadata?uri=' + encodeURIComponent(saved.name)).then(function (payload) {
       var track = apiData(payload);
       byId('home-radio-title').textContent = track.title || mediaName({ name: saved.name });
-      byId('home-radio-action').firstChild.nodeValue = 'Keep Listening ';
+      byId('home-radio-action').firstChild.nodeValue = T('home.radio.keep_listening') + ' ';
     }).catch(function () {});
   }
 
   function updateGreeting() {
     var hour = new Date().getHours();
-    var title = 'Where would you like to begin?';
-    if (hour >= 18 || hour < 5) title = 'Where would you like to begin tonight?';
-    else if (hour < 11) title = 'Good morning. Where would you like to begin?';
-    else if (hour < 14) title = 'Where would you like to begin this afternoon?';
+    var title = T('home.greeting.default');
+    if (hour >= 18 || hour < 5) title = T('home.greeting.evening');
+    else if (hour < 11) title = T('home.greeting.morning');
+    else if (hour < 14) title = T('home.greeting.afternoon');
     byId('home-title').textContent = title;
   }
 

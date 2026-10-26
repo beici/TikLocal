@@ -2,6 +2,7 @@
 // TikLocalResume.track(video, uri, position) after a video element gets a new source; the server
 // decides what is worth keeping (long videos, not the first or last seconds).
 (function () {
+  var T = function (key, params) { return (window.TikLocalI18n && window.TikLocalI18n.t(key, params)) || key; };
   var states = new WeakMap();
   var tracked = new Set();
   // Positions saved during this page's life win over the (possibly stale) ones the page was rendered with.
@@ -61,8 +62,8 @@
       if (position > 0 && video.currentTime < 1) {
         video.currentTime = position;
         if (window.TikLocalUI) {
-          TikLocalUI.toast('Resumed at ' + clock(position), 'info', {
-            label: 'Start over',
+          TikLocalUI.toast(T('common.resumed_at', { time: clock(position) }), 'info', {
+            label: T('common.start_over'),
             run: function () {
               video.currentTime = 0;
               video.play().catch(function () {});

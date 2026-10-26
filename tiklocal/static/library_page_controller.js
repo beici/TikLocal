@@ -1,4 +1,6 @@
 (() => {
+  const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
+  const dateLocale = () => (document.documentElement.lang === 'en' ? 'en' : 'zh-CN');
   const boot = window.__TIKLOCAL_LIBRARY_BOOT__ || {};
   delete window.__TIKLOCAL_LIBRARY_BOOT__;
 
@@ -433,7 +435,7 @@
 
   async function loadNextPage() {
     if (semanticSearch || flowSession.isLoading() || !flowSession.hasMore()) return;
-    setLoadingText('Loading...');
+    setLoadingText(T('library.status.loading'));
     try {
       await flowSession.loadMore(async (cursor) => {
         const offset = Number(cursor?.offset || 0);
@@ -464,17 +466,17 @@
 
       if (!items.length) {
         if (searchQuery) {
-          setLoadingText(`No results for "${searchQuery}"`, { clearSearch: true });
+          setLoadingText(T('library.status.no_results', { query: searchQuery }), { clearSearch: true });
         } else {
           setLoadingText(currentEmptyMessage());
         }
       } else if (!flowSession.hasMore()) {
-        setLoadingText('You have reached the end');
+        setLoadingText(T('library.status.end'));
       } else {
-        setLoadingText('Keep scrolling to load more');
+        setLoadingText(T('library.status.keep_scrolling'));
       }
     } catch (error) {
-      setLoadingText('Failed to load', { retry: true });
+      setLoadingText(T('library.status.failed'), { retry: true });
     }
   }
 
@@ -520,7 +522,7 @@
     document.getElementById('image-search-reset')?.setAttribute('hidden', '');
     document.getElementById('image-search-setup')?.setAttribute('hidden', '');
     const imageSearchStatus = document.getElementById('image-search-status');
-    if (imageSearchStatus) imageSearchStatus.textContent = 'Each search calls the selected model.';
+    if (imageSearchStatus) imageSearchStatus.textContent = T('library.semantic.status_hint');
     closeViewer();
     flowSession.reset({
       hasMore: true,
@@ -532,7 +534,7 @@
       updateOrganizeBar();
     }
     activeTab();
-    setLoadingText('Loading...');
+    setLoadingText(T('library.status.loading'));
     await loadNextPage();
   }
 
@@ -572,7 +574,7 @@
     }
     const isCurrent = String(item.name) === collectionCoverUri;
     quickSetCover.dataset.currentCover = isCurrent ? 'true' : 'false';
-    quickSetCover.title = isCurrent ? 'Current cover' : 'Set as Cover';
+    quickSetCover.title = isCurrent ? T('library.quick.current_cover') : T('library.quick.set_cover_short');
     quickSetCover.setAttribute('aria-label', quickSetCover.title);
     quickSetCover.disabled = isCurrent;
   }
@@ -616,8 +618,8 @@
   function updateFavoriteButton(favorited) {
     quickFavorite.classList.toggle('is-favorited', !!favorited);
     quickFavorite.setAttribute('aria-pressed', String(!!favorited));
-    quickFavorite.setAttribute('aria-label', favorited ? 'Remove from favorites' : 'Add to favorites');
-    quickFavorite.title = favorited ? 'Remove from favorites' : 'Add to favorites';
+    quickFavorite.setAttribute('aria-label', favorited ? T('library.quick.favorite_remove') : T('library.quick.favorite_add'));
+    quickFavorite.title = favorited ? T('library.quick.favorite_remove') : T('library.quick.favorite_add');
   }
 
   function updateSourceButton(sourceMeta) {
@@ -625,12 +627,12 @@
     if (!url) {
       quickSource.classList.add('is-hidden');
       quickSource.removeAttribute('href');
-      quickSource.title = 'Source not recorded';
+      quickSource.title = T('library.quick.source_missing');
       return;
     }
     const domain = String(sourceMeta?.source_domain || '').trim();
     quickSource.href = url;
-    quickSource.title = domain ? `View source (${domain})` : 'View source';
+    quickSource.title = domain ? T('library.quick.source_domain', { domain }) : T('library.quick.source');
     quickSource.classList.remove('is-hidden');
   }
 
@@ -860,7 +862,7 @@
     } catch (error) {
       await syncFavoriteState(item);
       if (currentItem()?.name === item.name) {
-        quickFavorite.title = 'Favorite was not saved. Please try again.';
+        quickFavorite.title = T('library.quick.favorite_failed');
         quickFavorite.setAttribute('aria-label', quickFavorite.title);
       }
     }
@@ -941,7 +943,7 @@
   }
 
   function currentEmptyMessage() {
-    if (scope === 'favorite' && activeCollectionId) return 'This collection has no media to display yet.';
+    if (scope === 'favorite' && activeCollectionId) return T('library.empty.collection');
     return emptyMessage;
   }
 
@@ -991,7 +993,7 @@
   function updateOrganizeBar() {
     if (!organizeBar) return;
     const countEl = document.getElementById('organize-count');
-    if (countEl) countEl.textContent = `已选 ${selectedNames.size} 项`;
+    if (countEl) countEl.textContent = T('library.organize.selected', { n: selectedNames.size });
     const inCollection = activeScope === 'collection' && !!activeCollectionId;
     const moveBtn = document.getElementById('organize-move');
     const removeBtn = document.getElementById('organize-remove');
@@ -1005,7 +1007,7 @@
     const selectAllBtn = document.getElementById('organize-select-all');
     if (selectAllBtn) {
       const allSelected = items.length > 0 && selectedNames.size >= items.length;
-      selectAllBtn.textContent = allSelected ? '取消全选' : '全选';
+      selectAllBtn.textContent = allSelected ? T('library.organize.deselect_all') : T('library.organize.select_all');
     }
   }
 
@@ -1048,9 +1050,9 @@
     if (!organizeSheet || !selectedNames.size || organizeBusy) return;
     organizeSheetMode = mode === 'move' ? 'move' : 'add';
     const title = document.getElementById('organize-sheet-title');
-    if (title) title.textContent = organizeSheetMode === 'move' ? '移动到合集' : '加入合集';
+    if (title) title.textContent = organizeSheetMode === 'move' ? T('library.organize.move') : T('library.organize.add');
     const listEl = document.getElementById('organize-sheet-list');
-    if (listEl) listEl.innerHTML = '<div class="organize-sheet-empty">加载中…</div>';
+    if (listEl) listEl.innerHTML = `<div class="organize-sheet-empty">${T('common.loading')}</div>`;
     organizeSheet.classList.add('active');
     organizeSheet.setAttribute('aria-hidden', 'false');
     try {
@@ -1058,7 +1060,7 @@
       const rows = (data?.items || []).filter((item) => organizeSheetMode === 'add' || String(item.id) !== activeCollectionId);
       if (!listEl) return;
       if (!rows.length) {
-        listEl.innerHTML = '<div class="organize-sheet-empty">暂无可选合集，先到合集页创建一个吧</div>';
+        listEl.innerHTML = `<div class="organize-sheet-empty">${T('library.organize.empty')}</div>`;
         return;
       }
       listEl.innerHTML = rows.map((item) => `
@@ -1068,7 +1070,7 @@
           <span class="organize-sheet-item-count">${Number(item.item_count || 0)}</span>
         </label>`).join('');
     } catch (error) {
-      if (listEl) listEl.innerHTML = `<div class="organize-sheet-empty">${escapeHtmlText(error?.message || '加载合集失败')}</div>`;
+      if (listEl) listEl.innerHTML = `<div class="organize-sheet-empty">${escapeHtmlText(error?.message || T('library.organize.load_failed'))}</div>`;
     }
   }
 
@@ -1104,7 +1106,7 @@
     const confirmBtn = document.getElementById('organize-sheet-confirm');
     if (confirmBtn) {
       confirmBtn.disabled = true;
-      confirmBtn.textContent = '处理中…';
+      confirmBtn.textContent = T('library.organize.processing');
     }
     const uris = [...selectedNames];
     try {
@@ -1112,14 +1114,14 @@
       if (organizeSheetMode === 'move' && activeCollectionId) {
         await sendCollectionUris(activeCollectionId, 'DELETE', uris);
       }
-      await finishOrganizeAction(organizeSheetMode === 'move' ? '已移动到合集' : '已加入合集');
+      await finishOrganizeAction(organizeSheetMode === 'move' ? T('library.organize.moved') : T('library.organize.added'));
     } catch (error) {
-      showOrganizeToast(error?.message || '操作失败，请重试', 'error');
+      showOrganizeToast(error?.message || T('library.organize.failed'), 'error');
     } finally {
       organizeBusy = false;
       if (confirmBtn) {
         confirmBtn.disabled = false;
-        confirmBtn.textContent = '确认';
+        confirmBtn.textContent = T('common.confirm');
       }
     }
   }
@@ -1130,9 +1132,9 @@
     if (removeBtn) removeBtn.disabled = true;
     try {
       await sendCollectionUris(activeCollectionId, 'DELETE', [...selectedNames]);
-      await finishOrganizeAction('已移出合集');
+      await finishOrganizeAction(T('library.organize.removed'));
     } catch (error) {
-      showOrganizeToast(error?.message || '操作失败，请重试', 'error');
+      showOrganizeToast(error?.message || T('library.organize.failed'), 'error');
     } finally {
       if (removeBtn) removeBtn.disabled = false;
     }
@@ -1291,7 +1293,7 @@
   imageSearchForm?.addEventListener('submit', async event => {
     event.preventDefault();
     if (flowSession.isLoading()) {
-      imageSearchStatus.textContent = 'Wait for the library to finish loading, then search.';
+      imageSearchStatus.textContent = T('library.status.search_wait');
       return;
     }
     const query = document.getElementById('image-search-query').value.trim();
@@ -1300,7 +1302,7 @@
     const requestId = ++searchRequest;
     const button = imageSearchForm.querySelector('[type="submit"]');
     button.disabled = true;
-    button.textContent = 'Searching…';
+    button.textContent = T('library.status.searching');
     imageSearchForm.setAttribute('aria-busy', 'true');
     semanticSearch = true;
     if (discoveries) {
@@ -1308,7 +1310,7 @@
       discoveries.hidden = true;
     }
     imageSearchSetup.hidden = true;
-    imageSearchStatus.textContent = 'Finding media… Your model may take a moment.';
+    imageSearchStatus.textContent = T('library.status.searching_hint');
     try {
       const response = await fetch('/api/library/media-search', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1317,7 +1319,7 @@
       const payload = await response.json();
       if (requestId !== searchRequest) return;
       if (!payload.success) {
-        const error = new Error(payload.error || 'Search failed.');
+        const error = new Error(payload.error || T('library.status.search_failed'));
         error.status = response.status;
         throw error;
       }
@@ -1329,8 +1331,8 @@
       feather.replace();
       document.getElementById('image-search-reset').hidden = false;
       const resultCount = payload.data.items.length;
-      imageSearchStatus.textContent = `${resultCount} results for “${query}”, ranked by similarity.`;
-      setLoadingText(resultCount ? 'End of search results' : 'No prepared media of this type yet.');
+      imageSearchStatus.textContent = T('library.status.search_results', { n: resultCount, query });
+      setLoadingText(resultCount ? T('library.status.search_end') : T('library.status.search_empty'));
     } catch (error) {
       if (requestId === searchRequest) {
         imageSearchStatus.textContent = error.message;
@@ -1339,7 +1341,7 @@
       }
     } finally {
       button.disabled = false;
-      button.textContent = 'Search';
+      button.textContent = T('common.search');
       imageSearchForm.removeAttribute('aria-busy');
     }
   });
@@ -1397,7 +1399,7 @@
   }
 
   retryButton.addEventListener('click', async () => {
-    setLoadingText('Reloading...');
+    setLoadingText(T('library.status.reloading'));
     await loadNextPage();
   });
 
@@ -1414,19 +1416,19 @@
   const monthHeading = document.querySelector('[data-month-heading]');
   if (monthHeading && /^\d{4}-\d{2}$/.test(timelineMonth)) {
     const [year, monthNumber] = timelineMonth.split('-');
-    monthHeading.textContent = new Intl.DateTimeFormat('en', { year: 'numeric', month: 'long' }).format(new Date(year, Number(monthNumber) - 1, 1));
+    monthHeading.textContent = new Intl.DateTimeFormat(dateLocale(), { year: 'numeric', month: 'long' }).format(new Date(year, Number(monthNumber) - 1, 1));
   }
   relayoutWaterfall();
   if (!items.length && !flowSession.hasMore()) {
     if (searchQuery) {
-      setLoadingText(`No results for "${searchQuery}"`, { clearSearch: true });
+      setLoadingText(T('library.status.no_results', { query: searchQuery }), { clearSearch: true });
     } else {
       setLoadingText(emptyMessage);
     }
   } else if (!flowSession.hasMore()) {
-    setLoadingText('You have reached the end');
+    setLoadingText(T('library.status.end'));
   } else {
-    setLoadingText('Keep scrolling to load more');
+    setLoadingText(T('library.status.keep_scrolling'));
   }
   feather.replace();
   syncSearchUI();

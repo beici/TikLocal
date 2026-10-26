@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 from flask import render_template, request
 
+from tiklocal.i18n import t
 from tiklocal.services import media_naming
 from tiklocal.services.recommendation import FORGOTTEN_DAYS, shown_within
 from tiklocal.web import read_int_arg
@@ -177,7 +178,11 @@ def build_memory_card(records: list[dict], profiles: dict, rng: random.Random, n
     return {
         'type': 'image_group',
         'name': f"memory:{items[0]['name']}",
-        'caption': f"This week in {first.year}" if same_week else first.strftime('%B %Y'),
+        'caption': (
+            t('flow.memory.this_week', year=first.year) if same_week else
+            t('flow.memory.month_year', year=first.year, month=first.month,
+              month_name=first.strftime('%B'))
+        ),
         'items': [build_feed_media_item(item['name'], 'image') for item in items],
     }
 
@@ -297,8 +302,8 @@ def build_mix_feed_page(
         image_group_candidate = {
             'type': 'image_group',
             'name': f"group:{group_items[0]['name']}",
-            'title': 'Original Gallery',
-            'subtitle': 'Swipe sideways through images from the same post.',
+            'title': t('flow.group.original_title'),
+            'subtitle': t('flow.group.original_subtitle'),
             'items': group_items,
         }
         image_group_names = {str(item.get('name') or '') for item in group_items}
@@ -320,8 +325,8 @@ def build_mix_feed_page(
             mixed_entries.append({
                 'type': 'image_group',
                 'name': f"album:{name}",
-                'title': '实况' if is_live_post else '图集',
-                'subtitle': '左右滑动查看整组内容',
+                'title': t('flow.group.live_title') if is_live_post else t('flow.group.album_title'),
+                'subtitle': t('flow.group.album_subtitle'),
                 'items': [
                     build_feed_media_item(
                         str(member['name']), str(member['media_type']),
@@ -378,7 +383,7 @@ def build_mix_feed_page(
             insert_at = min(6, len(mixed_entries))
             mixed_entries.insert(insert_at, {
                 'type': 'image_group', 'name': f"related:{group['group_key']}",
-                'title': 'Related Photos', 'subtitle': 'More from your library.',
+                'title': t('flow.group.related_title'), 'subtitle': t('flow.group.related_subtitle'),
                 'items': children,
             })
 

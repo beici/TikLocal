@@ -5,6 +5,7 @@ from urllib.parse import quote, unquote
 
 from flask import render_template, request, send_file
 
+from tiklocal.i18n import t
 from tiklocal.services.radio import RadioCandidate
 from tiklocal.web import read_int_arg
 from tiklocal.web.media_payloads import media_urls
@@ -26,6 +27,18 @@ def register_radio_routes(app, library_service, radio_service, thumbnail_service
             library_service.canonicalize_uri(value)
             for value in values
             if str(value or '').strip()
+        }
+
+    def _localize_station(station: dict) -> dict:
+        """Translate a station's copy by id, keeping the service text as fallback."""
+        station_id = str(station.get('id') or '')
+        name_key = f'radio.station.{station_id}.name'
+        desc_key = f'radio.station.{station_id}.desc'
+        name, description = t(name_key), t(desc_key)
+        return {
+            **station,
+            'name': station.get('name') if name == name_key else name,
+            'description': station.get('description') if description == desc_key else description,
         }
 
     def _serialize_radio_track(item: RadioCandidate) -> dict:
@@ -57,7 +70,7 @@ def register_radio_routes(app, library_service, radio_service, thumbnail_service
         uri = library_service.find_existing_uri(unquote(request.args.get('uri') or ''))
         envelope = energy_service.get_envelope(uri) if uri else None
         if envelope is None:
-            return {'success': False, 'error': 'Energy unavailable'}, 404
+            return {'success': False, 'error': t('radio.energy_unavailable')}, 404
         return {'success': True, 'data': {'hop': envelope['hop'], 'values': envelope['values']}}
 
     @app.route('/api/radio/items')
@@ -85,7 +98,9 @@ def register_radio_routes(app, library_service, radio_service, thumbnail_service
 
     @app.route('/api/radio/stations')
     def api_radio_stations():
-        return {'success': True, 'data': {'stations': radio_service.list_stations()}}
+        return {'success': True, 'data': {
+            'stations': [_localize_station(station) for station in radio_service.list_stations()],
+        }}
 
     @app.route('/api/radio/tune')
     def api_radio_tune():
@@ -97,6 +112,8 @@ def register_radio_routes(app, library_service, radio_service, thumbnail_service
             seed=str(request.args.get('seed', '')).strip() or None,
             serialize_track=_serialize_radio_track,
         )
+        if isinstance(payload.get('station'), dict):
+            payload['station'] = _localize_station(payload['station'])
         return {'success': True, 'data': payload}
 
     @app.route('/api/radio/metadata')
@@ -104,7 +121,7 @@ def register_radio_routes(app, library_service, radio_service, thumbnail_service
         uri = library_service.find_existing_uri(unquote(request.args.get('uri') or ''))
         path = library_service.resolve_path(uri)
         if not uri or not path or not path.exists() or not path.is_file():
-            return {'success': False, 'error': 'Audio not found'}, 404
+            return {'success': False, 'error': t('radio.audio_not_found')}, 404
         metadata = radio_service.metadata_for(path)
         return {'success': True, 'data': {
             'name': library_service.get_relative_path(path),
@@ -120,7 +137,7 @@ def register_radio_routes(app, library_service, radio_service, thumbnail_service
         event = str(payload.get('event') or '').strip()
         uri = str(payload.get('name') or payload.get('uri') or '').strip()
         if event not in {'play', 'complete', 'replay', 'skip', 'favorite', 'error'}:
-            return {'success': False, 'error': 'Invalid feedback event'}, 400
+            return {'success': False, 'error': t('radio.invalid_feedback')}, 400
         ratio = _positive_ratio(payload.get('ratio'))
         entry = radio_service.record_feedback(uri, event, ratio=ratio)
         return {'success': True, 'data': {'profile': entry}}

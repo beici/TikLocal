@@ -1,6 +1,8 @@
 (function () {
   'use strict';
 
+  const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
+
   var STATION_KEY = 'radio_station';
   var RECENT_KEY = 'radio_recent_tracks';
   var POSITION_KEY = 'radio_position';
@@ -15,51 +17,51 @@
   // event: the scene's rare moment (see radio_scene.js), paired with a sound when it has one.
   var ROOMS = {
     glass: {
-      label: 'ROOM · GLASS',
-      ariaLabel: 'Ambience: rain on glass. Click to select.',
+      label: T('radio.room.glass.label'),
+      ariaLabel: T('radio.room.glass.aria'),
       sourceKey: 'Rain',
       scene: true,
       sound: 'rain',
       event: 'lightning',
     },
     snow: {
-      label: 'ROOM · SNOW',
-      ariaLabel: 'Ambience: snowy night. Click to select.',
+      label: T('radio.room.snow.label'),
+      ariaLabel: T('radio.room.snow.aria'),
       sourceKey: '',
       scene: true,
       sound: 'snow',
       event: 'car',
     },
     hearth: {
-      label: 'ROOM · HEARTH',
-      ariaLabel: 'Ambience: by the fire. Click to select.',
+      label: T('radio.room.hearth.label'),
+      ariaLabel: T('radio.room.hearth.aria'),
       sourceKey: '',
       scene: true,
       sound: 'fire',
       event: 'burst',
     },
     firefly: {
-      label: 'ROOM · FIREFLY',
-      ariaLabel: 'Ambience: summer night with fireflies. Click to select.',
+      label: T('radio.room.firefly.label'),
+      ariaLabel: T('radio.room.firefly.aria'),
       sourceKey: '',
       scene: true,
       sound: 'night',
       event: 'meteor',
     },
     rain: {
-      label: 'ROOM · RAIN',
-      ariaLabel: 'Ambience: rainy night. Click to select.',
+      label: T('radio.room.rain.label'),
+      ariaLabel: T('radio.room.rain.aria'),
       sourceKey: 'Rain',
       sound: 'rain',
     },
     breeze: {
-      label: 'ROOM · BREEZE',
-      ariaLabel: 'Ambience: afternoon breeze. Click to select.',
+      label: T('radio.room.breeze.label'),
+      ariaLabel: T('radio.room.breeze.aria'),
       sourceKey: 'Breeze',
     },
     off: {
-      label: 'ROOM · OFF',
-      ariaLabel: 'Ambience: off. Click to select.',
+      label: T('radio.room.off.label'),
+      ariaLabel: T('radio.room.off.aria'),
       sourceKey: '',
     },
   };
@@ -233,7 +235,7 @@
         updateStationText();
       })
       .catch(function () {
-        stations = [{ id: 'default', name: 'Default Station', description: '' }];
+        stations = [{ id: 'default', name: T('radio.station.default'), description: '' }];
         stationId = 'default';
         updateStationText();
       });
@@ -313,7 +315,7 @@
       audio.removeAttribute('src');
       clearTrackInfoTimers();
       els.radioPage.classList.remove('is-changing-track', 'is-buffering', 'has-error');
-      setTrackInfo('No audio available', '');
+      setTrackInfo(T('radio.no_audio'), '');
       updateSignalArt(null);
       updateFavorite();
       updateMediaSession();
@@ -326,7 +328,7 @@
     audio.src = track.media_url;
     trackPlayReportedFor = '';
     trackExitReportedFor = '';
-    transitionTrackInfo(track.title || 'Untitled audio', buildTrackMeta(track));
+    transitionTrackInfo(track.title || T('radio.untitled_audio'), buildTrackMeta(track));
     setNeedle();
     updateSignalArt(track);
     loadEnergy();
@@ -397,7 +399,7 @@
       })
       .catch(function () {
         if (currentTrack === track) {
-          els.btnFav.title = 'Favorite was not saved. Please try again.';
+          els.btnFav.title = T('radio.favorite_save_failed');
           els.btnFav.setAttribute('aria-label', els.btnFav.title);
         }
       })
@@ -442,10 +444,11 @@
     if (!els.btnEncore) return;
     var active = encoreRemaining > 0;
     var countText = active ? String(encoreRemaining) : '';
-    var label = 'Play again';
+    var label = T('radio.play_again');
     if (active) {
-      label = encoreRemaining + ' more plays queued. Click to '
-        + (encoreRemaining === MAX_ENCORE_COUNT ? 'turn off' : 'add another');
+      label = encoreRemaining === MAX_ENCORE_COUNT
+        ? T('radio.encore_queued_off', { n: encoreRemaining })
+        : T('radio.encore_queued_add', { n: encoreRemaining });
     }
     els.btnEncore.innerHTML = ICONS.repeat
       + '<span id="encore-count" class="encore-count" aria-hidden="true">' + countText + '</span>';
@@ -488,13 +491,13 @@
 
   function updateSleep() {
     if (!sleepEnd) {
-      els.btnSleep.innerHTML = ICONS.moon + '<span id="sleep-label" class="sr-only">Sleep timer</span>';
+      els.btnSleep.innerHTML = ICONS.moon + '<span id="sleep-label" class="sr-only">' + T('radio.sleep_timer') + '</span>';
       els.sleepLabel = document.getElementById('sleep-label');
       els.btnSleep.style.color = '';
       els.btnSleep.classList.remove('is-active');
       els.btnSleep.setAttribute('aria-pressed', 'false');
-      els.btnSleep.setAttribute('aria-label', 'Sleep timer');
-      els.btnSleep.setAttribute('title', 'Sleep timer');
+      els.btnSleep.setAttribute('aria-label', T('radio.sleep_timer'));
+      els.btnSleep.setAttribute('title', T('radio.sleep_timer'));
       return;
     }
     var minutes = SLEEP_OPTIONS[sleepIndex];
@@ -503,8 +506,8 @@
     els.btnSleep.style.color = 'var(--radio-accent)';
     els.btnSleep.classList.add('is-active');
     els.btnSleep.setAttribute('aria-pressed', 'true');
-    els.btnSleep.setAttribute('aria-label', 'Stop in ' + minutes + ' minutes');
-    els.btnSleep.setAttribute('title', 'Stop in ' + minutes + ' minutes');
+    els.btnSleep.setAttribute('aria-label', T('radio.sleep_stop_in', { n: minutes }));
+    els.btnSleep.setAttribute('title', T('radio.sleep_stop_in', { n: minutes }));
   }
 
   function renderStations() {
@@ -552,8 +555,8 @@
   }
 
   function updatePlayIcon() {
-    els.btnPlay.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play');
-    els.btnPlay.setAttribute('title', isPlaying ? 'Pause' : 'Play');
+    els.btnPlay.setAttribute('aria-label', isPlaying ? T('radio.pause') : T('radio.play'));
+    els.btnPlay.setAttribute('title', isPlaying ? T('radio.pause') : T('radio.play'));
     els.btnPlay.setAttribute('aria-pressed', isPlaying ? 'true' : 'false');
   }
 
@@ -750,7 +753,7 @@
   function updateRoomSound() {
     if (!els.btnRoomSound) return;
     els.radioPage.classList.toggle('has-room-sound', roomHasSound());
-    var label = roomSoundOn ? 'Ambient sound: on' : 'Ambient sound: off';
+    var label = roomSoundOn ? T('radio.ambient_on') : T('radio.ambient_off');
     els.btnRoomSound.setAttribute('aria-pressed', roomSoundOn ? 'true' : 'false');
     els.btnRoomSound.setAttribute('aria-label', label);
     els.btnRoomSound.setAttribute('title', label);
@@ -795,12 +798,12 @@
 
   function updateFavorite() {
     var active = Boolean(currentTrack && currentTrack.is_favorite);
-    els.btnFav.innerHTML = (active ? ICONS.heartFilled : ICONS.heart) + '<span class="sr-only">' + (active ? 'Favorited' : 'Favorite') + '</span>';
+    els.btnFav.innerHTML = (active ? ICONS.heartFilled : ICONS.heart) + '<span class="sr-only">' + (active ? T('radio.favorited') : T('radio.favorite')) + '</span>';
     els.btnFav.classList.toggle('is-active', active);
     els.btnFav.style.color = active ? 'var(--radio-accent)' : '';
     els.btnFav.setAttribute('aria-pressed', active ? 'true' : 'false');
-    els.btnFav.setAttribute('aria-label', active ? 'Remove from favorites' : 'Add to favorites');
-    els.btnFav.setAttribute('title', active ? 'Remove from favorites' : 'Add to favorites');
+    els.btnFav.setAttribute('aria-label', active ? T('radio.favorite_remove') : T('radio.favorite_add'));
+    els.btnFav.setAttribute('title', active ? T('radio.favorite_remove') : T('radio.favorite_add'));
   }
 
   function onTimeUpdate() {
@@ -881,7 +884,7 @@
         currentTrack.artist = metadata.artist || '';
         currentTrack.album = metadata.album || '';
         currentTrack.duration = metadata.duration || null;
-        queueTrackInfo(currentTrack.title || 'Untitled audio', buildTrackMeta(currentTrack));
+        queueTrackInfo(currentTrack.title || T('radio.untitled_audio'), buildTrackMeta(currentTrack));
         updateMediaSession();
       })
       .catch(function () {});
@@ -1004,14 +1007,14 @@
 
   function getStationName() {
     var station = stations.find(function (item) { return item.id === stationId; });
-    return station ? station.name : 'Default Station';
+    return station ? station.name : T('radio.station.default');
   }
 
   function showLoadError(error) {
     if (window.console && console.error) {
       console.error('Radio load failed:', error);
     }
-    els.trackTitle.textContent = 'Failed to load';
+    els.trackTitle.textContent = T('radio.load_failed');
     els.radioPage.classList.add('has-error');
     setBuffering(false);
     if (els.trackMeta) {
@@ -1024,7 +1027,7 @@
   function readApi(response) {
     return response.json().then(function (payload) {
       if (!response.ok || payload.success === false) {
-        throw new Error(payload.error || 'Request failed');
+        throw new Error(payload.error || T('radio.request_failed'));
       }
       return payload.data || payload;
     });

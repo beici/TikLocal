@@ -1,3 +1,4 @@
+const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
 const imageDetailBoot = window.__TIKLOCAL_IMAGE_DETAIL_BOOT__ || {};
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -199,9 +200,9 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const url = window.location.origin + '/media?uri=' + imageUriEncoded;
       await navigator.clipboard.writeText(url);
-      TikLocalUI.toast('Link copied to clipboard', 'success');
+      TikLocalUI.toast(T('common.link_copied'), 'success');
     } catch (err) {
-      TikLocalUI.toast('Copy failed. Please copy the link manually.', 'error');
+      TikLocalUI.toast(T('common.copy_failed'), 'error');
     }
   });
 
@@ -221,12 +222,12 @@ document.addEventListener('DOMContentLoaded', () => {
       captionTitle.classList.add('hidden');
       captionContent.classList.add('hidden');
       setCaptionEmptyVisible(true);
-      if (captionPrimaryLabel) captionPrimaryLabel.textContent = 'Generate Title';
+      if (captionPrimaryLabel) captionPrimaryLabel.textContent = T('image.generate_title');
       return;
     }
     captionContent.classList.remove('hidden');
     setCaptionEmptyVisible(false);
-    if (captionPrimaryLabel) captionPrimaryLabel.textContent = 'Refresh';
+    if (captionPrimaryLabel) captionPrimaryLabel.textContent = T('image.refresh');
     captionTitle.textContent = title;
     captionTitle.classList.toggle('hidden', !title);
     captionTags.innerHTML = '';
@@ -246,9 +247,9 @@ document.addEventListener('DOMContentLoaded', () => {
     },
     onError: (kind, error) => {
       if (kind === 'caption_load') setCaptionEmptyVisible(false);
-      TikLocalUI.toast(error.message || 'Title request failed', 'error');
+      TikLocalUI.toast(error.message || T('image.error.title_request'), 'error');
     },
-    confirmCaptionReplace: () => TikLocalUI.confirm({ title: 'Replace the existing title?', message: 'The current title and tags will be regenerated.', confirmLabel: 'Replace' }),
+    confirmCaptionReplace: () => TikLocalUI.confirm({ title: T('image.replace_title'), message: T('image.replace_copy'), confirmLabel: T('image.replace_action') }),
   });
 
   const renderEmbeddedGeneration = (data) => {
@@ -258,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     embeddedGenerationCard?.classList.remove('hidden');
-    embeddedModel.textContent = embedded.model || 'Unknown';
+    embeddedModel.textContent = embedded.model || T('image.unknown_model');
     embeddedPrompt.textContent = embedded.prompt || '';
     embeddedPromptToggle.hidden = !embedded.prompt;
     if (typeof feather !== 'undefined') feather.replace();
@@ -278,7 +279,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   embeddedPromptToggle?.addEventListener('click', () => {
     const expanded = embeddedPrompt.classList.toggle('is-expanded');
-    embeddedPromptToggle.textContent = expanded ? 'Collapse' : 'Show All';
+    embeddedPromptToggle.textContent = expanded ? T('image.collapse') : T('image.show_all');
   });
 
   const openPromptModal = () => {
@@ -296,7 +297,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const res = await fetch('/api/ai/vision-config');
     const data = await res.json();
     if (!data.success) {
-      throw new Error(data.error || 'Failed to load prompt configuration');
+      throw new Error(data.error || T('image.error.prompt_config'));
     }
     promptConfigCache = data.data;
     return promptConfigCache;
@@ -313,7 +314,7 @@ document.addEventListener('DOMContentLoaded', () => {
       promptTagsInput.value = Number(source.tags_limit ?? 5);
       openPromptModal();
     } catch (err) {
-      TikLocalUI.toast(err.message || 'Failed to load prompt configuration', 'error');
+      TikLocalUI.toast(err.message || T('image.error.prompt_config'), 'error');
     }
   };
 
@@ -323,13 +324,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const temperature = Number(promptTemperatureInput?.value || 0.6);
     const tagsLimit = Number(promptTagsInput?.value || 5);
     if (!systemPrompt || !userPrompt) {
-      throw new Error('System Prompt and User Prompt cannot be empty');
+      throw new Error(T('image.error.prompt_empty'));
     }
     if (temperature < 0 || temperature > 2) {
-      throw new Error('temperature must be between 0 and 2');
+      throw new Error(T('image.error.temperature'));
     }
     if (!Number.isInteger(tagsLimit) || tagsLimit < 1 || tagsLimit > 20) {
-      throw new Error('tags_limit must be between 1 and 20');
+      throw new Error(T('image.error.tags_limit'));
     }
     return {
       system_prompt: systemPrompt,
@@ -343,7 +344,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const result = await mediaActions.generateCaption(imageUri, {
       confirmExisting: !force, force, promptOverride,
     });
-    if (result?.success) TikLocalUI.toast('Title updated', 'success');
+    if (result?.success) TikLocalUI.toast(T('image.title_updated'), 'success');
   };
 
   captionBtn?.addEventListener('click', () => generateCaption());
@@ -365,7 +366,7 @@ document.addEventListener('DOMContentLoaded', () => {
       closePromptModal();
       await generateCaption(false, override);
     } catch (err) {
-      TikLocalUI.toast(err.message || 'Invalid override configuration', 'error');
+      TikLocalUI.toast(err.message || T('image.error.override_invalid'), 'error');
     }
   });
   mediaActions.loadCaption(imageUri);

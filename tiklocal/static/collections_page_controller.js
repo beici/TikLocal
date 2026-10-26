@@ -1,4 +1,5 @@
 (() => {
+  const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
   const grid = document.getElementById('collections-grid');
   const stateEl = document.getElementById('collections-state');
   const stateTitle = document.getElementById('collections-state-title');
@@ -16,12 +17,14 @@
   const renameInput = document.getElementById('rename-name');
   const collectionsById = new Map();
   let renamingCollectionId = '';
+  let stateKind = 'loading';
 
   function showState(kind) {
+    stateKind = kind;
     const states = {
-      loading: ['Loading collections', 'Your organization stays on this device.', '', 'loader'],
-      empty: ['No collections yet', 'Create a collection for media you want to revisit.', 'Create Your First Collection', 'layers'],
-      error: ['Collections could not be loaded', 'Check your connection and try again.', 'Reload', 'wifi-off'],
+      loading: [T('saved.state.loading_title'), T('saved.state.loading_copy'), '', 'loader'],
+      empty: [T('saved.state.empty_title'), T('saved.state.empty_copy'), T('saved.state.empty_action'), 'layers'],
+      error: [T('saved.state.error_title'), T('saved.state.error_copy'), T('library.status.reload'), 'wifi-off'],
     };
     const [title, copy, action, icon] = states[kind] || states.loading;
     stateTitle.textContent = title;
@@ -43,7 +46,7 @@
       payload = {};
     }
     if (!response.ok || !payload.success) {
-      throw new Error(payload.error || 'Request failed');
+      throw new Error(payload.error || T('saved.request_failed'));
     }
     return payload.data || {};
   }
@@ -95,7 +98,8 @@
       collectionsById.set(id, item);
       const count = Number(item.item_count || 0);
       const detail = String(item.detail_url || '#');
-      const name = escapeHtml(item.name || 'Untitled collection');
+      const rawName = String(item.name || '').trim() || T('saved.untitled');
+      const name = escapeHtml(rawName);
       const previewItems = Array.isArray(item.preview_items) ? item.preview_items.slice(0, 4) : [];
       let coverHtml;
       if (!previewItems.length) {
@@ -117,16 +121,16 @@
             <div class="collection-cover">${coverHtml}</div>
             <div class="collection-meta">
               <div class="collection-name">${name}</div>
-              <div class="collection-sub">${count} media items</div>
+              <div class="collection-sub">${T('library.media_items', { n: count })}</div>
             </div>
           </a>
           <div class="collection-menu" data-menu-id="${id}">
-            <button class="collection-menu-btn" type="button" data-menu-toggle="1" data-id="${id}" aria-label="More actions for ${name}" aria-expanded="false">
+            <button class="collection-menu-btn" type="button" data-menu-toggle="1" data-id="${id}" aria-label="${escapeHtml(T('saved.more_actions', { name: rawName }))}" aria-expanded="false">
               <i data-feather="more-horizontal"></i>
             </button>
             <div class="collection-menu-panel">
-              <button class="collection-menu-item" type="button" data-action="rename" data-id="${id}">Rename</button>
-              <button class="collection-menu-item danger" type="button" data-action="delete" data-id="${id}">Delete</button>
+              <button class="collection-menu-item" type="button" data-action="rename" data-id="${id}">${T('saved.rename.action')}</button>
+              <button class="collection-menu-item danger" type="button" data-action="delete" data-id="${id}">${T('common.delete')}</button>
             </div>
           </div>
         </article>
@@ -174,7 +178,7 @@
     const description = String(descInput.value || '').trim();
     if (!name) return;
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Creating…';
+    submitBtn.textContent = T('saved.create.busy');
     try {
       await api('/api/collections', {
         method: 'POST',
@@ -184,10 +188,10 @@
       closeCreateModal();
       await loadCollections();
     } catch (error) {
-      TikLocalUI.toast(error.message || 'Failed to create collection', 'error');
+      TikLocalUI.toast(error.message || T('saved.create.failed'), 'error');
     } finally {
       submitBtn.disabled = false;
-      submitBtn.textContent = 'Create';
+      submitBtn.textContent = T('saved.create.submit');
     }
   }
 
@@ -196,7 +200,7 @@
     const name = String(renameInput.value || '').trim();
     if (!collectionId || !name) return;
     renameSubmitBtn.disabled = true;
-    renameSubmitBtn.textContent = 'Saving…';
+    renameSubmitBtn.textContent = T('saved.rename.busy');
     try {
       await api(`/api/collections/${encodeURIComponent(collectionId)}`, {
         method: 'PATCH',
@@ -206,10 +210,10 @@
       closeRenameModal();
       await loadCollections();
     } catch (error) {
-      TikLocalUI.toast(error.message || 'Failed to rename collection', 'error');
+      TikLocalUI.toast(error.message || T('saved.rename.failed'), 'error');
     } finally {
       renameSubmitBtn.disabled = false;
-      renameSubmitBtn.textContent = 'Save';
+      renameSubmitBtn.textContent = T('common.save');
     }
   }
 
@@ -217,9 +221,9 @@
     const item = collectionsById.get(collectionId);
     if (!item) return;
     const ok = await TikLocalUI.confirm({
-      title: `Delete "${String(item.name || 'Untitled collection')}"?`,
-      message: 'The collection is removed. The media inside it stays in your library.',
-      confirmLabel: 'Delete',
+      title: T('saved.delete.title', { name: String(item.name || '').trim() || T('saved.untitled') }),
+      message: T('saved.delete.copy'),
+      confirmLabel: T('common.delete'),
       tone: 'danger',
     });
     if (!ok) return;
@@ -227,13 +231,13 @@
       await api(`/api/collections/${encodeURIComponent(collectionId)}`, { method: 'DELETE' });
       await loadCollections();
     } catch (error) {
-      TikLocalUI.toast(error.message || 'Failed to delete collection', 'error');
+      TikLocalUI.toast(error.message || T('saved.delete.failed'), 'error');
     }
   }
 
   openBtn.addEventListener('click', openCreateModal);
   stateAction.addEventListener('click', () => {
-    if (stateTitle.textContent === 'No collections yet') {
+    if (stateKind === 'empty') {
       openCreateModal();
       return;
     }

@@ -38,11 +38,11 @@
   </div>
 
   <div class="radio-layout">
-    <section class="signal-stage" aria-label="Radio player">
+    <section class="signal-stage" aria-label="{{ t('radio.player_aria') }}">
       <div class="signal-caption" aria-hidden="true">
-        <span>TKL</span><span>RADIO · 24/7</span>
+        <span>TKL</span><span>{{ t('radio.signal_tagline') }}</span>
       </div>
-      <button id="btn-play" class="signal-disc" type="button" title="Play" aria-label="Play" aria-pressed="false">
+      <button id="btn-play" class="signal-disc" type="button" title="{{ t('radio.play') }}" aria-label="{{ t('radio.play') }}" aria-pressed="false">
         <span class="disc-halo" aria-hidden="true"></span>
         <span class="record-surface" aria-hidden="true"></span>
         <span class="signal-marker" aria-hidden="true"></span>
@@ -58,7 +58,7 @@
         </span>
       </button>
       <div class="signal-status" aria-hidden="true">
-        <span class="signal-dot"></span><span>ON AIR</span>
+        <span class="signal-dot"></span><span>{{ t('radio.on_air') }}</span>
       </div>
     </section>
 
@@ -66,10 +66,10 @@
       <div class="station-room-bar">
         <div class="station-chip">
           <span class="station-pulse" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span id="station-name">Default Station</span>
+          <span id="station-name">{{ t('radio.station.default') }}</span>
         </div>
         <div class="room-picker">
-          <button id="btn-room-sound" class="room-sound" type="button" aria-pressed="true" aria-label="Ambient sound: on" title="Ambient sound: on">
+          <button id="btn-room-sound" class="room-sound" type="button" aria-pressed="true" aria-label="{{ t('radio.ambient_on') }}" title="{{ t('radio.ambient_on') }}">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 19v2M8 13v2M16 19v2M16 13v2M12 21v2M12 15v2"/><path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"/></svg>
           </button>
           <button
@@ -79,73 +79,73 @@
             aria-haspopup="listbox"
             aria-expanded="false"
             aria-controls="room-menu"
-            aria-label="Ambience: rainy night. Click to select."
+            aria-label="{{ t('radio.room.rain.aria') }}"
           >
             <span class="room-status-dot" aria-hidden="true"></span>
-            <span id="room-label">ROOM · RAIN</span>
+            <span id="room-label">{{ t('radio.room.rain.label') }}</span>
           </button>
-          <div id="room-menu" class="room-menu" role="listbox" aria-label="Choose ambience" hidden>
+          <div id="room-menu" class="room-menu" role="listbox" aria-label="{{ t('radio.room_menu_aria') }}" hidden>
             <button class="room-option" type="button" role="option" data-room="glass" aria-selected="false">
-              <span class="room-option-key">GLASS</span>
-              <span class="room-option-name">Rain on Glass</span>
+              <span class="room-option-key">{{ t('radio.room.glass.tag') }}</span>
+              <span class="room-option-name">{{ t('radio.room.glass.name') }}</span>
             </button>
             <button class="room-option" type="button" role="option" data-room="snow" aria-selected="false">
-              <span class="room-option-key">SNOW</span>
-              <span class="room-option-name">Snowy Night</span>
+              <span class="room-option-key">{{ t('radio.room.snow.tag') }}</span>
+              <span class="room-option-name">{{ t('radio.room.snow.name') }}</span>
             </button>
             <button class="room-option" type="button" role="option" data-room="hearth" aria-selected="false">
-              <span class="room-option-key">HEARTH</span>
-              <span class="room-option-name">By the Fire</span>
+              <span class="room-option-key">{{ t('radio.room.hearth.tag') }}</span>
+              <span class="room-option-name">{{ t('radio.room.hearth.name') }}</span>
             </button>
             <button class="room-option" type="button" role="option" data-room="firefly" aria-selected="false">
-              <span class="room-option-key">FIREFLY</span>
-              <span class="room-option-name">Summer Night</span>
+              <span class="room-option-key">{{ t('radio.room.firefly.tag') }}</span>
+              <span class="room-option-name">{{ t('radio.room.firefly.name') }}</span>
             </button>
             <button class="room-option" type="button" role="option" data-room="rain" aria-selected="true">
-              <span class="room-option-key">RAIN</span>
-              <span class="room-option-name">Rainy Window</span>
+              <span class="room-option-key">{{ t('radio.room.rain.tag') }}</span>
+              <span class="room-option-name">{{ t('radio.room.rain.name') }}</span>
             </button>
             <button class="room-option" type="button" role="option" data-room="breeze" aria-selected="false">
-              <span class="room-option-key">BREEZE</span>
-              <span class="room-option-name">Afternoon Breeze</span>
+              <span class="room-option-key">{{ t('radio.room.breeze.tag') }}</span>
+              <span class="room-option-name">{{ t('radio.room.breeze.name') }}</span>
             </button>
             <button class="room-option" type="button" role="option" data-room="off" aria-selected="false">
-              <span class="room-option-key">OFF</span>
-              <span class="room-option-name">Still Background</span>
+              <span class="room-option-key">{{ t('radio.room.off.tag') }}</span>
+              <span class="room-option-name">{{ t('radio.room.off.name') }}</span>
             </button>
           </div>
         </div>
       </div>
 
       <section class="now-playing" aria-live="polite">
-        <div class="now-playing-label">NOW PLAYING</div>
-        <div id="track-title" class="track-title">Radio</div>
+        <div class="now-playing-label">{{ t('radio.now_playing') }}</div>
+        <div id="track-title" class="track-title">{{ t('radio.track_default') }}</div>
         <div id="track-meta" class="track-meta"></div>
       </section>
 
-      <section class="progress-panel" aria-label="Playback progress">
-        <input id="progress-bar" type="range" min="0" max="100" value="0" aria-label="Playback progress">
+      <section class="progress-panel" aria-label="{{ t('radio.progress_aria') }}">
+        <input id="progress-bar" type="range" min="0" max="100" value="0" aria-label="{{ t('radio.progress_aria') }}">
         <div class="time-row">
           <span id="time-current">0:00</span>
           <span id="time-total">0:00</span>
         </div>
       </section>
 
-      <section class="radio-controls" aria-label="Radio controls">
-        <button id="btn-fav" class="radio-button" type="button" title="Add to favorites" aria-label="Add to favorites" aria-pressed="false">
+      <section class="radio-controls" aria-label="{{ t('radio.controls_aria') }}">
+        <button id="btn-fav" class="radio-button" type="button" title="{{ t('radio.favorite_add') }}" aria-label="{{ t('radio.favorite_add') }}" aria-pressed="false">
           <i data-feather="heart"></i>
-          <span class="sr-only">Add to favorites</span>
+          <span class="sr-only">{{ t('radio.favorite_add') }}</span>
         </button>
-        <button id="btn-encore" class="radio-button" type="button" title="Encore" aria-label="Play again" aria-pressed="false">
+        <button id="btn-encore" class="radio-button" type="button" title="{{ t('radio.encore') }}" aria-label="{{ t('radio.play_again') }}" aria-pressed="false">
           <i data-feather="repeat"></i>
           <span id="encore-count" class="encore-count" aria-hidden="true"></span>
         </button>
-        <button id="btn-next" class="radio-button is-primary" type="button" title="Next" aria-label="Next track">
+        <button id="btn-next" class="radio-button is-primary" type="button" title="{{ t('radio.next') }}" aria-label="{{ t('radio.next_track') }}">
           <i data-feather="skip-forward"></i>
         </button>
-        <button id="btn-sleep" class="radio-button" type="button" title="Sleep timer" aria-label="Sleep timer" aria-pressed="false">
+        <button id="btn-sleep" class="radio-button" type="button" title="{{ t('radio.sleep_timer') }}" aria-label="{{ t('radio.sleep_timer') }}" aria-pressed="false">
           <i data-feather="moon"></i>
-          <span id="sleep-label" class="sr-only">Sleep timer</span>
+          <span id="sleep-label" class="sr-only">{{ t('radio.sleep_timer') }}</span>
         </button>
       </section>
     </div>

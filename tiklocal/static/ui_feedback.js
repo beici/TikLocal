@@ -1,6 +1,8 @@
 // Site-wide feedback: TikLocalUI.toast(message, type, action), await TikLocalUI.confirm({...}),
 // and TikLocalUI.trash(deleteUrl, nextUrl), which offers Undo on the page it lands on.
 (function () {
+  var T = function (key, params) { return (window.TikLocalI18n && window.TikLocalI18n.t(key, params)) || key; };
+
   function icon(name) {
     var el = document.createElement('i');
     el.setAttribute('data-feather', name);
@@ -59,7 +61,7 @@
         try { sessionStorage.setItem(UNDO_KEY, JSON.stringify({ id: entry.id, at: Date.now() })); } catch (_) {}
         location.replace(nextUrl || '/library');
       })
-      .catch(function (error) { toast(error.message || 'Delete failed. Please try again.', 'error'); });
+      .catch(function (error) { toast(error.message || T('common.delete_failed'), 'error'); });
   }
 
   function offerUndo() {
@@ -69,13 +71,13 @@
       sessionStorage.removeItem(UNDO_KEY);
     } catch (_) {}
     if (!entry || Date.now() - entry.at > 10000) return;
-    toast('Moved to trash', 'info', {
-      label: 'Undo',
+    toast(T('common.moved_to_trash'), 'info', {
+      label: T('common.undo'),
       run: function () {
         fetch('/api/trash/' + encodeURIComponent(entry.id) + '/restore', { method: 'POST' })
           .then(readJson)
           .then(function (data) { location.href = data.url; })
-          .catch(function (error) { toast(error.message || 'Restore failed. Please try again.', 'error'); });
+          .catch(function (error) { toast(error.message || T('common.restore_failed'), 'error'); });
       },
     });
   }
@@ -96,14 +98,14 @@
             '<button type="button" class="ui-button" data-accept></button>' +
           '</div>' +
         '</section>';
-      mask.querySelector('.ui-dialog-title').textContent = options.title || 'Are you sure?';
+      mask.querySelector('.ui-dialog-title').textContent = options.title || T('common.are_you_sure');
       var copy = mask.querySelector('.ui-dialog-copy');
       if (options.message) copy.textContent = options.message;
       else copy.remove();
       var cancel = mask.querySelector('[data-cancel]');
       var accept = mask.querySelector('[data-accept]');
-      cancel.textContent = options.cancelLabel || 'Cancel';
-      accept.textContent = options.confirmLabel || 'Confirm';
+      cancel.textContent = options.cancelLabel || T('common.cancel');
+      accept.textContent = options.confirmLabel || T('common.confirm');
       accept.classList.add(options.tone === 'danger' ? 'is-danger' : 'is-primary');
 
       function close(result) {
