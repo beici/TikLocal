@@ -2,12 +2,15 @@ import datetime
 import json
 import random
 import subprocess as sp
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from tiklocal.services.json_storage import write_json_atomic
 from tiklocal.services.library import LibraryService
 from tiklocal.services.favorites import FavoriteService
+from tiklocal.services.thumbnail import banner_duration, ffprobe_argv
 
 
 def _positive_float(value) -> float | None:
@@ -46,6 +49,11 @@ class AudioMetadata:
     duration: float | None = None
 
 
+#: Guards the profile's read-modify-write; the player sends skip and play almost
+#: simultaneously and a lost update would drop whole tracks from the profile.
+_PROFILE_LOCK = threading.Lock()
+
+
 class RadioProfileStore:
     """Persist light listening feedback for local radio selection."""
 
@@ -73,22 +81,26 @@ class RadioProfileStore:
         if not uri:
             return {}
         event = event if event in self.event_weights else "play"
-        tracks = self.load()
-        entry = tracks.get(uri) if isinstance(tracks.get(uri), dict) else {}
+        # The player fires skip/play back to back, so two requests can load, edit
+        # and save the same profile at once; serialise the read-modify-write or the
+        # later save silently drops every track the other request added.
+        with _PROFILE_LOCK:
+            tracks = self.load()
+            entry = tracks.get(uri) if isinstance(tracks.get(uri), dict) else {}
 
-        entry["plays"] = int(entry.get("plays") or 0) + (1 if event == "play" else 0)
-        entry["completes"] = int(entry.get("completes") or 0) + (1 if event == "complete" else 0)
-        entry["replays"] = int(entry.get("replays") or 0) + (1 if event == "replay" else 0)
-        entry["skips"] = int(entry.get("skips") or 0) + (1 if event == "skip" else 0)
-        entry["errors"] = int(entry.get("errors") or 0) + (1 if event == "error" else 0)
-        if ratio is not None:
-            entry["last_ratio"] = max(0.0, min(float(ratio), 1.0))
-        entry["last_event"] = event
-        entry["last_played_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        entry["score"] = self._next_score(float(entry.get("score") or 0.0), event, ratio)
+            entry["plays"] = int(entry.get("plays") or 0) + (1 if event == "play" else 0)
+            entry["completes"] = int(entry.get("completes") or 0) + (1 if event == "complete" else 0)
+            entry["replays"] = int(entry.get("replays") or 0) + (1 if event == "replay" else 0)
+            entry["skips"] = int(entry.get("skips") or 0) + (1 if event == "skip" else 0)
+            entry["errors"] = int(entry.get("errors") or 0) + (1 if event == "error" else 0)
+            if ratio is not None:
+                entry["last_ratio"] = max(0.0, min(float(ratio), 1.0))
+            entry["last_event"] = event
+            entry["last_played_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            entry["score"] = self._next_score(float(entry.get("score") or 0.0), event, ratio)
 
-        tracks[uri] = entry
-        self._save(tracks)
+            tracks[uri] = entry
+            self._save(tracks)
         return entry
 
     def _next_score(self, current: float, event: str, ratio: float | None) -> float:
@@ -106,10 +118,7 @@ class RadioProfileStore:
             key=lambda item: str(item[1].get("last_played_at") or ""),
             reverse=True,
         )[:1200])
-        self.path.write_text(
-            json.dumps({"tracks": trimmed}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        write_json_atomic(self.path, {"tracks": trimmed})
 
 
 class RadioService:
@@ -239,35 +248,41 @@ class RadioService:
         return metadata
 
     def _probe_audio_metadata(self, path: Path) -> AudioMetadata:
-        try:
-            proc = sp.run(
-                [
-                    "ffprobe",
-                    "-v", "error",
-                    "-show_entries", "format=duration:format_tags=title,artist,album",
-                    "-of", "json",
-                    str(path),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if proc.returncode != 0:
-                return AudioMetadata()
-            payload = json.loads(proc.stdout or "{}")
-            fmt = payload.get("format") if isinstance(payload, dict) else {}
-            fmt = fmt if isinstance(fmt, dict) else {}
-            tags = fmt.get("tags") if isinstance(fmt.get("tags"), dict) else {}
-            normalized_tags = {str(key).lower(): str(value).strip() for key, value in tags.items()}
-            duration = _positive_float(fmt.get("duration"))
-            return AudioMetadata(
-                title=normalized_tags.get("title", ""),
-                artist=normalized_tags.get("artist", ""),
-                album=normalized_tags.get("album", ""),
-                duration=duration,
-            )
-        except Exception:
-            return AudioMetadata()
+        # Prefer the bundled/resolved binary; a system ffprobe that the resolver
+        # missed is still worth one attempt.
+        probe = ffprobe_argv() or ["ffprobe"]
+        if probe:
+            try:
+                proc = sp.run(
+                    [
+                        *probe,
+                        "-v", "error",
+                        "-show_entries", "format=duration:format_tags=title,artist,album",
+                        "-of", "json",
+                        str(path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if proc.returncode == 0:
+                    payload = json.loads(proc.stdout or "{}")
+                    fmt = payload.get("format") if isinstance(payload, dict) else {}
+                    fmt = fmt if isinstance(fmt, dict) else {}
+                    tags = fmt.get("tags") if isinstance(fmt.get("tags"), dict) else {}
+                    normalized_tags = {str(key).lower(): str(value).strip() for key, value in tags.items()}
+                    duration = _positive_float(fmt.get("duration"))
+                    return AudioMetadata(
+                        title=normalized_tags.get("title", ""),
+                        artist=normalized_tags.get("artist", ""),
+                        album=normalized_tags.get("album", ""),
+                        duration=duration,
+                    )
+            except (OSError, sp.SubprocessError, ValueError):
+                pass
+        # The bundled imageio-ffmpeg build ships no ffprobe; ffmpeg still reports the
+        # duration in its banner, which beats showing no length at all.
+        return AudioMetadata(duration=banner_duration(path))
 
     def _select_recent(
         self,

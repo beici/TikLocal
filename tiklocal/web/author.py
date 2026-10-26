@@ -373,7 +373,7 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         else:
             entries = parse_sync_text(payload.get('text'))
         if not entries:
-            return jsonify({'ok': False, 'error': t('settings.sync.author_need_input')}), 400
+            return jsonify({'ok': False, 'error': t('settings.sync.author_need_url')}), 400
 
         index = _uid_index()
         results = []

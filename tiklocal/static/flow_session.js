@@ -22,6 +22,9 @@
     var hasMore = opts.initialHasMore !== false;
     var loading = false;
     var cursor = opts.initialCursor || null;
+    // Bumped by reset(): a loader that was already in flight when the list was
+    // rebuilt must not append its (now stale) page or overwrite the new cursor.
+    var epoch = 0;
 
     function appendUnique(batch) {
       var list = Array.isArray(batch) ? batch : [];
@@ -70,8 +73,12 @@
       }
 
       loading = true;
+      var myEpoch = epoch;
       try {
         var payload = await loader(cursor);
+        if (myEpoch !== epoch) {
+          return { skipped: true, stale: true, appended: 0, appendedIndices: [] };
+        }
         var incoming = Array.isArray(payload && payload.items) ? payload.items : [];
         var appendResult = appendUnique(incoming);
 
@@ -89,12 +96,17 @@
           appendedIndices: appendResult.appendedIndices,
         };
       } finally {
-        loading = false;
+        // A stale call must not clear the flag owned by the current list.
+        if (myEpoch === epoch) loading = false;
       }
     }
 
     function reset(next) {
       var conf = next || {};
+      epoch += 1;
+      // Drop the in-flight flag so the next load for the rebuilt list is not
+      // swallowed by a request that is about to be discarded as stale.
+      loading = false;
       items.length = 0;
       keys.clear();
       index = Number.isInteger(conf.index) ? conf.index : -1;

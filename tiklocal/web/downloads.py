@@ -6,6 +6,7 @@ from tiklocal.services.downloader import (
 )
 from tiklocal.services.tiktok_downloader import TikTokDownloaderError
 from tiklocal.services.url_list import UrlListStore, format_text, parse_text
+from tiklocal.web import json_body
 
 
 def register_download_routes(app, download_manager, library_service, tiktok_service=None,
@@ -46,7 +47,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         if request.method == 'GET':
             return {'success': True, 'data': build_download_config_payload()}
 
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         validated, error = validate_download_config(payload, partial=True)
         if error:
             return {'success': False, 'error': error}, 400
@@ -89,7 +90,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         if request.method == 'GET':
             return {'success': True, 'data': store.snapshot()}
 
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         action = str(payload.get('action') or 'replace')
         text = str(payload.get('text') or '')
         raw_lines = payload.get('lines')
@@ -123,7 +124,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
 
     @app.route('/api/download/urls/sync', methods=['POST'])
     def api_download_urls_sync():
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         direction = str(payload.get('direction') or 'pull')
         store = url_list_store()
         try:
@@ -146,7 +147,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
 
     @app.route('/api/download/urls/queue', methods=['POST'])
     def api_download_urls_queue():
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         engine = str(payload.get('engine') or 'yt-dlp')
         save_mode = str(payload.get('save_mode') or 'root')
         store = url_list_store()
@@ -174,7 +175,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             jobs = download_manager.list_jobs(limit=limit_value)
             return {'success': True, 'data': {'jobs': jobs}}
 
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         validated, error = validate_download_url(payload)
         if error:
             return {'success': False, 'error': error}, 400
@@ -197,7 +198,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         if tiktok_service is None:
             return {'success': False, 'error': 'TikTokDownloader service is not configured.'}, 400
 
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         url = str(payload.get('url') or '').strip()
         if not url:
             return {'success': False, 'error': t('download.error.url_empty')}, 400
@@ -225,7 +226,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             section = download_manager.get_config().get('tiktok_downloader') or {}
             return {'success': True, 'data': {'tiktok_downloader': section}}
 
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         section = payload.get('tiktok_downloader')
         if section is None:
             section = payload
@@ -293,7 +294,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
 
     @app.route('/api/download/jobs/delete', methods=['POST'])
     def api_download_jobs_delete():
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         raw_ids = payload.get('ids')
         if not isinstance(raw_ids, list):
             return {'success': False, 'error': t('download.error.ids_array')}, 400
@@ -348,7 +349,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
 
     @app.route('/api/source/batch', methods=['POST'])
     def api_source_batch():
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         files = payload.get('files')
         if not isinstance(files, list):
             return {'success': False, 'error': t('download.error.files_array')}, 400

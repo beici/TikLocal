@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tiklocal.paths import DOWNLOAD_TMP_DIR
 from tiklocal.services.trash import TRASH_DIR
 
 VIDEO_EXTENSIONS = {'.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v'}
@@ -94,8 +95,12 @@ class LibraryService:
         for directory, folders, files in os.walk(source.path, onerror=fail):
             if not recursive:
                 folders.clear()
-            elif TRASH_DIR in folders:
-                folders.remove(TRASH_DIR)
+            else:
+                # Neither the trash nor a download's scratch folder holds finished
+                # media; indexing them published half-written files and broken previews.
+                for skipped in (TRASH_DIR, DOWNLOAD_TMP_DIR):
+                    if skipped in folders:
+                        folders.remove(skipped)
             paths.extend(
                 Path(directory) / name for name in files
                 if Path(name).suffix.lower() in extensions

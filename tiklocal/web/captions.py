@@ -1,6 +1,7 @@
 from flask import request
 
 from tiklocal.services.captions import generate_caption, validate_prompt_config
+from tiklocal.web import json_body
 
 
 def register_caption_routes(app, library, metadata, settings):
@@ -10,7 +11,7 @@ def register_caption_routes(app, library, metadata, settings):
             if reset:
                 store.reset()
             elif request.method == 'POST':
-                value, error = store.validate(request.get_json(silent=True) or {})
+                value, error = store.validate(json_body())
                 if error:
                     return {'success': False, 'error': error}, 400
                 store.set(value)
@@ -40,7 +41,7 @@ def register_caption_routes(app, library, metadata, settings):
 
     @app.route('/api/image/metadata', methods=['GET', 'POST'])
     def api_image_metadata():
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         uri = request.args.get('uri') if request.method == 'GET' else payload.get('uri')
         if not uri:
             return {'success': False, 'error': 'Missing uri'}, 400

@@ -72,13 +72,14 @@ def register_radio_client_routes(
 
     @app.post("/api/v1/pair")
     def api_v1_pair():
-        payload = request.get_json(silent=True) or {}
         if not app.extensions.get("auth_enabled"):
             return ok({
                 "server": _server_payload(instance_name, app_version, auth_required=False),
                 "device": {"id": "", "token": ""},
             })
 
+        # Rate limit before parsing the body: a blocked caller must not make the
+        # server decode a multi-megabyte JSON payload first.
         client_key = request.remote_addr or "unknown"
         retry_after = pair_limiter.retry_after(client_key)
         if retry_after:
@@ -88,6 +89,7 @@ def register_radio_client_routes(
                 429,
             )
             return response, status, {"Retry-After": str(retry_after)}
+        payload = request.get_json(silent=True) or {}
         if not auth_store.verify(str(payload.get("password") or "")):
             pair_limiter.record_failure(client_key)
             return error("invalid_password", "The access password is incorrect", 401)

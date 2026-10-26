@@ -9,7 +9,7 @@ from PIL import Image
 from tiklocal.services.library import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from tiklocal.services import media_naming
 from tiklocal.services.database import AppDatabase
-from tiklocal.services.media_info import probe_media_dims
+from tiklocal.services.media_info import probe_media_dims, probe_tool_available
 
 
 class MediaIndexStore:
@@ -574,8 +574,15 @@ _FILENAME_DATE_PATTERNS = (
 
 
 def _capture_payload(value: datetime.datetime, source: str, confidence: str) -> dict:
+    # A timestamp outside the platform range (mtime 0 from an unzipped archive, or
+    # a pre-1970 file) makes timestamp() raise on Windows, which used to abort the
+    # whole source scan; an unknown capture time is 0 instead.
+    try:
+        captured_at = float(value.timestamp())
+    except (OSError, OverflowError, ValueError):
+        captured_at = 0.0
     return {
-        "captured_at": value.timestamp(),
+        "captured_at": captured_at,
         "captured_local_date": value.strftime("%Y-%m-%dT%H:%M:%S"),
         "time_source": source,
         "time_confidence": confidence,
@@ -653,8 +660,25 @@ class LibraryIndexer:
         self.library = library_service
         self.store = store
         self.on_change = lambda: None
+        self._sync_lock = threading.Lock()
 
     def sync(self) -> dict:
+        # A double click or two devices can start two full scans at once; the second
+        # one would duplicate the I/O and can hit a busy database.
+        if not self._sync_lock.acquire(blocking=False):
+            return {
+                'indexed': 0,
+                'deleted': 0,
+                'unavailable_sources': [],
+                'source_errors': {},
+                'busy': True,
+            }
+        try:
+            return self._sync_locked()
+        finally:
+            self._sync_lock.release()
+
+    def _sync_locked(self) -> dict:
         time_states = self.store.time_states()
         completed_sources = set()
         failures = {}
@@ -782,7 +806,14 @@ class LibraryIndexer:
         return output
 
     def _record_for_path(self, path: Path, time_states: dict[str, dict] | None = None) -> dict | None:
-        stat = path.stat()
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            # The file vanished between the directory walk and this stat (a finished
+            # download cleaning up, a delete): skip it and let the snapshot drop it.
+            # Any other OSError (a locked or unreadable file) still fails the source
+            # so the previous index survives instead of losing every row.
+            return None
         uri = self.library.get_relative_path(path)
         ref = self.library.parse_uri(uri)
         if not ref:
@@ -841,13 +872,23 @@ class MediaProbeWorker:
     def run_once(self, batch: int = 50) -> int:
         """Probe until nothing is left; return how many files were read."""
         done = 0
-        while rows := self.store.unprobed(batch):
+        deferred: set[str] = set()
+        # Without ffprobe (the bundled imageio-ffmpeg build) or ffmpeg, a video's
+        # size is unknown rather than unmeasurable: keep probed_mtime unset so a
+        # later pass retries once a tool is installed.
+        can_probe_video = probe_tool_available()
+        while rows := [row for row in self.store.unprobed(batch) if row["uri"] not in deferred]:
             results = []
             for row in rows:
                 # A live entry is probed through its jpeg cover.
                 media_type = 'image' if row["media_type"] == 'live' else row["media_type"]
+                if media_type != 'image' and not can_probe_video:
+                    deferred.add(row["uri"])
+                    continue
                 width, height = probe_media_dims(self.library, row["uri"], media_type)
                 results.append((width, height, row["mtime"], row["uri"]))
+            if not results:
+                break
             self.store.set_dimensions(results)
             done += len(results)
         return done

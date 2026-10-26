@@ -14,6 +14,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from tiklocal.i18n import t
+from tiklocal.paths import DOWNLOAD_TMP_DIR
 from tiklocal.services.download_sources import (
     DownloadSourceStore,
     normalize_file_rel,
@@ -971,7 +972,7 @@ class DownloadManager:
             archive_path.parent.mkdir(parents=True, exist_ok=True)
 
         # gallery-dl writes into a private folder; only finished files are moved into the library.
-        temp_dir = (self.media_root / ".tiklocal-download-tmp" / job_id).resolve()
+        temp_dir = (self.media_root / DOWNLOAD_TMP_DIR / job_id).resolve()
         temp_dir.mkdir(parents=True, exist_ok=True)
         log_file = temp_dir / "gallery-dl.log"
         try:
@@ -1008,7 +1009,7 @@ class DownloadManager:
         naming = payload.get("naming") if isinstance(payload.get("naming"), dict) else {}
 
         cancel_event = self._cancel_events.get(job_id)
-        temp_dir = (self.media_root / ".tiklocal-download-tmp" / job_id).resolve()
+        temp_dir = (self.media_root / DOWNLOAD_TMP_DIR / job_id).resolve()
         temp_dir.mkdir(parents=True, exist_ok=True)
         total = len(downloads)
         try:
@@ -1039,6 +1040,11 @@ class DownloadManager:
 
     def _direct_fetch(self, url: str, target: Path, on_progress: Callable[[float], None] | None = None) -> str | None:
         """Stream one media file to ``target``; return an error message or None."""
+        # The URL comes from a sidecar response, so a rewritten payload must not turn
+        # the downloader into a local-file reader (file://) or an SSRF probe.
+        parsed = urlparse(url)
+        if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+            return "Only http and https media URLs can be downloaded."
         request = urllib.request.Request(
             url,
             headers={

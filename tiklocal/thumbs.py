@@ -49,7 +49,9 @@ def generate_thumbnails(media_root: str | Path, overwrite: bool = False, limit: 
         else:
             previous = mapping.get(uri) or mapping.get(library.relative_path_for_uri(uri)) or {}
             timestamp = previous.get('ts')
-            generated = service.generate_thumbnail(uri, timestamp=timestamp, auto_timestamp=True)
+            generated = service.generate_thumbnail(
+                uri, timestamp=timestamp, auto_timestamp=True, overwrite=overwrite,
+            )
             if generated:
                 mapping[uri] = {'ts': timestamp, 'updated_at': datetime.datetime.now().isoformat(timespec='seconds')}
                 stats['generated'] += 1

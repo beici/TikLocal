@@ -11,7 +11,7 @@ from flask import render_template, request
 from tiklocal.i18n import t
 from tiklocal.services import media_naming
 from tiklocal.services.recommendation import FORGOTTEN_DAYS, shown_within
-from tiklocal.web import read_int_arg
+from tiklocal.web import json_body, read_int_arg
 from tiklocal.web.media_payloads import build_feed_media_item
 
 
@@ -594,7 +594,7 @@ def register_flow_routes(
         if request.method == 'DELETE':
             activity_store.clear()
             return {'success': True}
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         events = payload.get('events') if isinstance(payload.get('events'), list) else [payload]
         accepted = activity_store.record_many(events)
         return {'success': True, 'data': {'accepted': accepted}}

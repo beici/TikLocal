@@ -12,7 +12,7 @@ from tiklocal.services.collections import normalize_collection_mutation_uris
 from tiklocal.services.library import IMAGE_EXTENSIONS
 from tiklocal.services.media_naming import blogger_display_name
 from tiklocal.web.media_payloads import build_feed_media_item, media_urls, serialize_library_item
-from tiklocal.web import read_int_arg
+from tiklocal.web import json_body, read_int_arg
 
 
 def register_library_routes(
@@ -357,7 +357,7 @@ def register_library_routes(
             items = [_serialize_collection_summary(item) for item in collections]
             return {'success': True, 'data': {'items': items}}
 
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         name = str(payload.get('name', '')).strip()
         description = str(payload.get('description', '')).strip()
         if not name:
@@ -382,7 +382,7 @@ def register_library_routes(
                 return {'success': False, 'error': t('library.collection.not_found')}, 404
             return {'success': True, 'data': {'deleted': True}}
 
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         name = payload['name'] if 'name' in payload else None
         description = payload['description'] if 'description' in payload else None
         cover_uri = library_service.canonicalize_uri(payload['cover_uri']) if 'cover_uri' in payload else None
@@ -414,7 +414,7 @@ def register_library_routes(
             )
             return {'success': True, 'data': page}
 
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         uris = [
             library_service.canonicalize_uri(uri)
             for uri in normalize_collection_mutation_uris(payload.get('uris'))

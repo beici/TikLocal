@@ -20,11 +20,15 @@
     state.savedAt = Date.now();
     var uri = state.uri;
     var time = state.time;
-    var body = JSON.stringify({ uri: uri, position: time, duration: state.duration });
     if (beacon) {
+      // sendBeacon is outside the fetch wrapper that adds the CSRF header, so the
+      // token has to travel in the body (same shape the flow controller uses).
+      var token = (window.TikLocalSecurity && window.TikLocalSecurity.csrfToken) || '';
+      var body = JSON.stringify({ uri: uri, position: time, duration: state.duration, _csrf_token: token });
       navigator.sendBeacon('/api/playback', new Blob([body], { type: 'application/json' }));
       return;
     }
+    var body = JSON.stringify({ uri: uri, position: time, duration: state.duration });
     fetch('/api/playback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true })
       .then(function (response) { return response.json(); })
       .then(function (data) { latest.set(uri, data.saved ? time : 0); })

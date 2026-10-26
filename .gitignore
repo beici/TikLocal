@@ -193,3 +193,8 @@ pytest-of-*/
 TikLocal接手提示词.md
 TikLocal二开启动提示词.md
 *提示词*.md
+
+# local audit / smoke artifacts
+.smoke-data/
+.smoke-run/
+.smoke-open/

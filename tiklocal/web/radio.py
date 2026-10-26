@@ -7,7 +7,7 @@ from flask import render_template, request, send_file
 
 from tiklocal.i18n import t
 from tiklocal.services.radio import RadioCandidate
-from tiklocal.web import read_int_arg
+from tiklocal.web import json_body, read_int_arg
 from tiklocal.web.media_payloads import media_urls
 
 
@@ -133,7 +133,7 @@ def register_radio_routes(app, library_service, radio_service, thumbnail_service
 
     @app.route('/api/radio/feedback', methods=['POST'])
     def api_radio_feedback():
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         event = str(payload.get('event') or '').strip()
         uri = str(payload.get('name') or payload.get('uri') or '').strip()
         if event not in {'play', 'complete', 'replay', 'skip', 'favorite', 'error'}:

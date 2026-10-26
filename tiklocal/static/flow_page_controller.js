@@ -365,12 +365,17 @@
     }
 
     function douyinCaptionHtml(text) {
-      // Hashtags keep the caption colour and open the topic feed on tap.
-      return escapeHtml(text).replace(/#[^\s#]+/g, (tag) => {
-        const name = tag.slice(1);
-        const href = `/flow?tag=${encodeURIComponent(name)}`;
-        return `<a class="douyin-tag" href="${href}" data-tag="${escapeHtml(name)}">${tag}</a>`;
-      });
+      // Split on hashtags first, then escape each part: escaping before the
+      // match turns an apostrophe into &#39; and the tag regex would then treat
+      // the tail of that entity as a hashtag.
+      return String(text || '').split(/(#[^\s#]+)/).map((part) => {
+        if (part.length > 1 && part.charAt(0) === '#') {
+          const name = part.slice(1);
+          const href = `/flow?tag=${encodeURIComponent(name)}`;
+          return `<a class="douyin-tag" href="${escapeHtml(href)}" data-tag="${escapeHtml(name)}">${escapeHtml(part)}</a>`;
+        }
+        return escapeHtml(part);
+      }).join('');
     }
 
     function mirrorDouyinActions() {
@@ -1302,7 +1307,11 @@
           const startUri = flowStartUri();
           if (startUri) query.set('start', startUri);
 
-          const res = await fetch(`/api/feed/mix?${query.toString()}`);
+          // A hung request (sleeping NAS, stalled server) must fail loudly: the
+          // feed has no other way out of isLoading().
+          const res = await fetch(`/api/feed/mix?${query.toString()}`, {
+            signal: AbortSignal.timeout(20000),
+          });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
 

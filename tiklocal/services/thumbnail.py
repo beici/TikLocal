@@ -4,6 +4,8 @@ import math
 import os
 import re
 import tempfile
+import threading
+import time
 import subprocess as sp
 from pathlib import Path
 
@@ -26,11 +28,52 @@ def ffprobe_argv() -> list[str] | None:
     return resolve_tool('ffprobe')
 
 
+def banner_duration(path: Path) -> float | None:
+    """Read a media duration from ffmpeg's banner; works when ffprobe is absent."""
+    try:
+        completed = sp.run([*ffmpeg_argv(), '-hide_banner', '-i', str(path)],
+                           stdout=sp.DEVNULL, stderr=sp.PIPE, timeout=10)
+    except (OSError, sp.SubprocessError):
+        return None
+    stderr = completed.stderr or b''
+    if isinstance(stderr, str):
+        stderr = stderr.encode('utf-8', 'ignore')
+    match = re.search(r'Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)',
+                      stderr.decode('utf-8', 'ignore'))
+    if not match:
+        return None
+    hours, minutes, seconds = match.groups()
+    duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    return duration if duration > 0 else None
+
+
+def _replace_with_retry(source: Path, target: Path, attempts: int = 3) -> bool:
+    """Publish *source* over *target*, retrying a briefly locked target.
+
+    On Windows a cache file is locked while a response streams it, so replacing it
+    fails with WinError 5/32 for a moment; the old cache stays valid meanwhile.
+    """
+    for attempt in range(attempts):
+        try:
+            os.replace(source, target)
+            return True
+        except OSError:
+            if attempt == attempts - 1:
+                return False
+            time.sleep(0.05)
+    return False
+
+
 class ThumbnailService:
+    #: Requests for one URI arrive in bursts (grid, feed, detail). A small lock pool
+    #: keeps a single ffmpeg run per URI without holding a lock per cache file.
+    _LOCK_POOL_SIZE = 8
+
     def __init__(self, media_root: Path, library_service=None):
         self.media_root = media_root
         self.library = library_service or LibraryService(media_root)
         self.thumb_dir = get_thumbnails_dir()
+        self._locks = [threading.Lock() for _ in range(self._LOCK_POOL_SIZE)]
         self.placeholder = (
             b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0cIDAT\x08\x99c\xf8\xff\xff?\x00\x05\xfe\x02\xfeA\x93\x8a\x1d\x00\x00\x00\x00IEND\xaeB`\x82"
         )
@@ -62,9 +105,29 @@ class ThumbnailService:
         return None
 
     def get_thumbnail(self, uri: str) -> tuple[Path | bytes, str]:
-        """Return a cached or generated thumbnail, falling back to a placeholder."""
-        thumbnail = self.cached_thumbnail(uri) or self.generate_thumbnail(uri)
-        return (thumbnail, 'image/jpeg') if thumbnail else (self.placeholder, 'image/png')
+        """Return a cached or generated thumbnail, falling back to the last usable cache."""
+        thumbnail = self.cached_thumbnail(uri)
+        if thumbnail:
+            return thumbnail, 'image/jpeg'
+        generated = self.generate_thumbnail(uri)
+        if generated:
+            return generated, 'image/jpeg'
+        stale = self._stale_thumbnail(uri)
+        if stale:
+            # A locked cache file means the previous preview is still valid enough;
+            # degrading the whole grid to a 1x1 placeholder is worse.
+            return stale, 'image/jpeg'
+        return self.placeholder, 'image/png'
+
+    def _stale_thumbnail(self, uri: str) -> Path | None:
+        for key in self.library.legacy_candidates(self.library.canonicalize_uri(uri)):
+            cached = self._path_for_key(key)
+            try:
+                if cached.is_file() and cached.stat().st_size > 0:
+                    return cached
+            except OSError:
+                continue
+        return None
 
     def get_radio_artwork(self, uri: str) -> tuple[Path | bytes, str]:
         if uri:
@@ -81,31 +144,50 @@ class ThumbnailService:
     def clear_cache(self) -> dict:
         deleted_count = 0
         freed_bytes = 0
+        failed_count = 0
         for path in self.thumb_dir.glob('*.jpg'):
             try:
-                freed_bytes += path.stat().st_size
+                size = path.stat().st_size
                 path.unlink()
-                deleted_count += 1
             except OSError:
+                # Still open in a running response (Windows): report it instead of
+                # claiming the space back while the file is still on disk.
+                failed_count += 1
                 continue
-        return {'deleted_count': deleted_count, 'freed_mb': round(freed_bytes / (1024 * 1024), 2)}
+            deleted_count += 1
+            freed_bytes += size
+        return {
+            'deleted_count': deleted_count,
+            'freed_mb': round(freed_bytes / (1024 * 1024), 2),
+            'failed_count': failed_count,
+        }
 
     def generate_thumbnail(
         self, uri: str, *, timestamp: float | None = None, auto_timestamp: bool = False,
+        overwrite: bool = False,
     ) -> Path | None:
         source = self.library.resolve_path(uri)
         if source is None or not source.is_file():
             return None
         output = self.cache_path(uri)
         # A failed or concurrent generation must not publish a partial cache file.
-        try:
-            with tempfile.TemporaryDirectory(dir=self.thumb_dir) as directory:
-                temporary = Path(directory) / 'thumbnail.jpg'
-                if self._generate(source, temporary, timestamp, auto_timestamp=auto_timestamp):
-                    os.replace(temporary, output)
-                    return output
-        except OSError:
-            return None
+        with self._locks[hash(str(output)) % self._LOCK_POOL_SIZE]:
+            # Re-check under the lock so a burst of requests extracts one frame; a
+            # cache older than its source is stale and must be rebuilt.
+            if not overwrite and output.is_file() and output.stat().st_size > 0:
+                try:
+                    if output.stat().st_mtime_ns >= source.stat().st_mtime_ns:
+                        return output
+                except OSError:
+                    pass
+            try:
+                with tempfile.TemporaryDirectory(dir=self.thumb_dir) as directory:
+                    temporary = Path(directory) / 'thumbnail.jpg'
+                    if self._generate(source, temporary, timestamp, auto_timestamp=auto_timestamp):
+                        if _replace_with_retry(temporary, output):
+                            return output
+            except OSError:
+                return None
         return None
 
     def delete_thumbnail(self, uri: str) -> bool:
@@ -150,21 +232,7 @@ class ThumbnailService:
             except (OSError, sp.SubprocessError, ValueError):
                 pass
         # imageio-ffmpeg ships ffmpeg without ffprobe: read the duration from its banner.
-        try:
-            completed = sp.run([*ffmpeg_argv(), '-hide_banner', '-i', str(path)],
-                               stdout=sp.DEVNULL, stderr=sp.PIPE, timeout=10)
-        except (OSError, sp.SubprocessError):
-            return None
-        stderr = completed.stderr or b''
-        if isinstance(stderr, str):
-            stderr = stderr.encode('utf-8', 'ignore')
-        match = re.search(r'Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)',
-                          stderr.decode('utf-8', 'ignore'))
-        if not match:
-            return None
-        hours, minutes, seconds = match.groups()
-        duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
-        return duration if duration > 0 else None
+        return banner_duration(path)
 
     def _generate(self, video_path: Path, output_path: Path, timestamp: float | None, *, auto_timestamp: bool) -> bool:
         suffix = video_path.suffix.lower()

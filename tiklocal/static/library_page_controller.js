@@ -495,14 +495,20 @@
 
     focusLoading = true;
     try {
-      while (!focusHandled && flowSession.hasMore()) {
+      let guard = 0;
+      while (!focusHandled && flowSession.hasMore() && guard < 200) {
+        const before = items.length;
         await loadNextPage();
+        guard += 1;
         const index = findItemIndexByName(focusName);
         if (index >= 0) {
           focusHandled = true;
           openViewer(index);
           return;
         }
+        // No new page arrived (request in flight or failed): stop instead of
+        // re-firing the same request in a tight loop.
+        if (items.length === before) break;
       }
       if (!flowSession.hasMore()) {
         focusHandled = true;

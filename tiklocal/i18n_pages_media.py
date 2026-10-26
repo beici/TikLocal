@@ -53,6 +53,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'detail.error.not_in_trash': '回收站中没有该项目',
         'detail.error.trash_conflict': '原位置已存在同名文件',
         'detail.error.invalid_path': '路径无效',
+        'detail.error.file_in_use': '文件正在使用中，请关闭后重试',
+        'detail.error.delete_failed': '删除失败，请重试',
         'detail.error.thumbnail_generate': '生成失败',
 
         'image.previous': '上一张',
@@ -281,6 +283,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'detail.error.not_in_trash': 'Not in trash',
         'detail.error.trash_conflict': 'A file already exists at the original location',
         'detail.error.invalid_path': 'Invalid path',
+        'detail.error.file_in_use': 'The file is in use; close it and try again',
+        'detail.error.delete_failed': 'The file could not be deleted. Please try again.',
         'detail.error.thumbnail_generate': 'Failed to generate',
 
         'image.previous': 'Previous image',

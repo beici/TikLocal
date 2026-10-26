@@ -1,6 +1,7 @@
 """Media details, file delivery, deletion and thumbnail selection."""
 
 import datetime
+import errno
 import io
 import math
 from pathlib import Path
@@ -11,6 +12,7 @@ from flask import redirect, render_template, request, send_file
 from tiklocal.i18n import t
 from tiklocal.services.embedded_metadata import read_embedded_generation
 from tiklocal.services.library import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+from tiklocal.web import json_body
 from tiklocal.web.media_payloads import media_urls
 
 
@@ -63,7 +65,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
 
     @app.route('/api/playback', methods=['POST'])
     def api_playback():
-        payload = request.get_json(silent=True, force=True) or {}
+        payload = json_body(force=True)
         uri = library_service.canonicalize_uri(str(payload.get('uri') or ''))
         try:
             position, duration = float(payload.get('position')), float(payload.get('duration'))
@@ -131,7 +133,15 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             media_index.delete(library_service.canonicalize_uri(name))
             return ({'error': 'File not found'}, 404) if wants_json else redirect('/library')
         except OSError as e:
-            return ({'error': str(e)}, 500) if wants_json else (f"Error deleting file: {e}", 500)
+            # A file that is still open (a video being played, on Windows also a
+            # locked directory) is a conflict, not a server error, and str(e)
+            # would leak the absolute media path to the client.
+            in_use = (
+                getattr(e, 'winerror', None) in (32, 33)
+                or e.errno in (errno.EACCES, errno.EBUSY, errno.EPERM)
+            )
+            message = t('detail.error.file_in_use') if in_use else t('detail.error.delete_failed')
+            return ({'error': message}, 409 if in_use else 500) if wants_json else (message, 409 if in_use else 500)
         media_index.delete(entry['uri'])
         return {'id': entry['id'], 'name': entry['name']} if wants_json else redirect('/library')
 
@@ -193,7 +203,15 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         if not uri: return send_file(io.BytesIO(thumbnail_service.placeholder), mimetype='image/png')
 
         path, mimetype = thumbnail_service.get_thumbnail(library_service.find_existing_uri(unquote(uri)))
-        return send_file(io.BytesIO(path) if isinstance(path, bytes) else path, mimetype=mimetype)
+        if isinstance(path, bytes):
+            return send_file(io.BytesIO(path), mimetype=mimetype)
+        # Hand the bytes over instead of the path: on Windows a response that keeps
+        # the cache file open makes the next regeneration fail to replace it.
+        try:
+            payload = path.read_bytes()
+        except OSError:
+            return send_file(io.BytesIO(thumbnail_service.placeholder), mimetype='image/png')
+        return send_file(io.BytesIO(payload), mimetype=mimetype, max_age=3600)
 
     @app.route('/api/image/embedded-metadata')
     def api_image_embedded_metadata():
@@ -212,7 +230,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         target = library_service.resolve_path(name)
         if not target: return {'success': False, 'error': t('detail.error.invalid_path')}, 400
 
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         ts = payload.get('time')
 
         success = thumbnail_service.generate_thumbnail(name, timestamp=float(ts) if ts is not None else None)

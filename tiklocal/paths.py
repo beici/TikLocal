@@ -1,6 +1,11 @@
 import os
 from pathlib import Path
 
+#: Scratch folder a download builds in before it publishes files into the library.
+#: It lives under the media root so the final move is a rename, and the scanner
+#: skips it so half-written files never enter the index.
+DOWNLOAD_TMP_DIR = '.tiklocal-download-tmp'
+
 
 def get_data_dir() -> Path:
     """Return the global data directory for TikLocal.

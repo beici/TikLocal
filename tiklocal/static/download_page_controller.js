@@ -24,9 +24,14 @@
       headers: { 'Content-Type': 'application/json' },
       ...options,
     });
-    const payload = await response.json();
-    if (!response.ok || !payload.success) {
-      throw new Error(payload.error || T('download.request_failed', { status: response.status }));
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      payload = null;
+    }
+    if (!response.ok || !payload || payload.success !== true) {
+      throw new Error((payload && payload.error) || T('download.request_failed', { status: response.status }));
     }
     return payload.data || {};
   }
@@ -473,7 +478,10 @@
         if (event.target === sheet) finish(null);
       };
       const onKeydown = (event) => {
-        if (event.key === 'Escape') finish(null);
+        if (event.key !== 'Escape') return;
+        // Keep the document-level Esc handler from also clearing the selection.
+        event.stopPropagation();
+        finish(null);
       };
       modes.forEach((button) => button.addEventListener('click', onMode));
       cancel?.addEventListener('click', onCancel);

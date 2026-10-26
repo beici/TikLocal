@@ -92,6 +92,9 @@ def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_mapping(
         SECRET_KEY = None,
+        # Unauthenticated endpoints such as /api/v1/pair must not be able to make
+        # the server buffer arbitrary request bodies (the default host is 0.0.0.0).
+        MAX_CONTENT_LENGTH = 8 * 1024 * 1024,
         MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', '.')),
         MEDIA_SOURCES = None,
         DOWNLOAD_SOURCE = 'default',

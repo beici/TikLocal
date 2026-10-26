@@ -205,7 +205,7 @@
   }
 
   async function loadMore() {
-    if (loadingMore || !hasMore || !nextBefore) return;
+    if (loadingMore || !hasMore || !nextBefore) return false;
     loadingMore = true;
     statusText.textContent = T('library.timeline.opening');
     loading.hidden = false;
@@ -223,19 +223,30 @@
       renderMonths(incoming);
       statusText.textContent = hasMore ? T('library.timeline.keep_scrolling') : T('library.timeline.beginning');
       renderYears();
+      return true;
     } catch (error) {
+      // Report the failure but keep hasMore so the next scroll can retry; the
+      // caller only needs to know that this call made no progress.
       statusText.textContent = T('library.timeline.load_failed');
+      return false;
     } finally {
       loadingMore = false;
     }
   }
 
-  async function revealYear(year) {
-    let target = document.getElementById(`year-${year}`);
-    while (!target && hasMore) {
-      await loadMore();
-      target = document.getElementById(`year-${year}`);
+  async function loadUntilVisible(id) {
+    let target = document.getElementById(id);
+    let guard = 0;
+    while (!target && hasMore && guard < 200) {
+      if (!(await loadMore())) break;
+      guard += 1;
+      target = document.getElementById(id);
     }
+    return target;
+  }
+
+  async function revealYear(year) {
+    const target = await loadUntilVisible(`year-${year}`);
     target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 

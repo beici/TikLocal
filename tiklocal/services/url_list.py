@@ -19,6 +19,10 @@ CONFIG_FILENAME = 'download-urls.json'
 MAX_URL_LENGTH = 2048
 MAX_LINES = 5000
 MAX_FILE_BYTES = 2 * 1024 * 1024
+# The sync target is a plain URL list shared with an external downloader. Writing
+# app state or another program's config there would corrupt it, and a mistyped
+# path is easy, so the obviously dangerous targets are refused up front.
+FORBIDDEN_SUFFIXES = frozenset({'.json', '.db', '.sqlite', '.sqlite3', '.yaml', '.yml', '.py', '.ini', '.toml'})
 
 
 def normalize_url(raw: str) -> str:
@@ -129,6 +133,10 @@ class UrlListStore:
                 raise ValueError('The server path must be absolute.')
             if path.exists() and path.is_dir():
                 raise ValueError('The server path must point at a file, not a folder.')
+            if path.suffix.lower() in FORBIDDEN_SUFFIXES:
+                raise ValueError('The server path must be a plain text list, not a config or database file.')
+            if path.name.lower().startswith('auth.'):
+                raise ValueError('The server path cannot point at an application state file.')
             text = str(path)
         self._write_config({'source_path': text})
         return text
