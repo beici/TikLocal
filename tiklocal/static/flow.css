@@ -1123,6 +1123,13 @@ body.tag-feed .douyin-tabs { display: none; }
 .douyin-avatar,
 .douyin-action { pointer-events: auto; }
 
+/* While a swipe resolves the next clip's favourite state, keep the rail still:
+   no transition and no heart burst replay, so nothing flashes. */
+.douyin-rail.is-syncing .action-btn,
+.douyin-rail.is-syncing .douyin-action { transition: none; }
+.douyin-rail.is-syncing .action-btn.is-active .heart-filled { animation: none; }
+.douyin-rail.is-syncing .action-btn:active { transform: none; }
+
 .douyin-avatar {
   display: block;
   position: relative;

@@ -19,11 +19,17 @@ def test_cli_cache_is_reused_by_web_and_isolated_between_sources(tmp_path, monke
     captures = []
 
     def capture(command, **kwargs):
-        if command[0] == 'ffmpeg':
-            source = Path(command[command.index('-i') + 1])
-            captures.append(source)
-            Image.new('RGB', (32, 24), 'red' if source.parent == main else 'blue').save(command[-1])
-        return subprocess.CompletedProcess(command, 0, stdout='{}' if kwargs.get('text') else b'10')
+        name = Path(str(command[0])).name.lower()
+        if name.startswith('ffmpeg'):
+            if '-ss' in command:
+                source = Path(command[command.index('-i') + 1])
+                captures.append(source)
+                Image.new('RGB', (32, 24), 'red' if source.parent == main else 'blue').save(command[-1])
+                return subprocess.CompletedProcess(command, 0, stdout=b'', stderr=b'')
+            banner = b'  Duration: 00:00:10.00, start: 0.000000, bitrate: 100 kb/s\n'
+            return subprocess.CompletedProcess(command, 0, stdout=b'', stderr=banner)
+        return subprocess.CompletedProcess(command, 0, stdout='{}' if kwargs.get('text') else b'10',
+                                           stderr=b'')
 
     monkeypatch.setattr(subprocess, 'run', capture)
     assert generate_thumbnails(main, show_progress=False)['generated'] == 1
@@ -61,6 +67,7 @@ def test_cli_cache_is_reused_by_web_and_isolated_between_sources(tmp_path, monke
     assert '@extra/same # clip.Mp4' in json.loads(mapping_path.read_text())
 
     assert client.get('/api/library/stats').get_json()['cache_count'] == 1
+
     cleared = client.post('/api/cache/clear').get_json()
     assert cleared['success'] and cleared['deleted_count'] == 1
     assert client.get('/api/library/stats').get_json()['cache_count'] == 0

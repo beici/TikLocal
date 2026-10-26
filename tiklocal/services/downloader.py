@@ -31,6 +31,7 @@ from tiklocal.services.download_tools import (
     parse_output_path,
     parse_progress,
     probe_binary,
+    resolve_tool,
     yt_dlp_command,
 )
 from tiklocal.services.tiktok_downloader import (
@@ -886,7 +887,7 @@ class DownloadManager:
         return self._execute_download_yt_dlp(job_id)
 
     def _execute_download_yt_dlp(self, job_id: str) -> tuple[int, str, list[str]]:
-        yt_dlp_bin = shutil.which("yt-dlp")
+        yt_dlp_bin = resolve_tool("yt-dlp")
         if not yt_dlp_bin:
             raise FileNotFoundError("yt-dlp not found")
 
@@ -917,7 +918,7 @@ class DownloadManager:
         return return_code, error_message, [output_rel] if output_rel else []
 
     def _execute_download_gallery_dl(self, job_id: str) -> tuple[int, str, list[str]]:
-        gallery_dl_bin = shutil.which("gallery-dl")
+        gallery_dl_bin = resolve_tool("gallery-dl")
         if not gallery_dl_bin:
             raise FileNotFoundError("gallery-dl not found")
 

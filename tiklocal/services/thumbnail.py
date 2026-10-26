@@ -2,6 +2,7 @@ import hashlib
 import io
 import math
 import os
+import re
 import tempfile
 import subprocess as sp
 from pathlib import Path
@@ -9,7 +10,20 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 from tiklocal.paths import get_thumbnails_dir
+from tiklocal.services.download_tools import resolve_tool
 from tiklocal.services.library import LibraryService, AUDIO_EXTENSIONS, IMAGE_EXTENSIONS
+
+#: How long a video frame extraction may take before the request gives up.
+FFMPEG_TIMEOUT_SEC = 30
+
+
+def ffmpeg_argv() -> list[str]:
+    """Resolve ffmpeg once per call: PATH, venv console script, then the bundled build."""
+    return resolve_tool('ffmpeg') or ['ffmpeg']
+
+
+def ffprobe_argv() -> list[str] | None:
+    return resolve_tool('ffprobe')
 
 
 class ThumbnailService:
@@ -124,15 +138,33 @@ class ThumbnailService:
 
     @staticmethod
     def _probe_duration(path: Path) -> float | None:
+        probe = ffprobe_argv()
+        if probe:
+            try:
+                output = sp.check_output([
+                    *probe, '-v', 'error', '-show_entries', 'format=duration',
+                    '-of', 'default=noprint_wrappers=1:nokey=1', str(path),
+                ], stderr=sp.DEVNULL, timeout=10)
+                duration = float(output.decode().strip())
+                return duration if math.isfinite(duration) and duration > 0 else None
+            except (OSError, sp.SubprocessError, ValueError):
+                pass
+        # imageio-ffmpeg ships ffmpeg without ffprobe: read the duration from its banner.
         try:
-            output = sp.check_output([
-                'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
-                '-of', 'default=noprint_wrappers=1:nokey=1', str(path),
-            ], stderr=sp.DEVNULL, timeout=10)
-            duration = float(output.decode().strip())
-            return duration if math.isfinite(duration) and duration > 0 else None
-        except (OSError, sp.SubprocessError, ValueError):
+            completed = sp.run([*ffmpeg_argv(), '-hide_banner', '-i', str(path)],
+                               stdout=sp.DEVNULL, stderr=sp.PIPE, timeout=10)
+        except (OSError, sp.SubprocessError):
             return None
+        stderr = completed.stderr or b''
+        if isinstance(stderr, str):
+            stderr = stderr.encode('utf-8', 'ignore')
+        match = re.search(r'Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)',
+                          stderr.decode('utf-8', 'ignore'))
+        if not match:
+            return None
+        hours, minutes, seconds = match.groups()
+        duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+        return duration if duration > 0 else None
 
     def _generate(self, video_path: Path, output_path: Path, timestamp: float | None, *, auto_timestamp: bool) -> bool:
         suffix = video_path.suffix.lower()
@@ -142,9 +174,9 @@ class ThumbnailService:
 
         # Audio: extract embedded cover art
         if suffix in AUDIO_EXTENSIONS:
-            cmd = ['ffmpeg', '-i', str(video_path), '-an', '-vframes', '1', str(output_path), '-y']
+            cmd = [*ffmpeg_argv(), '-i', str(video_path), '-an', '-vframes', '1', str(output_path), '-y']
             try:
-                result = sp.run(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=30)
+                result = sp.run(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=FFMPEG_TIMEOUT_SEC)
                 if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
                     return True
             except (OSError, sp.SubprocessError):
@@ -161,7 +193,7 @@ class ThumbnailService:
 
         for t in candidates:
             cmd = [
-                'ffmpeg', '-y',
+                *ffmpeg_argv(), '-y',
                 '-ss', str(max(0.0, float(t))),
                 '-i', str(video_path),
                 '-frames:v', '1',
@@ -170,7 +202,7 @@ class ThumbnailService:
                 str(output_path)
             ]
             try:
-                result = sp.run(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=30)
+                result = sp.run(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=FFMPEG_TIMEOUT_SEC)
                 if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
                     return True
             except (OSError, sp.SubprocessError):

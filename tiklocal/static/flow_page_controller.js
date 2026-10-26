@@ -25,6 +25,7 @@
     const douyinTopicCount = document.getElementById('douyin-topic-count');
     const douyinAvatar = document.getElementById('douyin-avatar');
     const douyinAvatarImg = document.getElementById('douyin-avatar-img');
+    const douyinRail = document.getElementById('douyin-rail');
     const douyinFavoriteBtn = document.getElementById('douyin-favorite-btn');
     const douyinCollectionBtn = document.getElementById('douyin-collection-btn');
     const douyinCollectionCount = document.getElementById('douyin-collection-count');
@@ -385,6 +386,31 @@
       if (douyinCollectionCount) douyinCollectionCount.textContent = count;
     }
 
+    // Swiping to the next clip used to keep the previous clip's heart/star until
+    // the new favourite state arrived, which read as a flicker. Clear both rails
+    // immediately and mute the transitions until the state is known again.
+    let douyinSyncTimer = 0;
+
+    function resetDouyinActionState() {
+      if (!douyinModeOn) return;
+      favoriteBtn.classList.remove('is-active');
+      favoriteBtn.setAttribute('aria-pressed', 'false');
+      collectionBtn.classList.remove('has-collection');
+      if (douyinFavoriteBtn) {
+        douyinFavoriteBtn.classList.remove('is-active');
+        douyinFavoriteBtn.setAttribute('aria-pressed', 'false');
+      }
+      if (douyinCollectionBtn) {
+        douyinCollectionBtn.classList.remove('is-active', 'has-collection');
+        douyinCollectionBtn.setAttribute('aria-pressed', 'false');
+      }
+      if (douyinRail) {
+        douyinRail.classList.add('is-syncing');
+        clearTimeout(douyinSyncTimer);
+        douyinSyncTimer = setTimeout(() => douyinRail.classList.remove('is-syncing'), 360);
+      }
+    }
+
     function closeDouyinCaptionFull() {
       if (!douyinCaptionFull) return;
       douyinCaptionFull.classList.remove('is-open');
@@ -528,6 +554,9 @@
 
     function slidePage(dir) {
       if (settling || pager || !feedItems[getCurrentIndex() + dir]) return;
+      // Neutralise the rail before the slide starts so the outgoing clip's heart/star
+      // state never paints over the incoming one.
+      resetDouyinActionState();
       beginPage(dir);
       placePage(0);
       void feedContainer.offsetHeight;
@@ -676,8 +705,10 @@
 
       const detailUrl = String(displayEntry?.detail_url || item.detail_url || '#');
       const mediaName = String(displayEntry?.name || item.name || '');
+      const mediaChanged = favoriteBtn.dataset.value !== mediaName;
       infoBtn.href = detailUrl;
       favoriteBtn.dataset.value = mediaName;
+      if (mediaChanged) resetDouyinActionState();
       if (mediaName) {
         updateFavoriteState(mediaName);
         collections.sync(mediaName);

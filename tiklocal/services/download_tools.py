@@ -1,9 +1,24 @@
 """Command lines and output parsing for the external download tools."""
+import importlib.util
+import os
 import re
 import shutil
 import subprocess as sp
+import sys
 from pathlib import Path
 from typing import Any
+
+# ``--version`` probes the tool itself; ffmpeg has no module fallback.
+TOOL_MODULES = {
+    'yt-dlp': 'yt_dlp',
+    'gallery-dl': 'gallery_dl',
+}
+TOOL_ENV_VARS = {
+    'yt-dlp': 'TIKLOCAL_YT_DLP',
+    'gallery-dl': 'TIKLOCAL_GALLERY_DL',
+    'ffmpeg': 'TIKLOCAL_FFMPEG',
+    'ffprobe': 'TIKLOCAL_FFPROBE',
+}
 
 _PROGRESS_RE = re.compile(r"\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%")
 _ETA_RE = re.compile(r"ETA\s+(?P<eta>[0-9:]+)")
@@ -18,10 +33,71 @@ YT_DLP_OUTPUT_TEMPLATE = (
 )
 
 
-def yt_dlp_command(binary: str, media_root: Path, url: str, *, allow_playlist: bool,
+def _script_dirs() -> list[Path]:
+    """Directories that hold console scripts next to the running interpreter."""
+    directories = []
+    executable = Path(sys.executable)
+    for candidate in (executable.parent, executable.parent / 'Scripts', executable.parent / 'bin'):
+        if candidate.is_dir() and candidate not in directories:
+            directories.append(candidate)
+    return directories
+
+
+def _bundled_ffmpeg() -> str:
+    """``imageio-ffmpeg`` ships a static ffmpeg binary; use it when PATH has none."""
+    try:
+        import imageio_ffmpeg
+    except Exception:
+        return ''
+    try:
+        return imageio_ffmpeg.get_ffmpeg_exe() or ''
+    except Exception:
+        return ''
+
+
+def resolve_tool(command: str) -> list[str] | None:
+    """Return the argv prefix that runs ``command``.
+
+    Resolution order: explicit ``TIKLOCAL_*`` path, ``PATH``, the console
+    scripts of the running interpreter (a Poetry/venv install is not on PATH
+    when the server is started from an IDE or a shortcut), the bundled
+    ``imageio-ffmpeg`` binary, then ``python -m <module>`` for the two download
+    engines. Returning ``None`` means the tool really is missing.
+    """
+    override = os.environ.get(TOOL_ENV_VARS.get(command, ''), '').strip()
+    if override:
+        return [override]
+    found = shutil.which(command)
+    if found:
+        return [found]
+    names = [command] if os.name == 'nt' else []
+    names.extend([command, f'{command}.exe', f'{command}.cmd'] if os.name == 'nt' else [command])
+    for directory in _script_dirs():
+        for name in names:
+            candidate = directory / name
+            if candidate.is_file():
+                return [str(candidate)]
+    if command == 'ffmpeg':
+        bundled = _bundled_ffmpeg()
+        if bundled:
+            return [bundled]
+    module = TOOL_MODULES.get(command)
+    if module and importlib.util.find_spec(module) is not None:
+        return [sys.executable, '-m', module]
+    return None
+
+
+def tool_argv(binary: str | list[str] | tuple[str, ...]) -> list[str]:
+    """Normalise a binary argument into an argv prefix."""
+    if isinstance(binary, (list, tuple)):
+        return [str(part) for part in binary]
+    return [str(binary)]
+
+
+def yt_dlp_command(binary: str | list[str], media_root: Path, url: str, *, allow_playlist: bool,
                    cookie_path: Path | None) -> list[str]:
     cmd = [
-        binary,
+        *tool_argv(binary),
         "--newline",
         "--restrict-filenames",
         "--merge-output-format", "mp4",
@@ -43,10 +119,10 @@ def yt_dlp_command(binary: str, media_root: Path, url: str, *, allow_playlist: b
     return cmd
 
 
-def gallery_dl_command(binary: str, temp_dir: Path, log_file: Path, url: str, *,
+def gallery_dl_command(binary: str | list[str], temp_dir: Path, log_file: Path, url: str, *,
                        archive_path: Path | None, cookie_path: Path | None) -> list[str]:
     cmd = [
-        binary,
+        *tool_argv(binary),
         "--no-colors",
         "--directory", str(temp_dir),
         "--retries", "10",
@@ -96,14 +172,21 @@ def error_line(line: str) -> str:
 
 
 def probe_binary(command: str) -> tuple[str | None, str]:
-    binary_path = shutil.which(command)
-    if not binary_path:
+    """Return ``(path, version)`` for a tool, honouring venv and bundled installs."""
+    prefix = resolve_tool(command)
+    if not prefix:
         return None, ""
-    try:
-        out = sp.check_output([binary_path, "--version"], text=True, timeout=3)
-        return binary_path, (out or "").strip().splitlines()[0]
-    except Exception:
-        return binary_path, ""
+    display = ' '.join(prefix)
+    # The first launch of a freshly installed tool can be slow on Windows.
+    for timeout in (15, 20):
+        try:
+            out = sp.check_output([*prefix, "--version"], text=True, timeout=timeout,
+                                  stderr=sp.STDOUT)
+            lines = [line for line in (out or "").strip().splitlines() if line.strip()]
+            return display, (lines[0] if lines else "")
+        except Exception:
+            continue
+    return display, ""
 
 
 def collect_gallery_outputs(temp_dir: Path, *, excluded: set[Path]) -> list[Path]:
