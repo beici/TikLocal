@@ -14,6 +14,7 @@ from tiklocal.services.thumbnail import ThumbnailService
 from tiklocal.services.metadata import ImageMetadataStore
 from tiklocal.services.captions import CaptionSettings
 from tiklocal.web.captions import register_caption_routes
+from tiklocal.web.author import register_author_routes
 from tiklocal.web.downloads import register_download_routes
 from tiklocal.web.library import register_library_routes
 from tiklocal.services.database import AppDatabase, MediaActivityStore
@@ -296,6 +297,10 @@ def create_app(test_config=None):
         activity_store=activity_store,
         related_photo_groups=similarity.photo_groups if similarity else None,
         library_service=library_service,
+    )
+    register_author_routes(
+        app, library_service=library_service, media_index=media_index,
+        tiktok_service=tiktok_service,
     )
 
     register_radio_routes(app, library_service, radio_service, thumbnail_service, RadioEnergyService(library_service))

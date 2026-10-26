@@ -1,0 +1,207 @@
+"""Author metadata (nickname, Douyin id, avatar) cached per media source.
+
+A Douyin export folder is one media source (``UID123_博主名_发布作品``), so the
+source id is the only stable author key the library has. The DouK-Downloader
+Web API returns raw Douyin payloads whose author block carries the real
+nickname, Douyin id and avatar URLs; this module keeps the interesting bits in
+``<data dir>/authors/<source id>.json`` plus the downloaded avatar bytes, and
+degrades to the folder-derived name and the bundled default avatar when the
+cache is cold or the sidecar is offline.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+from tiklocal.paths import get_data_dir
+
+DEFAULT_AVATAR_FILENAME = 'default-avatar.jpg'
+AVATAR_USER_AGENT = (
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+)
+AVATAR_REFERER = 'https://www.douyin.com/'
+MAX_AVATAR_BYTES = 4 * 1024 * 1024
+
+_UID_FOLDER = re.compile(r'^UID(?P<uid>\d+)_')
+_AVATAR_KEYS = ('avatar_larger', 'avatar_medium', 'avatar_thumb', 'avatar_168x168', 'avatar_300x300')
+_STAT_KEYS = ('follower_count', 'total_favorited', 'aweme_count', 'following_count')
+
+
+def authors_dir() -> Path:
+    directory = get_data_dir() / 'authors'
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def profile_path(source_id: str) -> Path:
+    return authors_dir() / f'{_safe_key(source_id)}.json'
+
+
+def avatar_path(source_id: str) -> Path:
+    return authors_dir() / f'{_safe_key(source_id)}.jpg'
+
+
+def _safe_key(source_id: str) -> str:
+    cleaned = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(source_id or '').strip())
+    return cleaned or 'default'
+
+
+def douyin_id_from_folder(folder_name: str) -> str:
+    """``UID123456789_demo_发布作品`` → ``123456789``; '' otherwise."""
+    match = _UID_FOLDER.match(str(folder_name or ''))
+    return match.group('uid') if match else ''
+
+
+def load_profile(source_id: str) -> dict:
+    path = profile_path(source_id)
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_profile(source_id: str, values: dict) -> dict:
+    """Merge ``values`` into the cached profile and persist it."""
+    profile = load_profile(source_id)
+    for key, value in (values or {}).items():
+        if value in (None, ''):
+            continue
+        profile[key] = value
+    profile['updated_at'] = int(time.time())
+    path = profile_path(source_id)
+    tmp = path.with_suffix('.json.tmp')
+    tmp.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding='utf-8')
+    tmp.replace(path)
+    return profile
+
+
+def clear_profile(source_id: str) -> None:
+    for path in (profile_path(source_id), avatar_path(source_id)):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _avatar_url_from_block(block: Any) -> str:
+    """Pick the largest avatar URL out of a Douyin avatar block."""
+    if isinstance(block, str):
+        return block
+    if not isinstance(block, dict):
+        return ''
+    urls = block.get('url_list') or block.get('urlList') or []
+    if isinstance(urls, str):
+        return urls
+    for url in urls:
+        if isinstance(url, str) and url.startswith('http'):
+            return url
+    return ''
+
+
+def extract_author_fields(payload: Any) -> dict:
+    """Pull nickname, Douyin id, stats and avatar URL out of a Douyin payload.
+
+    Accepts either a work item (``{'author': {...}}``) or an author block itself.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    author = payload.get('author') if isinstance(payload.get('author'), dict) else payload
+    fields: dict[str, Any] = {}
+
+    nickname = author.get('nickname') or author.get('nick_name') or ''
+    if nickname:
+        fields['name'] = str(nickname).strip()
+
+    douyin_id = author.get('unique_id') or author.get('uniqueId') or ''
+    if not douyin_id:
+        short_id = author.get('short_id') or author.get('shortId') or ''
+        douyin_id = '' if str(short_id) in ('', '0') else short_id
+    if douyin_id:
+        fields['douyin_id'] = str(douyin_id).strip()
+
+    for key in ('uid', 'sec_uid', 'sec_user_id', 'signature'):
+        value = author.get(key)
+        if value:
+            fields[key] = str(value)
+
+    for key in _STAT_KEYS:
+        value = author.get(key)
+        if isinstance(value, (int, float)):
+            fields[key] = int(value)
+
+    for key in _AVATAR_KEYS:
+        url = _avatar_url_from_block(author.get(key))
+        if url:
+            fields['avatar_url'] = url
+            break
+    if not fields.get('avatar_url'):
+        # The search-user endpoint flattens the avatar into a bare URL string.
+        for key in ('avatar', 'avatar_url'):
+            value = author.get(key)
+            if isinstance(value, str) and value.lower().startswith(('http://', 'https://')):
+                fields['avatar_url'] = value
+                break
+    return fields
+
+
+def download_avatar(source_id: str, url: str, timeout: float = 10.0) -> bool:
+    """Fetch ``url`` into the avatar cache; returns True when bytes were stored."""
+    url = str(url or '').strip()
+    if not url.lower().startswith(('http://', 'https://')):
+        return False
+    request = urllib.request.Request(url, headers={
+        'User-Agent': AVATAR_USER_AGENT,
+        'Referer': AVATAR_REFERER,
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = response.read(MAX_AVATAR_BYTES + 1)
+    except Exception:
+        return False
+    if not data or len(data) > MAX_AVATAR_BYTES:
+        return False
+    path = avatar_path(source_id)
+    tmp = path.with_suffix('.jpg.tmp')
+    try:
+        tmp.write_bytes(data)
+        tmp.replace(path)
+    except OSError:
+        return False
+    return True
+
+
+def store_author_from_payload(source_id: str, payload: Any, *, fetch_avatar: bool = True) -> dict:
+    """Persist whatever the payload says about the author of ``source_id``."""
+    fields = extract_author_fields(payload)
+    if not fields:
+        return load_profile(source_id)
+    profile = save_profile(source_id, fields)
+    if fetch_avatar and fields.get('avatar_url'):
+        if download_avatar(source_id, fields['avatar_url']):
+            profile['avatar_cached'] = True
+            profile = save_profile(source_id, {'avatar_cached': True})
+    return profile
+
+
+def resolve_profile(source_id: str, *, folder_name: str = '') -> dict:
+    """Merge the cached profile with what the source folder alone can tell us."""
+    profile = load_profile(source_id)
+    douyin_id = str(profile.get('douyin_id') or '') or douyin_id_from_folder(folder_name or source_id)
+    return {
+        'source_id': str(source_id or ''),
+        'name': str(profile.get('name') or ''),
+        'douyin_id': douyin_id,
+        'signature': str(profile.get('signature') or ''),
+        'follower_count': profile.get('follower_count'),
+        'total_favorited': profile.get('total_favorited'),
+        'aweme_count': profile.get('aweme_count'),
+        'avatar_url': str(profile.get('avatar_url') or ''),
+        'has_avatar': avatar_path(source_id).is_file(),
+    }

@@ -187,6 +187,122 @@ def build_memory_card(records: list[dict], profiles: dict, rng: random.Random, n
     }
 
 
+def normalize_tag(tag: str) -> str:
+    """``#海边`` / `` #海边 `` → ``海边``; '' when nothing is left."""
+    return str(tag or '').strip().lstrip('#').strip()
+
+
+def tag_matches(name: str, tag: str) -> bool:
+    """A hashtag matches when the caption the chrome shows contains it, ignoring case."""
+    if not tag:
+        return False
+    return tag.casefold() in media_naming.post_title(name).casefold()
+
+
+def collapse_media_entries(
+    page_media: list[tuple[str, str]],
+    records_by_name: dict,
+    media_index,
+) -> list[dict]:
+    """Fold album members and live posts into the entries the feed renders."""
+    entries: list[dict] = []
+    for media_type, name in page_media:
+        record = records_by_name.get(name)
+        if record and record.get('album_key'):
+            # Group members only surface through their cover's swipeable entry.
+            if int(record.get('album_index') or 0) != 0:
+                continue
+            members = media_index.album_members(str(record['album_key']))
+            if len(members) <= 1:
+                # A lone member is just itself; its row type already says which.
+                entries.append({'type': str(record.get('media_type') or media_type), 'name': name})
+                continue
+            is_live_post = media_naming.is_live_stem(name.rsplit('/', 1)[-1].rsplit('.', 1)[0])
+            entries.append({
+                'type': 'image_group',
+                'name': f"album:{name}",
+                'title': t('flow.group.live_title') if is_live_post else t('flow.group.album_title'),
+                'subtitle': t('flow.group.album_subtitle'),
+                'items': [
+                    build_feed_media_item(
+                        str(member['name']), str(member['media_type']),
+                        live_video_uri=str(member.get('live_video_uri') or ''),
+                    )
+                    for member in members
+                ],
+            })
+            continue
+        if record and str(record.get('media_type') or '') == 'live':
+            entries.append({'type': 'live', 'name': name})
+            continue
+        entries.append({'type': media_type, 'name': name})
+    return entries
+
+
+def build_feed_items(
+    entries: list[dict],
+    records_by_name: dict,
+    sources_by_id: dict | None = None,
+    recommendation_reasons: dict | None = None,
+) -> list[dict]:
+    """Render feed entries as payload items, with the author caption on every item."""
+    items = []
+    for entry in entries:
+        item_type = str(entry.get('type') or '')
+        if item_type == 'image_group':
+            group_item = {**entry, 'items': [dict(child) for child in entry['items']]}
+            if str(entry.get('name') or '').startswith('album:'):
+                group_item.update(build_author_caption(
+                    str(entry['name'])[len('album:'):], sources_by_id,
+                ))
+            items.append(group_item)
+            continue
+
+        name = str(entry.get('name') or '')
+        if not name or item_type not in {'video', 'image', 'live'}:
+            continue
+        record = records_by_name.get(name) or {}
+        item = build_feed_media_item(
+            name, item_type,
+            live_video_uri=str(record.get('live_video_uri') or ''),
+        )
+        if recommendation_reasons is not None:
+            item['recommendation_reason'] = recommendation_reasons.get(name, '')
+        item.update(build_author_caption(name, sources_by_id))
+        items.append(item)
+    return items
+
+
+def build_tag_feed_page(
+    *,
+    tag: str,
+    page: int,
+    size: int,
+    seed: str,
+    media_index,
+    sources_by_id: dict | None = None,
+    blog: str = '',
+) -> dict:
+    """One caption hashtag, newest first: no weighting, no memory, no extra cards."""
+    records = media_index.records(source_id=blog)
+    records_by_name = {str(record.get('name') or ''): record for record in records}
+    matched = [
+        (str(record.get('media_type') or ''), str(record.get('name') or ''))
+        for record in records
+        if tag_matches(str(record.get('name') or ''), tag)
+    ]
+    entries = collapse_media_entries(matched, records_by_name, media_index)
+    end = page * size
+    start = max(0, end - size)
+    return {
+        'items': build_feed_items(entries[start:end], records_by_name, sources_by_id),
+        'page': page,
+        'has_more': len(entries) > end,
+        'seed': seed,
+        'tag': tag,
+    }
+
+
 def build_mix_feed_page(
     *,
     page: int,
@@ -200,7 +316,19 @@ def build_mix_feed_page(
     mode: str = '',
     blog: str = '',
     sources_by_id: dict | None = None,
+    tag: str = '',
 ) -> dict:
+    raw_tag = str(tag or '').strip()
+    tag = normalize_tag(raw_tag)
+    if tag:
+        return build_tag_feed_page(
+            tag=tag, page=page, size=size, seed=seed,
+            media_index=media_index, sources_by_id=sources_by_id, blog=blog,
+        )
+    if raw_tag:
+        # A lone '#' names no tag: filtering still applies and nothing matches.
+        return {'items': [], 'page': page, 'has_more': False, 'seed': seed, 'tag': ''}
+
     video_ratio = 4
     image_ratio = 1
 
@@ -309,37 +437,7 @@ def build_mix_feed_page(
         image_group_names = {str(item.get('name') or '') for item in group_items}
         break
 
-    mixed_entries: list[dict] = []
-    for media_type, name in page_media:
-        record = records_by_name.get(name)
-        if record and record.get('album_key'):
-            # Group members only surface through their cover's swipeable entry.
-            if int(record.get('album_index') or 0) != 0:
-                continue
-            members = media_index.album_members(str(record['album_key']))
-            if len(members) <= 1:
-                # A lone member is just itself; its row type already says which.
-                mixed_entries.append({'type': str(record.get('media_type') or media_type), 'name': name})
-                continue
-            is_live_post = media_naming.is_live_stem(name.rsplit('/', 1)[-1].rsplit('.', 1)[0])
-            mixed_entries.append({
-                'type': 'image_group',
-                'name': f"album:{name}",
-                'title': t('flow.group.live_title') if is_live_post else t('flow.group.album_title'),
-                'subtitle': t('flow.group.album_subtitle'),
-                'items': [
-                    build_feed_media_item(
-                        str(member['name']), str(member['media_type']),
-                        live_video_uri=str(member.get('live_video_uri') or ''),
-                    )
-                    for member in members
-                ],
-            })
-            continue
-        if record and str(record.get('media_type') or '') == 'live':
-            mixed_entries.append({'type': 'live', 'name': name})
-            continue
-        mixed_entries.append({'type': media_type, 'name': name})
+    mixed_entries = collapse_media_entries(page_media, records_by_name, media_index)
     if image_group_candidate and mixed_entries:
         mixed_entries = [
             entry for entry in mixed_entries
@@ -392,29 +490,7 @@ def build_mix_feed_page(
         for entry in mixed_entries
         if entry.get('type') in {'video', 'image', 'live'}
     ])
-    items = []
-    for entry in mixed_entries:
-        item_type = str(entry.get('type') or '')
-        if item_type == 'image_group':
-            group_item = {**entry, 'items': [dict(child) for child in entry['items']]}
-            if str(entry.get('name') or '').startswith('album:'):
-                group_item.update(build_author_caption(
-                    str(entry['name'])[len('album:'):], sources_by_id,
-                ))
-            items.append(group_item)
-            continue
-
-        name = str(entry.get('name') or '')
-        if not name or item_type not in {'video', 'image', 'live'}:
-            continue
-        record = records_by_name.get(name) or {}
-        item = build_feed_media_item(
-            name, item_type,
-            live_video_uri=str(record.get('live_video_uri') or ''),
-        )
-        item['recommendation_reason'] = recommendation_reasons.get(name, '')
-        item.update(build_author_caption(name, sources_by_id))
-        items.append(item)
+    items = build_feed_items(mixed_entries, records_by_name, sources_by_id, recommendation_reasons)
 
     return {
         'items': items,
@@ -431,7 +507,10 @@ def register_flow_routes(
 ):
     @app.route('/flow')
     def flow_view():
-        return render_template('flow.html', menu='flow')
+        return render_template(
+            'flow.html', menu='flow',
+            tag=normalize_tag(request.args.get('tag', '')),
+        )
 
     @app.route('/api/feed/mix')
     def api_feed_mix():
@@ -447,6 +526,7 @@ def register_flow_routes(
             mode=request.args.get('mode', ''),
             blog=str(request.args.get('blog', '')).strip(),
             sources_by_id=getattr(library_service, 'sources_by_id', None) or {},
+            tag=request.args.get('tag', ''),
         )
         if request.args.get('snapshot') == '1':
             result['has_more'] = False

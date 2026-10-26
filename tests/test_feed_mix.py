@@ -4,6 +4,7 @@ import time
 import sqlite3
 
 import pytest
+from PIL import Image
 
 from tiklocal.app import create_app
 
@@ -232,3 +233,119 @@ def test_feed_mix_items_carry_author_and_caption(client):
 
     root_item = by_name["@default/v1.mp4"]
     assert "author_name" not in root_item
+
+
+BLOGGER = 'UID100000000000001_示例博主_发布作品'
+
+
+def _douyin_media(path, days_ago):
+    """Write one exported media file; the mtime decides the feed order."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix.lower() in {'.jpg', '.jpeg'}:
+        Image.new('RGB', (40, 30), 'red').save(path)
+    else:
+        path.write_bytes(b'media')
+    stamp = time.time() - days_ago * 86400
+    os.utime(path, (stamp, stamp))
+
+
+def _tag_client(tmp_path, files):
+    media_root = tmp_path / 'media'
+    for name, days_ago in files.items():
+        _douyin_media(media_root / name, days_ago)
+    return create_app({'TESTING': True, 'MEDIA_ROOT': media_root}).test_client()
+
+
+def test_tag_feed_keeps_only_matching_items_with_caption_and_author(tmp_path):
+    video = f'{BLOGGER}/2024-05-01 10.00.00-视频-示例博主-海边日落#海边.mp4'
+    album_cover = f'{BLOGGER}/2024-05-03 10.00.00-图集-示例博主-海边人像_1.jpeg'
+    album_member = f'{BLOGGER}/2024-05-03 10.00.00-图集-示例博主-海边人像_2.jpeg'
+    client = _tag_client(tmp_path, {
+        video: 1,
+        f'{BLOGGER}/2024-05-02 10.00.00-视频-示例博主-城市夜景.mp4': 2,
+        album_cover: 3,
+        album_member: 3,
+    })
+
+    payload = client.get(
+        '/api/feed/mix', query_string={'tag': '海边', 'size': 8, 'seed': 's'},
+    ).get_json()
+
+    assert payload['tag'] == '海边'
+    assert payload['has_more'] is False
+    assert [item['name'] for item in payload['items']] == [
+        f'@default/{video}', f"album:@default/{album_cover}",
+    ]
+
+    post, group = payload['items']
+    assert post['type'] == 'video'
+    assert post['caption_text'] == '海边日落#海边'
+    assert post['author_name'] == '示例博主'
+    assert post['author_url'] == '/flow?blog=default'
+    # The album reaches the feed as one swipeable card, tagged by its cover.
+    assert group['type'] == 'image_group'
+    assert group['caption_text'] == '海边人像'
+    assert group['author_name'] == '示例博主'
+    assert [child['name'] for child in group['items']] == [
+        f'@default/{album_cover}', f'@default/{album_member}',
+    ]
+    assert client.get('/flow', query_string={'tag': '#海边'}).status_code == 200
+
+
+def test_tag_matching_ignores_case_and_a_leading_hash(tmp_path):
+    post = f'{BLOGGER}/2024-05-01 10.00.00-视频-示例博主-Summer#Beach 晚风.mp4'
+    client = _tag_client(tmp_path, {
+        post: 1,
+        f'{BLOGGER}/2024-05-02 10.00.00-视频-示例博主-冬日暖阳.mp4': 2,
+    })
+
+    for raw_tag in ('#BEACH', 'beach', ' #Beach '):
+        payload = client.get(
+            '/api/feed/mix', query_string={'tag': raw_tag, 'size': 8, 'seed': 's'},
+        ).get_json()
+        assert [item['name'] for item in payload['items']] == [f'@default/{post}']
+        assert payload['tag'].casefold() == 'beach'
+        assert not payload['tag'].startswith('#')
+
+
+def test_unknown_tag_returns_an_empty_feed(tmp_path):
+    client = _tag_client(tmp_path, {
+        f'{BLOGGER}/2024-05-01 10.00.00-视频-示例博主-标题.mp4': 1,
+    })
+
+    unknown = client.get(
+        '/api/feed/mix', query_string={'tag': '不存在的标签', 'size': 8, 'seed': 's'},
+    ).get_json()
+    assert unknown['items'] == []
+    assert unknown['has_more'] is False
+    assert unknown['tag'] == '不存在的标签'
+
+    # A lone '#' names no tag, so the filtered feed is simply empty.
+    lone_hash = client.get(
+        '/api/feed/mix', query_string={'tag': '#', 'size': 8, 'seed': 's'},
+    ).get_json()
+    assert lone_hash['items'] == []
+    assert lone_hash['has_more'] is False
+
+
+def test_tag_feed_paginates_newest_first(tmp_path):
+    files = {
+        f'{BLOGGER}/2024-06-01 10.00.00-视频-示例博主-夏日第{index:02d}集#夏日.mp4': index + 1
+        for index in range(12)
+    }
+    client = _tag_client(tmp_path, files)
+    expected = [f'@default/{name}' for name in files]
+
+    first = client.get(
+        '/api/feed/mix', query_string={'tag': '夏日', 'page': 1, 'size': 8, 'seed': 's'},
+    ).get_json()
+    second = client.get(
+        '/api/feed/mix', query_string={'tag': '夏日', 'page': 2, 'size': 8, 'seed': 's'},
+    ).get_json()
+
+    assert [item['name'] for item in first['items']] == expected[:8]
+    assert first['has_more'] is True
+    assert [item['name'] for item in second['items']] == expected[8:]
+    assert second['has_more'] is False
+    assert all(item['caption_text'].endswith('#夏日')
+               for item in first['items'] + second['items'])

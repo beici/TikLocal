@@ -18,11 +18,16 @@
     const collectionBtn = document.getElementById('collection-btn');
     const infoBtn = document.getElementById('info-btn');
 
+    const douyinTopbar = document.getElementById('douyin-topbar');
+    const douyinTopBack = document.getElementById('douyin-top-back');
+    const douyinTopic = document.getElementById('douyin-topic');
+    const douyinTopicName = document.getElementById('douyin-topic-name');
+    const douyinTopicCount = document.getElementById('douyin-topic-count');
     const douyinAvatar = document.getElementById('douyin-avatar');
     const douyinAvatarImg = document.getElementById('douyin-avatar-img');
-    const douyinAvatarChar = document.getElementById('douyin-avatar-char');
     const douyinFavoriteBtn = document.getElementById('douyin-favorite-btn');
     const douyinCollectionBtn = document.getElementById('douyin-collection-btn');
+    const douyinCollectionCount = document.getElementById('douyin-collection-count');
     const douyinInfoBtn = document.getElementById('douyin-info-btn');
     const douyinAuthor = document.getElementById('douyin-author');
     const douyinCaption = document.getElementById('douyin-caption');
@@ -31,6 +36,9 @@
     const douyinCaptionFull = document.getElementById('douyin-caption-full');
     const douyinCaptionFullText = document.getElementById('douyin-caption-full-text');
     const douyinCaptionCollapse = document.getElementById('douyin-caption-collapse');
+
+    // The topic header renders before the feed so /flow?tag= looks right at once.
+    syncTopicHeader();
 
     const playStatusIcon = document.getElementById('play-status-icon');
     const customControls = document.getElementById('custom-controls');
@@ -336,9 +344,32 @@
 
     // --- Douyin-style chrome helpers ---
 
+    const DEFAULT_AVATAR = '/static/default-avatar.jpg';
+
+    function douyinSourceId(entry) {
+      // build_author_caption points at /flow?blog=<source_id>; the author page
+      // lives at /author/<source_id>, so the id is all we need from it.
+      const match = /[?&]blog=([^&]+)/.exec(String(entry?.author_url || ''));
+      return match ? decodeURIComponent(match[1]) : '';
+    }
+
+    function douyinAuthorHref(entry) {
+      const sourceId = douyinSourceId(entry);
+      return sourceId ? `/author/${encodeURIComponent(sourceId)}` : String(entry?.author_url || '/flow');
+    }
+
+    function douyinAuthorAvatar(entry) {
+      const sourceId = douyinSourceId(entry);
+      return sourceId ? `/author/${encodeURIComponent(sourceId)}/avatar` : DEFAULT_AVATAR;
+    }
+
     function douyinCaptionHtml(text) {
-      // Hashtags render in the Douyin topic blue inside otherwise plain text.
-      return escapeHtml(text).replace(/#[^\s#]+/g, (tag) => `<span class="douyin-tag">${tag}</span>`);
+      // Hashtags keep the caption colour and open the topic feed on tap.
+      return escapeHtml(text).replace(/#[^\s#]+/g, (tag) => {
+        const name = tag.slice(1);
+        const href = `/flow?tag=${encodeURIComponent(name)}`;
+        return `<a class="douyin-tag" href="${href}" data-tag="${escapeHtml(name)}">${tag}</a>`;
+      });
     }
 
     function mirrorDouyinActions() {
@@ -348,7 +379,10 @@
       douyinFavoriteBtn.setAttribute('aria-pressed', String(liked));
       const collected = collectionBtn.classList.contains('has-collection');
       douyinCollectionBtn.classList.toggle('is-active', collected);
+      douyinCollectionBtn.classList.toggle('has-collection', collected);
       douyinCollectionBtn.setAttribute('aria-pressed', String(collected));
+      const count = collectionBtn.querySelector('.collection-count')?.textContent || '0';
+      if (douyinCollectionCount) douyinCollectionCount.textContent = count;
     }
 
     function closeDouyinCaptionFull() {
@@ -362,25 +396,19 @@
       const entry = item || {};
       const author = String(entry.author_name || '');
       const caption = String(entry.caption_text || '');
-      const authorUrl = String(entry.author_url || '/flow');
 
       douyinAuthor.hidden = !author;
       douyinAvatar.hidden = !author;
       if (author) {
+        const authorHref = douyinAuthorHref(entry);
         douyinAuthor.textContent = `@${author}`;
-        douyinAuthor.href = authorUrl;
-        douyinAvatar.href = authorUrl;
-        douyinAvatarChar.textContent = Array.from(author)[0]?.toUpperCase() || '?';
-      }
-
-      const displayEntry = currentDisplayEntry();
-      const avatarUrl = String(displayEntry?.thumb_url || entry.thumb_url || '');
-      if (author && avatarUrl && douyinAvatarImg.dataset.src !== avatarUrl) {
-        douyinAvatarImg.dataset.src = avatarUrl;
-        douyinAvatarImg.src = avatarUrl;
-        douyinAvatarImg.hidden = false;
-      } else if (!author || !avatarUrl) {
-        douyinAvatarImg.hidden = true;
+        douyinAuthor.href = authorHref;
+        douyinAvatar.href = authorHref;
+        const avatarUrl = douyinAuthorAvatar(entry);
+        if (douyinAvatarImg.dataset.src !== avatarUrl) {
+          douyinAvatarImg.dataset.src = avatarUrl;
+          douyinAvatarImg.src = avatarUrl;
+        }
       }
 
       douyinCaption.hidden = !caption;
@@ -397,6 +425,29 @@
       }
 
       douyinInfoBtn.href = infoBtn.href;
+      mirrorDouyinActions();
+    }
+
+    // --- Topic (hashtag) feed header ---
+
+    function currentTopicTag() {
+      return new URLSearchParams(window.location.search).get('tag') || '';
+    }
+
+    function syncTopicHeader() {
+      const tag = currentTopicTag();
+      if (!tag) return;
+      document.body.classList.add('tag-feed');
+      if (douyinTopic) douyinTopic.hidden = false;
+      if (douyinTopicName) douyinTopicName.textContent = tag;
+      if (douyinTopBack) douyinTopBack.hidden = false;
+      document.title = `#${tag} · tikLocal`;
+    }
+
+    function syncTopicCount(count) {
+      if (!douyinTopicCount || !currentTopicTag()) return;
+      const template = window.TikLocalI18n?.t('flow.tag.count', { count }) || `${count}`;
+      douyinTopicCount.textContent = template;
     }
 
     async function goNext() {
@@ -1193,6 +1244,8 @@
           if (feedMode) query.set('mode', feedMode);
           const blogFilter = new URLSearchParams(window.location.search).get('blog');
           if (blogFilter) query.set('blog', blogFilter);
+          const tagFilter = currentTopicTag();
+          if (tagFilter) query.set('tag', tagFilter);
 
           const res = await fetch(`/api/feed/mix?${query.toString()}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1242,8 +1295,10 @@
         }
         if (feedItems.length) {
           hideFlowStatus();
+          syncTopicCount(feedItems.length);
         } else if (!flowSession.hasMore()) {
-          if (feedMode) showFlowStatus('empty', T('flow.state.forgotten_empty_title'), T('flow.state.forgotten_empty_detail'));
+          if (currentTopicTag()) showFlowStatus('empty', T('flow.tag.empty'), '');
+          else if (feedMode) showFlowStatus('empty', T('flow.state.forgotten_empty_title'), T('flow.state.forgotten_empty_detail'));
           else showFlowStatus('empty', T('flow.state.empty_title'), T('flow.state.empty_detail'));
         }
         return result;
@@ -1771,9 +1826,18 @@
         if (event.target === douyinCaptionFull) closeDouyinCaptionFull();
       });
 
-      // A missing thumbnail falls back to the first-character avatar.
+      // A missing avatar falls back to the bundled placeholder once.
       douyinAvatarImg.addEventListener('error', () => {
-        douyinAvatarImg.hidden = true;
+        if (douyinAvatarImg.dataset.fallback === '1') return;
+        douyinAvatarImg.dataset.fallback = '1';
+        douyinAvatarImg.src = DEFAULT_AVATAR;
+      });
+    }
+
+    if (douyinTopBack) {
+      douyinTopBack.addEventListener('click', () => {
+        if (window.history.length > 1) window.history.back();
+        else window.location.href = '/flow';
       });
     }
 

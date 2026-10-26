@@ -16,6 +16,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from tiklocal.i18n import t
+from tiklocal.services import author_profiles
 
 
 DEFAULT_TIKTOK_DOWNLOADER_CONFIG: dict[str, Any] = {
@@ -26,6 +27,10 @@ DEFAULT_TIKTOK_DOWNLOADER_CONFIG: dict[str, Any] = {
 }
 
 TIKTOK_DOWNLOADER_TABS = {"post", "favorite", "collection"}
+
+# Keys that mark a single-object response as one work item (the sidecar answers
+# ``/douyin/detail`` with an object, but every other endpoint with a list).
+_WORK_ITEM_KEYS = frozenset({"aweme_id", "id", "desc", "downloads", "author", "video", "images"})
 
 # Link patterns mirror the official extractor in TikTokDownloader
 # (src/link/extractor.py) so links accepted here match the sidecar.
@@ -50,6 +55,18 @@ _MEDIA_FILENAME_SUFFIXES = {".mp4", ".webm", ".mov", ".m4v", ".jpg", ".jpeg", ".
 
 class TikTokDownloaderError(Exception):
     """Raised when the TikTokDownloader sidecar cannot serve a request."""
+
+
+class AuthorAmbiguousError(TikTokDownloaderError):
+    """Raised when several Douyin accounts match the requested author.
+
+    Nicknames are not unique on Douyin (dozens of accounts can share one name), so
+    the caller has to ask the user which account owns the local media folder.
+    """
+
+    def __init__(self, message: str, candidates: list[dict[str, Any]]):
+        super().__init__(message)
+        self.candidates = candidates
 
 
 def validate_tiktok_downloader_config(payload: Any) -> tuple[dict[str, Any] | None, str | None]:
@@ -204,20 +221,65 @@ class TikTokDownloaderClient:
         data = response.get("data")
         if data is None:
             data = []
+        # ``/douyin/detail`` answers with a single work object (the raw payload
+        # when ``source`` is on), account and mix with a list. Only a dict that
+        # actually looks like a work item is promoted; anything else is a shape
+        # error rather than a silent single-item feed.
+        if isinstance(data, dict) and _WORK_ITEM_KEYS.intersection(data):
+            data = [data]
         if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
             raise TikTokDownloaderError("TikTokDownloader returned an unexpected response shape.")
         return data
 
-    def fetch_detail(self, detail_id: str, platform: str = "douyin") -> list[dict[str, Any]]:
-        return self._fetch_items(f"/{platform}/detail", {"detail_id": str(detail_id)})
+    def fetch_detail(self, detail_id: str, platform: str = "douyin", *, source: bool = False) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {"detail_id": str(detail_id)}
+        if source:
+            # ``source`` returns the raw Douyin payload, which is the only shape
+            # that carries the author avatar and follower counters.
+            payload["source"] = True
+        return self._fetch_items(f"/{platform}/detail", payload)
 
-    def fetch_account(self, sec_user_id: str, tab: str = "post", count: int = 18, platform: str = "douyin") -> list[dict[str, Any]]:
+    def fetch_account(
+        self, sec_user_id: str, tab: str = "post", count: int = 18,
+        platform: str = "douyin", *, source: bool = False,
+    ) -> list[dict[str, Any]]:
         if tab not in TIKTOK_DOWNLOADER_TABS:
             raise ValueError(t('download.error.tiktok_tab'))
-        return self._fetch_items(f"/{platform}/account", {"sec_user_id": str(sec_user_id), "tab": tab, "count": int(count)})
+        payload: dict[str, Any] = {"sec_user_id": str(sec_user_id), "tab": tab, "count": int(count)}
+        if source:
+            payload["source"] = True
+        return self._fetch_items(f"/{platform}/account", payload)
 
-    def fetch_mix(self, mix_id: str, count: int = 18, platform: str = "douyin") -> list[dict[str, Any]]:
-        return self._fetch_items(f"/{platform}/mix", {"mix_id": str(mix_id), "count": int(count)})
+    def fetch_mix(self, mix_id: str, count: int = 18, platform: str = "douyin", *, source: bool = False) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {"mix_id": str(mix_id), "count": int(count)}
+        if source:
+            payload["source"] = True
+        return self._fetch_items(f"/{platform}/mix", payload)
+
+    def search_user(self, keyword: str, count: int = 10, platform: str = "douyin") -> list[dict[str, Any]]:
+        """Search accounts by nickname or Douyin id (``POST /douyin/search/user``).
+
+        The flat payload of this endpoint is the only Web API shape that carries
+        the avatar, nickname, Douyin id, follower and like counters together.
+        """
+        keyword = str(keyword or "").strip()
+        if not keyword:
+            raise ValueError(t('download.error.author_keyword'))
+        return self._fetch_items(f"/{platform}/search/user", {
+            "keyword": keyword,
+            "channel": 2,
+            # The sidecar validates ``count`` with ``ge=5, le=20``.
+            "count": max(5, min(int(count or 10), 20)),
+        })
+
+    def fetch_account_author(self, sec_user_id: str, platform: str = "douyin") -> dict[str, Any]:
+        """Read the author block of an account through one raw (``source``) work."""
+        items = self.fetch_account(sec_user_id, count=1, platform=platform, source=True)
+        for item in items:
+            author = item.get("author")
+            if isinstance(author, dict) and author:
+                return author
+        return {}
 
 
 def classify_post_type(raw_item: dict[str, Any], download_count: int) -> str:
@@ -331,6 +393,61 @@ def seed_tiktok_downloader_config(config_store: Any, overrides: Any) -> None:
         return
 
 
+def _search_block(user: dict[str, Any]) -> dict[str, Any]:
+    """Return the account block of a search hit (flat or ``source`` shaped)."""
+    block = user.get("user_info") if isinstance(user.get("user_info"), dict) else user
+    return block if isinstance(block, dict) else {}
+
+
+def normalize_author_candidate(user: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a ``/douyin/search/user`` hit to the fields the picker needs."""
+    block = _search_block(user)
+    avatar = block.get("avatar")
+    if not isinstance(avatar, str) or not avatar:
+        for key in ("avatar_larger", "avatar_medium", "avatar_thumb"):
+            node = block.get(key)
+            if isinstance(node, dict):
+                urls = node.get("url_list") or []
+                if isinstance(urls, list) and urls:
+                    avatar = str(urls[0] or "")
+                    break
+    return {
+        "nickname": str(block.get("nickname") or ""),
+        "unique_id": str(block.get("unique_id") or block.get("uniqueId") or ""),
+        "short_id": str(block.get("short_id") or block.get("shortId") or ""),
+        "uid": str(block.get("uid") or ""),
+        "sec_uid": str(block.get("sec_uid") or block.get("secUid") or ""),
+        "signature": str(block.get("signature") or ""),
+        "avatar": avatar if isinstance(avatar, str) else "",
+        "follower_count": block.get("follower_count"),
+        "total_favorited": block.get("total_favorited"),
+    }
+
+
+def _match_search_candidates(users: list[dict[str, Any]], keyword: str) -> list[dict[str, Any]]:
+    """Return every hit whose Douyin id or nickname equals ``keyword`` exactly."""
+    keyword = str(keyword or "").strip().casefold()
+    if not keyword:
+        return []
+    matches: list[dict[str, Any]] = []
+    for user in users:
+        block = _search_block(user)
+        keys = {
+            str(block.get("unique_id") or block.get("uniqueId") or "").casefold(),
+            str(block.get("short_id") or block.get("shortId") or "").casefold(),
+            str(block.get("nickname") or "").casefold(),
+        }
+        if keyword in keys:
+            matches.append(user)
+    return matches
+
+
+def _pick_search_match(users: list[dict[str, Any]], keyword: str) -> dict[str, Any]:
+    """Pick the account that matches ``keyword`` exactly (first hit, if any)."""
+    matches = _match_search_candidates(users, keyword)
+    return matches[0] if matches else {}
+
+
 class TikTokDownloadService:
     """Resolves links through the sidecar and enqueues direct download jobs."""
 
@@ -370,6 +487,78 @@ class TikTokDownloadService:
         if not target:
             raise ValueError(t('download.error.tiktok_link'))
         return target
+
+    def list_author_candidates(self, keyword: str, count: int = 10) -> list[dict[str, Any]]:
+        """Search Douyin accounts so the author page can offer a picker."""
+        config = self.get_config()
+        if not config["base_url"]:
+            raise TikTokDownloaderError("TikTokDownloader service is not configured.")
+        keyword = str(keyword or "").strip()
+        if not keyword:
+            raise ValueError(t('download.error.author_keyword'))
+        users = self._client().search_user(keyword, count=count)
+        return [normalize_author_candidate(user) for user in users]
+
+    def refresh_author_profile(
+        self,
+        source_id: str,
+        *,
+        keyword: str = "",
+        sec_user_id: str = "",
+        unique_id: str = "",
+        uid: str = "",
+    ) -> dict[str, Any]:
+        """Fetch an author profile (avatar, nickname, Douyin id, counters) and cache it.
+
+        DouK-Downloader has no avatar download switch, but ``/douyin/search/user``
+        returns avatar + nickname + unique_id + follower_count + total_favorited in
+        one flat payload, and an account/detail call with ``source: true`` exposes
+        the raw ``author`` block. Both paths end up in ``author_profiles``.
+
+        Nicknames are not unique, so only exact id/nickname hits are accepted and
+        an ambiguous keyword raises :class:`AuthorAmbiguousError` with the
+        candidates for the caller to render a picker.
+        """
+        config = self.get_config()
+        if not config["base_url"]:
+            raise TikTokDownloaderError("TikTokDownloader service is not configured.")
+        client = self._client()
+        if sec_user_id:
+            author = client.fetch_account_author(str(sec_user_id))
+            if not author:
+                raise TikTokDownloaderError(t('download.error.author_not_found'))
+            author_profiles.store_author_from_payload(source_id, author)
+            return author_profiles.resolve_profile(source_id)
+
+        keyword = str(keyword or "").strip()
+        if not keyword:
+            raise ValueError(t('download.error.author_keyword'))
+        users = client.search_user(keyword)
+        if not users:
+            raise TikTokDownloaderError(t('download.error.author_not_found'))
+
+        chosen_id = str(unique_id or uid or "").strip()
+        if chosen_id:
+            for user in users:
+                block = _search_block(user)
+                ids = {
+                    str(block.get("unique_id") or block.get("uniqueId") or ""),
+                    str(block.get("short_id") or block.get("shortId") or ""),
+                    str(block.get("uid") or ""),
+                }
+                if chosen_id in ids:
+                    author_profiles.store_author_from_payload(source_id, user)
+                    return author_profiles.resolve_profile(source_id)
+            raise TikTokDownloaderError(t('download.error.author_not_found'))
+
+        matches = _match_search_candidates(users, keyword)
+        if not matches:
+            raise TikTokDownloaderError(t('download.error.author_not_found'))
+        if len(matches) > 1:
+            candidates = [normalize_author_candidate(user) for user in matches]
+            raise AuthorAmbiguousError(t('download.error.author_ambiguous'), candidates)
+        author_profiles.store_author_from_payload(source_id, matches[0])
+        return author_profiles.resolve_profile(source_id)
 
     def enqueue_from_url(self, url: str, tab: str = "post", count: int = 18) -> dict[str, Any]:
         """Resolve a link into works and enqueue one direct-download job per work."""

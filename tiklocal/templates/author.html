@@ -1,0 +1,97 @@
+{% extends 'base.html' %}
+
+{% block extra_head %}<link rel="stylesheet" href="{{ static_asset('author.css') }}">{% endblock %}
+
+{% block content %}
+<main class="author-page" data-author-page data-source-id="{{ source_id }}"
+      data-author-name="{{ search_default }}">
+  <header class="author-topbar">
+    <button type="button" class="author-back" data-author-back aria-label="{{ t('author.back') }}">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+        <path d="M15 4.5 7.5 12l7.5 7.5" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </header>
+
+  <section class="author-profile">
+    <span class="author-avatar-ring">
+      <img class="author-avatar" src="/author/{{ source_id|urlencode }}/avatar"
+           alt="{{ t('author.avatar_alt', name=author_name) }}" width="88" height="88"
+           onerror="this.onerror=null;this.src='/static/default-avatar.jpg'">
+    </span>
+    <div class="author-name-row">
+      <h1 class="author-name">{{ author_name }}</h1>
+      {% if refresh_enabled %}
+      <button type="button" class="author-sync" data-author-sync>{{ t('author.action.refresh') }}</button>
+      {% endif %}
+    </div>
+    {% if douyin_id %}
+    <p class="author-douyin-id">{{ t('author.douyin_id', id=douyin_id) }}</p>
+    {% endif %}
+    <dl class="author-stats">
+      {% for stat in stats %}
+      <div class="author-stat" data-stat="{{ stat.key }}">
+        <dt>{{ stat.label }}</dt>
+        <dd>{{ stat.value }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+  </section>
+
+  <nav class="author-tabs" aria-label="{{ t('author.tabs_label') }}">
+    <span class="author-tab is-active" aria-current="page">{{ t('author.tab.works') }}</span>
+  </nav>
+
+  <p class="author-alert" data-author-alert role="alert" hidden></p>
+
+  {% if tiles %}
+  <div class="author-grid">
+    {% for tile in tiles %}
+    <a class="author-tile" href="{{ tile.detail_url }}"
+       aria-label="{{ t('author.tile.video') if tile.plays else t('author.tile.image') }}">
+      {% if tile.plays %}
+      <video class="author-tile-media author-tile-video" src="{{ tile.media_url }}#t=0.1"
+             muted playsinline preload="metadata" aria-hidden="true" tabindex="-1"></video>
+      <span class="author-tile-play" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="15" height="15" focusable="false">
+          <path d="M8 5.2v13.6L19 12z" fill="currentColor"/>
+        </svg>
+      </span>
+      {% else %}
+      <img class="author-tile-media author-tile-image" src="{{ tile.thumb_url }}" alt=""
+           loading="lazy" decoding="async">
+      {% endif %}
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="author-empty">
+    <p class="author-empty-title">{{ t('author.empty.title') }}</p>
+    <p class="author-empty-detail">{{ t('author.empty.detail') }}</p>
+  </div>
+  {% endif %}
+
+  {% if refresh_enabled %}
+  <div class="author-picker" data-author-picker hidden>
+    <div class="author-picker-backdrop" data-author-picker-close></div>
+    <section class="author-picker-card" role="dialog" aria-modal="true"
+             aria-labelledby="author-picker-title">
+      <h2 class="author-picker-title" id="author-picker-title">{{ t('author.picker.title') }}</h2>
+      <form class="author-picker-form" data-author-search-form>
+        <input class="author-picker-input" type="search" name="keyword" data-author-keyword
+               value="{{ search_default }}" placeholder="{{ t('author.picker.placeholder') }}"
+               aria-label="{{ t('author.picker.placeholder') }}" autocomplete="off"
+               autocapitalize="off" spellcheck="false">
+        <button class="author-picker-search" type="submit">{{ t('author.picker.search') }}</button>
+      </form>
+      <p class="author-picker-hint" data-author-hint hidden></p>
+      <ul class="author-picker-list" data-author-candidates hidden></ul>
+      <button class="author-picker-cancel" type="button" data-author-picker-close>{{ t('author.picker.cancel') }}</button>
+    </section>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}
+
+{% block extra_body %}<script src="{{ static_asset('author_page_controller.js') }}"></script>{% endblock %}

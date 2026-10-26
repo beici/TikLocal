@@ -989,6 +989,7 @@ em.coll-count {
 
 /* ---------- Douyin-style mode ---------- */
 /* The Douyin chrome is inert until the body carries .douyin (settings toggle). */
+.douyin-topbar,
 .douyin-rail,
 .douyin-info,
 .douyin-nav { display: none; }
@@ -999,18 +1000,122 @@ body.douyin .controls-sidebar,
 body.douyin #custom-controls,
 body.douyin .caption-panel { display: none; }
 
+body.douyin .douyin-topbar,
+body.tag-feed .douyin-topbar { display: flex; }
 body.douyin .douyin-rail { display: flex; }
 body.douyin .douyin-info { display: block; }
 body.douyin .douyin-nav { display: flex; }
 
-/* Right action rail, Douyin layout: avatar over heart, star, and details. */
+/* Top bar: 推荐 / 下载 tabs, replaced by the topic header on /flow?tag=. */
+.douyin-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(52px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 12px 0;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+  z-index: 30;
+  pointer-events: none;
+}
+
+.douyin-tabs {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  pointer-events: auto;
+}
+
+.douyin-tab {
+  position: relative;
+  padding: 4px 2px;
+  color: rgba(255, 255, 255, 0.62);
+  text-decoration: none;
+  font: 600 16px/1.2 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.15s ease;
+}
+
+.douyin-tab.is-active { color: #fff; }
+
+.douyin-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  width: 18px;
+  height: 3px;
+  border-radius: 2px;
+  background: #fff;
+  transform: translateX(-50%);
+}
+
+.douyin-top-back {
+  position: absolute;
+  left: 6px;
+  top: calc(env(safe-area-inset-top) + 8px);
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.32);
+  color: #fff;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.douyin-top-back[hidden] { display: none; }
+.douyin-top-back:active { transform: scale(0.92); }
+
+/* Topic header shown when the feed is filtered by a hashtag. */
+.douyin-topic {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  max-width: min(78vw, 520px);
+  color: #fff;
+  font: 600 16px/1.3 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+  pointer-events: auto;
+}
+
+.douyin-topic[hidden] { display: none; }
+
+.douyin-topic-hash { color: rgba(255, 255, 255, 0.72); }
+
+.douyin-topic-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.douyin-topic-count {
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+body.tag-feed .douyin-tabs { display: none; }
+
+/* Right action rail, Douyin layout: avatar over heart, collect, and details. */
 .douyin-rail {
   position: absolute;
   right: 12px;
   bottom: calc(66px + env(safe-area-inset-bottom));
   flex-direction: column;
   align-items: center;
-  gap: 22px;
+  gap: 18px;
   z-index: 20;
   pointer-events: none;
 }
@@ -1021,14 +1126,17 @@ body.douyin .douyin-nav { display: flex; }
 .douyin-avatar {
   display: block;
   position: relative;
-  width: 46px;
-  height: 46px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   border: 2px solid #fff;
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.3);
+  background: #d8d8d8;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  -webkit-tap-highlight-color: transparent;
 }
+
+.douyin-avatar:active { transform: scale(0.94); }
 
 .douyin-avatar-img {
   display: block;
@@ -1037,64 +1145,27 @@ body.douyin .douyin-nav { display: flex; }
   object-fit: cover;
 }
 
-.douyin-avatar-img[hidden] { display: none; }
-
-.douyin-avatar-char {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font: 600 20px/1 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  background: linear-gradient(135deg, #fe2c55, #7c4dff);
-}
-
+/* The rail reuses the native .action-btn circle so both modes look alike. */
 .douyin-action {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: #fff;
-  cursor: pointer;
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.55));
+  width: 46px;
+  height: 46px;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
   -webkit-tap-highlight-color: transparent;
-  transition: transform 0.15s ease;
 }
 
-.douyin-action:active { transform: scale(0.88); }
-
-.douyin-action .heart-filled,
-.douyin-action .star-filled { display: none; }
-
-.douyin-action.is-active .heart-filled,
-.douyin-action.is-active .star-filled { display: block; }
-
-.douyin-action.is-active .heart-outline,
-.douyin-action.is-active .star-outline { display: none; }
+.douyin-action svg {
+  width: 26px;
+  height: 26px;
+}
 
 .douyin-action.is-active .heart-filled { color: #fe2c55; }
-
-.douyin-action.is-active .star-filled { color: #ffd700; }
-
-.douyin-action.is-active { animation: douyin-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1); }
-
-@keyframes douyin-pop {
-  0% { transform: scale(0.72); }
-  60% { transform: scale(1.18); }
-  100% { transform: scale(1); }
-}
 
 /* Bottom-left author and caption block above the bottom navigation. */
 .douyin-info {
   position: absolute;
   left: 0;
   right: 76px;
-  bottom: calc(46px + env(safe-area-inset-bottom));
+  bottom: calc(52px + env(safe-area-inset-bottom));
   z-index: 15;
   pointer-events: none;
   padding: 30px 14px 10px;
@@ -1133,7 +1204,16 @@ body.douyin .douyin-nav { display: flex; }
   word-break: break-word;
 }
 
-.douyin-tag { color: #409eff; }
+/* Hashtags keep the body colour and open the topic feed on tap. */
+.douyin-tag {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+  pointer-events: auto;
+}
+
+.douyin-tag:active { opacity: 0.72; }
 
 .douyin-caption-expand {
   flex: 0 0 auto;
@@ -1187,7 +1267,7 @@ body.douyin .douyin-nav { display: flex; }
   cursor: pointer;
 }
 
-/* Bottom navigation with the three tabs this build keeps. */
+/* Bottom navigation: 首页 / 设置 / 我的. */
 .douyin-nav {
   position: absolute;
   left: 0;

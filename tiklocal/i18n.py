@@ -433,9 +433,21 @@ def _merge_page_catalogs() -> None:
     page conversions never edit the same file. A key defined twice is a bug:
     the merge raises instead of silently shadowing one of them.
     """
-    from tiklocal import i18n_pages_flow, i18n_pages_library, i18n_pages_media, i18n_pages_radio
+    from tiklocal import (
+        i18n_pages_chrome,
+        i18n_pages_flow,
+        i18n_pages_library,
+        i18n_pages_media,
+        i18n_pages_radio,
+    )
 
-    for module in (i18n_pages_flow, i18n_pages_library, i18n_pages_media, i18n_pages_radio):
+    for module in (
+        i18n_pages_chrome,
+        i18n_pages_flow,
+        i18n_pages_library,
+        i18n_pages_media,
+        i18n_pages_radio,
+    ):
         table = getattr(module, 'TRANSLATIONS', {})
         for locale in SUPPORTED_LOCALES:
             for key, text in (table.get(locale) or {}).items():

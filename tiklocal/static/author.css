@@ -1,0 +1,372 @@
+/* Douyin-style author profile: one dark, mobile-first column of works. */
+
+/* The page brings its own chrome (back arrow in the top bar), so the shared
+   app header, dock and menu card stay out of the way. */
+body[data-nav-context="author"] {
+  padding-bottom: 0 !important;
+  background: #0b0b0d;
+  color: #f5f5f7;
+}
+body[data-nav-context="author"] .mobile-app-header,
+body[data-nav-context="author"] .floating-dock,
+body[data-nav-context="author"] .app-nav-menu-card {
+  display: none !important;
+}
+
+.author-page {
+  max-width: 560px;
+  margin: 0 auto;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  color: #f5f5f7;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- top bar ---- */
+.author-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 6px;
+  background: linear-gradient(to bottom, rgba(11, 11, 13, 0.96) 62%, rgba(11, 11, 13, 0));
+}
+.author-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #f5f5f7;
+  cursor: pointer;
+  transition: background-color 0.18s ease;
+}
+.author-back:hover { background: rgba(255, 255, 255, 0.08); }
+.author-back:active { background: rgba(255, 255, 255, 0.16); }
+
+/* ---- identity ---- */
+.author-profile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px 14px;
+}
+.author-avatar-ring {
+  display: block;
+  padding: 3px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.16));
+}
+.author-avatar {
+  display: block;
+  width: 88px;
+  height: 88px;
+  border: 3px solid #0b0b0d;
+  border-radius: 50%;
+  background: #16161a;
+  object-fit: cover;
+}
+.author-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.author-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+}
+.author-sync {
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background-color 0.18s ease;
+}
+.author-sync:hover { background: rgba(255, 255, 255, 0.14); }
+.author-sync[disabled] { opacity: 0.55; cursor: progress; }
+.author-douyin-id {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* ---- stats ---- */
+.author-stats {
+  display: flex;
+  align-items: baseline;
+  gap: 22px;
+  margin: 12px 0 0;
+}
+.author-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.author-stat dt {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.author-stat dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ---- single works tab ---- */
+.author-tabs {
+  display: flex;
+  justify-content: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.author-tab {
+  position: relative;
+  padding: 10px 2px 11px;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.55);
+}
+.author-tab.is-active { color: #f5f5f7; }
+.author-tab.is-active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  width: 24px;
+  height: 2px;
+  border-radius: 2px;
+  background: #f5f5f7;
+  transform: translateX(-50%);
+}
+
+/* ---- inline refresh feedback ---- */
+.author-alert {
+  margin: 10px 12px 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 77, 79, 0.16);
+  color: #ffb4b4;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* ---- works grid ---- */
+.author-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 2px;
+}
+.author-tile {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+  border-radius: 4px;
+  background: #16161a;
+}
+.author-tile-media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.author-tile-video {
+  background: #16161a;
+  pointer-events: none;
+}
+.author-tile-play {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.65));
+}
+
+/* ---- empty state ---- */
+.author-empty {
+  padding: 56px 24px;
+  text-align: center;
+}
+.author-empty-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.author-empty-detail {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* ---- account picker (nicknames are not unique on Douyin) ---- */
+body.author-picker-open { overflow: hidden; }
+.author-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.author-picker[hidden],
+.author-picker-list[hidden],
+.author-picker-hint[hidden] { display: none; }
+.author-picker-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.62);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+.author-picker-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(100%, 420px);
+  max-height: 78vh;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  background: #16161a;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  color: #f5f5f7;
+}
+.author-picker-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.author-picker-form {
+  display: flex;
+  gap: 8px;
+}
+.author-picker-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  font-size: 14px;
+}
+.author-picker-input::placeholder { color: rgba(255, 255, 255, 0.35); }
+.author-picker-input:focus {
+  outline: none;
+  border-color: rgba(254, 44, 85, 0.72);
+  background: rgba(255, 255, 255, 0.1);
+}
+.author-picker-search {
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  background: #fe2c55;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.18s ease;
+}
+.author-picker-search:hover { filter: brightness(1.08); }
+.author-picker-search[disabled] { opacity: 0.6; cursor: progress; }
+.author-picker-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.55);
+}
+.author-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  max-height: 46vh;
+  list-style: none;
+}
+.author-picker-list.is-busy { opacity: 0.55; }
+.author-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.author-picker-option:hover,
+.author-picker-option:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, 0.08);
+}
+.author-picker-avatar {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #26262b;
+  object-fit: cover;
+}
+.author-picker-avatar.is-empty {
+  background: linear-gradient(135deg, #2c2c32, #1b1b20);
+}
+.author-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.author-picker-name,
+.author-picker-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.author-picker-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.author-picker-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.author-picker-cancel {
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.18s ease;
+}
+.author-picker-cancel:hover { background: rgba(255, 255, 255, 0.12); }

@@ -7,9 +7,11 @@ import urllib.error
 import pytest
 
 from tiklocal.app import create_app
+from tiklocal.services import author_profiles
 from tiklocal.services.downloader import DownloadConfigStore, DownloadManager, validate_download_config
 from tiklocal.services.tiktok_downloader import (
     DEFAULT_TIKTOK_DOWNLOADER_CONFIG,
+    AuthorAmbiguousError,
     TikTokDownloaderClient,
     TikTokDownloaderError,
     TikTokDownloadService,
@@ -17,6 +19,7 @@ from tiklocal.services.tiktok_downloader import (
     classify_post_type,
     format_timestamp_slug,
     guess_download_extension,
+    normalize_author_candidate,
     normalize_work_items,
     parse_platform_link,
     seed_tiktok_downloader_config,
@@ -497,3 +500,118 @@ def test_tiktok_service_absent_when_unconfigured(tmp_path, monkeypatch):
         assert status["configured"] is False
     finally:
         manager.close()
+
+
+def _search_hit(nickname, unique_id, *, uid="7000000000000000001", fans=1000, avatar="https://cdn.example/avatar.jpg"):
+    return {
+        "nickname": nickname,
+        "unique_id": unique_id,
+        "short_id": unique_id,
+        "uid": uid,
+        "sec_uid": f"MS4wLjABAAAA{unique_id}",
+        "signature": "签名",
+        "avatar": avatar,
+        "follower_count": fans,
+        "total_favorited": fans * 3,
+    }
+
+
+def _author_service(tmp_path):
+    store = _config_store(tmp_path)
+    seed_tiktok_downloader_config(store, {"base_url": "http://192.168.x.x:5555"})
+    return TikTokDownloadService(store, FakeManager())
+
+
+def test_search_user_clamps_count_to_sidecar_bounds(monkeypatch):
+    payloads = []
+
+    def fake_request(self, method, path, payload=None, timeout=None):
+        payloads.append(dict(payload or {}))
+        return {"message": "ok", "data": []}
+
+    monkeypatch.setattr(TikTokDownloaderClient, "_request", fake_request)
+    client = TikTokDownloaderClient("http://127.0.0.1:5555")
+    client.search_user("puff", count=2)
+    client.search_user("puff", count=99)
+    assert [item["count"] for item in payloads] == [5, 20]
+    assert payloads[0]["channel"] == 2
+
+
+def test_normalize_author_candidate_flattens_a_search_hit():
+    candidate = normalize_author_candidate(_search_hit("puff", "demo0001", fans=1409464))
+    assert candidate["nickname"] == "puff"
+    assert candidate["unique_id"] == "demo0001"
+    assert candidate["avatar"] == "https://cdn.example/avatar.jpg"
+    assert candidate["follower_count"] == 1409464
+
+
+def test_normalize_author_candidate_reads_a_raw_author_block():
+    raw = {
+        "nickname": "puff",
+        "unique_id": "",
+        "short_id": "1193752822",
+        "avatar_larger": {"url_list": ["https://cdn.example/large.jpg"]},
+        "follower_count": 12,
+    }
+    candidate = normalize_author_candidate(raw)
+    assert candidate["short_id"] == "1193752822"
+    assert candidate["avatar"] == "https://cdn.example/large.jpg"
+
+
+def test_author_refresh_rejects_fuzzy_nickname_matches(monkeypatch, tmp_path):
+    service = _author_service(tmp_path)
+    monkeypatch.setattr(
+        TikTokDownloaderClient,
+        "search_user",
+        lambda self, keyword, count=10: [_search_hit("puff_two", "demo0004"), _search_hit("puffy_puff", "demo0005")],
+    )
+    with pytest.raises(TikTokDownloaderError):
+        service.refresh_author_profile("blogger", keyword="puff")
+
+
+def test_author_refresh_returns_candidates_when_several_accounts_match(monkeypatch, tmp_path):
+    service = _author_service(tmp_path)
+    hits = [
+        _search_hit("puff", "demo0001", uid="1"),
+        _search_hit("puff", "demo0003", uid="2"),
+        _search_hit("puff_two", "demo0004", uid="3"),
+    ]
+    monkeypatch.setattr(TikTokDownloaderClient, "search_user", lambda self, keyword, count=10: hits)
+    with pytest.raises(AuthorAmbiguousError) as excinfo:
+        service.refresh_author_profile("blogger", keyword="puff")
+    assert [item["unique_id"] for item in excinfo.value.candidates] == ["demo0001", "demo0003"]
+
+
+def test_author_refresh_stores_the_chosen_candidate(monkeypatch, tmp_path):
+    service = _author_service(tmp_path)
+    hits = [_search_hit("puff", "demo0001", uid="1"), _search_hit("puff", "demo0003", uid="2")]
+    monkeypatch.setattr(TikTokDownloaderClient, "search_user", lambda self, keyword, count=10: hits)
+    stored = []
+    monkeypatch.setattr(
+        author_profiles,
+        "store_author_from_payload",
+        lambda source_id, payload: stored.append((source_id, payload)),
+    )
+    monkeypatch.setattr(author_profiles, "resolve_profile", lambda source_id: {"source_id": source_id, "name": "puff"})
+    profile = service.refresh_author_profile("blogger", keyword="puff", unique_id="demo0003")
+    assert profile == {"source_id": "blogger", "name": "puff"}
+    assert stored and stored[0][1]["unique_id"] == "demo0003"
+
+
+def test_author_refresh_requires_a_configured_sidecar(tmp_path):
+    service = TikTokDownloadService(_config_store(tmp_path), FakeManager())
+    with pytest.raises(TikTokDownloaderError):
+        service.refresh_author_profile("blogger", keyword="puff")
+
+
+def test_list_author_candidates_returns_normalized_rows(monkeypatch, tmp_path):
+    service = _author_service(tmp_path)
+    monkeypatch.setattr(
+        TikTokDownloaderClient,
+        "search_user",
+        lambda self, keyword, count=10: [_search_hit("puff", "demo0001")],
+    )
+    rows = service.list_author_candidates("puff")
+    assert rows[0]["unique_id"] == "demo0001"
+    with pytest.raises(ValueError):
+        service.list_author_candidates("   ")
