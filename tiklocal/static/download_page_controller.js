@@ -520,6 +520,8 @@
         : T('download.select.done', { n: deleted }));
       const skipped = (data.skipped || []).length;
       if (skipped) TikLocalUI.toast(T('download.select.skipped', { n: skipped }), 'error');
+      const failedFiles = (data.files && data.files.failed ? data.files.failed.length : 0);
+      if (failedFiles) TikLocalUI.toast(T('download.select.failed_files', { n: failedFiles }), 'error');
       exitHistorySelection();
       lastJobsSignature = '';
       await refreshJobs({ force: true });

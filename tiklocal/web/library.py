@@ -117,7 +117,7 @@ def register_library_routes(
             **context,
         )
 
-    def _serialize_collection_summary(collection: dict) -> dict:
+    def _serialize_collection_summary(collection: dict, indexed_uris: set[str] | None = None) -> dict:
         collection_id = str(collection.get('id') or '')
         cover_uri = str(collection.get('cover_uri') or '').strip()
         stored_items = collection.get('items')
@@ -128,17 +128,27 @@ def register_library_routes(
         candidates = [cover_uri, *item_uris]
         previews = []
         seen = set()
-        for candidate in candidates:
+        # Four covers are enough; when files were deleted outside the app the list
+        # is all misses, and resolving every stored item cost ~2 s at 20 cards.
+        for candidate in candidates[:12]:
             if not candidate:
                 continue
-            uri = library_service.find_existing_uri(candidate)
-            if not uri or uri in seen:
-                continue
-            target = library_service.resolve_path(uri)
-            if not target or not target.exists() or not target.is_file():
-                continue
+            if indexed_uris is not None:
+                # The index already answered "does this file exist"; a stat per
+                # candidate cost a Windows round trip and dominated the endpoint.
+                uri = library_service.canonicalize_uri(candidate)
+                if not uri or uri in seen or uri not in indexed_uris:
+                    continue
+                media_type = 'image' if uri.lower().endswith(tuple(IMAGE_EXTENSIONS)) else 'video'
+            else:
+                uri = library_service.find_existing_uri(candidate)
+                if not uri or uri in seen:
+                    continue
+                target = library_service.resolve_path(uri)
+                if not target or not target.exists() or not target.is_file():
+                    continue
+                media_type = 'image' if target.suffix.lower() in IMAGE_EXTENSIONS else 'video'
             seen.add(uri)
-            media_type = 'image' if target.suffix.lower() in IMAGE_EXTENSIONS else 'video'
             previews.append({
                 'uri': uri,
                 'type': media_type,
@@ -151,7 +161,11 @@ def register_library_routes(
         # card kept promising more items than the collection can open. Count through
         # the same query the detail header uses so both agree.
         item_count = int(collection.get('item_count') or 0)
-        if collection_id:
+        if indexed_uris is not None:
+            # Counting against the pre-fetched index is O(items) per card; running a
+            # full page query per card made /api/collections 535 ms at 20 cards.
+            item_count = sum(1 for uri in item_uris if uri in indexed_uris)
+        elif collection_id:
             try:
                 item_count = int(_build_library_page(collection_id=collection_id, offset=0, limit=1).get('total') or 0)
             except Exception:  # noqa: BLE001 - a broken index must not hide the card
@@ -333,12 +347,17 @@ def register_library_routes(
             today = datetime.date.fromisoformat(str(request.args.get('date', '')))
         except ValueError:
             today = datetime.date.today()
+        # `date` is client supplied and may sit at 0001/9999, where widening by a
+        # week raises OverflowError (HTTP 500). Keep the window inside the range.
+        earliest = datetime.date.min + datetime.timedelta(days=3)
+        latest = datetime.date.max - datetime.timedelta(days=3)
+        today = min(max(today, earliest), latest)
         window = 'day'
-        records = media_index.on_days([f"{today:%m-%d}"], str(today.year))
+        records = media_index.on_days([f"{today:%m-%d}"], str(today.year), per_year=8)
         if not records:
             window = 'week'
             week = [today + datetime.timedelta(days=offset) for offset in range(-3, 4)]
-            records = media_index.on_days([f"{day:%m-%d}" for day in week], str(today.year))
+            records = media_index.on_days([f"{day:%m-%d}" for day in week], str(today.year), per_year=8)
         years = {}
         for record in records:
             year = record['captured_local_date'][:4]
@@ -385,7 +404,17 @@ def register_library_routes(
     def api_collections():
         if request.method == 'GET':
             collections = collection_store.list_with_items()
-            items = [_serialize_collection_summary(item) for item in collections]
+            wanted = {
+                str(entry.get('uri') or '')
+                for collection in collections
+                for entry in (collection.get('items') or [])
+                if isinstance(entry, dict)
+            }
+            try:
+                indexed_uris = media_index.existing_uris(wanted)
+            except Exception:  # noqa: BLE001 - a broken index must not hide the cards
+                indexed_uris = None
+            items = [_serialize_collection_summary(item, indexed_uris) for item in collections]
             return {'success': True, 'data': {'items': items}}
 
         payload = json_body()
@@ -397,6 +426,9 @@ def register_library_routes(
             created = collection_store.create(name=name, description=description)
         except ValueError as exc:
             return {'success': False, 'error': str(exc)}, 400
+        except OSError as exc:
+            app.logger.warning('Could not save the collection', exc_info=exc)
+            return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
         return {'success': True, 'data': {'item': _serialize_collection_summary(created)}}
 
     @app.route('/api/collections/<collection_id>', methods=['GET', 'PATCH', 'DELETE'])

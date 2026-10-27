@@ -226,3 +226,24 @@ def next_available_path(path: Path) -> Path:
         candidate = path.parent / f"{path.stem} ({idx}){path.suffix}"
         idx += 1
     return candidate
+
+
+def claim_available_path(path: Path) -> Path:
+    """Reserve a free name atomically, so two jobs never pick the same target.
+
+    ``next_available_path`` followed by a later ``replace`` is a check-then-act
+    race: with two concurrent jobs the second ``os.replace`` silently overwrites
+    the first download. ``O_EXCL`` makes the claim itself the decision point.
+    """
+    idx = 0
+    while True:
+        candidate = path if idx == 0 else path.parent / f"{path.stem} ({idx}){path.suffix}"
+        try:
+            handle = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            idx += 1
+            if idx > 1000:
+                raise OSError(f'No free filename for {path.name}.') from None
+            continue
+        os.close(handle)
+        return candidate

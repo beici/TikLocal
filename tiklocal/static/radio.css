@@ -1164,6 +1164,7 @@ body:has([data-radio-root]) {
 .room-option-key {
   font: 700 .58rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: .14em;
+  color: color-mix(in oklab, var(--radio-ink) 62%, transparent);
 }
 
 .room-option-name {
@@ -1412,4 +1413,10 @@ body:has([data-radio-root]) {
   #btn-encore .encore-count,
   .room-menu { animation: none; }
   .signal-disc, .play-state, .radio-glow { transition-duration: .01ms; }
+}
+
+@media (pointer: coarse) {
+  .room-sound { width: 2.75rem; height: 2.75rem; }
+  .room-trigger { min-height: 2.75rem; }
+  #progress-bar { height: 24px; padding-block: 11px; background-clip: content-box; }
 }

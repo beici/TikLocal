@@ -127,7 +127,8 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         except ValueError as exc:
             return {'success': False, 'error': str(exc)}, 400
         except OSError as exc:
-            return {'success': False, 'error': str(exc)}, 400
+            app.logger.warning('Could not write the download URL list', exc_info=exc)
+            return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
 
         return {'success': True, 'data': store.snapshot()}
 
@@ -158,7 +159,8 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         except ValueError as exc:
             return {'success': False, 'error': str(exc)}, 400
         except OSError as exc:
-            return {'success': False, 'error': str(exc)}, 400
+            app.logger.warning('Could not write the download URL list', exc_info=exc)
+            return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
 
         data = store.snapshot()
         data['result'] = result
@@ -315,7 +317,10 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
                     media_index.delete(library_service.canonicalize_uri(uri))
                 continue
             except (OSError, KeyError) as exc:
-                failed.append({'uri': uri, 'error': str(exc)})
+                # str(OSError) carries the absolute path and the Windows user name
+                # straight into the response; the client never reads it anyway.
+                app.logger.warning('Could not move %s to the trash', uri, exc_info=exc)
+                failed.append({'uri': uri, 'error': t('download.error.file_move_failed')})
                 continue
             moved += 1
             if media_index is not None:

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from tiklocal.services.library import LibraryService, normalize_media_uri
 
-from tiklocal.services.json_storage import write_json_atomic
+from tiklocal.services.json_storage import read_json_file, write_json_atomic
 
 
 class FavoriteService:
@@ -22,13 +22,12 @@ class FavoriteService:
         return self.library_service.canonicalize_uri(filename)
 
     def _read_raw(self, path: Path) -> set[str]:
-        try:
-            data = json.loads(path.read_text(encoding='utf-8'))
-        except FileNotFoundError:
-            return set()
-        if not isinstance(data, list):
-            raise ValueError('Invalid favorites file format')
-        return {normalize_media_uri(item) for item in data}
+        # A truncated favorites.json (power loss, full disk) used to raise on every
+        # read: the library reported 0 favorites and every write returned 503
+        # forever, because save() loads before it writes. read_json_file quarantines
+        # the broken file and falls back to an empty list, so the app self-heals.
+        data = read_json_file(path, [], expected_type=list)
+        return {normalize_media_uri(item) for item in data if isinstance(item, str)}
 
     def load(self) -> set[str]:
         return self.library_service.canonicalize_many(self._read_raw(self.db_path))

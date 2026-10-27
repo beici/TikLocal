@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 from tiklocal.i18n import t
 from tiklocal.paths import DOWNLOAD_TMP_DIR
+from tiklocal.services.library import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from tiklocal.services.json_storage import read_json_file, write_json_atomic
 from tiklocal.services.download_sources import (
     DownloadSourceStore,
@@ -29,10 +30,10 @@ from tiklocal.services.download_sources import (
     utc_now_iso,
 )
 from tiklocal.services.download_tools import (
+    claim_available_path,
     collect_gallery_outputs,
     error_line,
     gallery_dl_command,
-    next_available_path,
     parse_output_path,
     parse_progress,
     probe_binary,
@@ -65,6 +66,25 @@ DIRECT_DOWNLOAD_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
+#: gallery-dl also writes sidecar metadata and archives; only media belongs in the library.
+GALLERY_MEDIA_SUFFIXES = frozenset(VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS)
+
+
+def gallery_media_outputs(temp_dir: Path, log_file: Path, cookie_copy: Path | None) -> list[Path]:
+    """Collect downloaded media, ignoring the tool log and the private cookie copy.
+
+    Both live inside ``temp_dir`` and used to be collected as products: the user's
+    imported session cookie was moved into the media library, and a run that
+    downloaded nothing still reported success.
+    """
+    excluded = {log_file.resolve()}
+    if cookie_copy is not None:
+        excluded.add(cookie_copy.resolve())
+    return [
+        entry
+        for entry in collect_gallery_outputs(temp_dir, excluded=excluded)
+        if entry.suffix.lower() in GALLERY_MEDIA_SUFFIXES
+    ]
 
 DEFAULT_DOWNLOAD_CONFIG = {
     "enabled": True,
@@ -1089,7 +1109,7 @@ class DownloadManager:
             if return_code != 0:
                 return return_code, error_message or f"gallery-dl exited with code {return_code}.", []
 
-            outputs = collect_gallery_outputs(temp_dir, excluded={log_file.resolve()})
+            outputs = gallery_media_outputs(temp_dir, log_file, cookie_for_job)
             moved_outputs = [self._move_file_to_media_root(path) for path in outputs]
             moved_outputs = [path for path in moved_outputs if path]
             if not moved_outputs:
@@ -1413,11 +1433,20 @@ class DownloadManager:
             return ""
 
         target_name = source_path.name
-        target = next_available_path((self.media_root / target_name).resolve())
+        try:
+            target = claim_available_path((self.media_root / target_name).resolve())
+        except OSError as error:
+            logger.warning('Could not reserve a target name for %s: %s', target_name, error)
+            return ''
         try:
             source_path.replace(target)
         except OSError:
-            shutil.move(str(source_path), str(target))
+            try:
+                shutil.move(str(source_path), str(target))
+            except OSError as error:
+                target.unlink(missing_ok=True)
+                logger.warning('Could not move %s into the library: %s', target_name, error)
+                return ''
         return self._to_media_relative(str(target))
 
     def _record_job_sources_on_success(self, context: dict[str, Any]) -> None:

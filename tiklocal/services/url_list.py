@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
+import threading
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -17,6 +19,11 @@ from tiklocal.paths import get_download_urls_config_path, get_download_urls_path
 from tiklocal.services.json_storage import write_json_atomic
 
 logger = logging.getLogger(__name__)
+
+#: Two tabs (or a double submit) hit add/clear/pull on separate waitress threads.
+#: Without this the read-modify-write below silently drops rows, and both writers
+#: fight over one fixed ``.tmp`` name (WinError 32 -> HTTP 500).
+_LIST_LOCK = threading.RLock()
 
 STORE_FILENAME = 'download-urls.txt'
 CONFIG_FILENAME = 'download-urls.json'
@@ -111,30 +118,45 @@ class UrlListStore:
             except OSError:
                 pass
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self.store_path.with_suffix(self.store_path.suffix + '.tmp')
-        tmp_path.write_text(format_text(cleaned), encoding='utf-8')
-        os.replace(tmp_path, self.store_path)
+        # A fixed ``.tmp`` name lets concurrent writers replace each other's
+        # half-written file: use a unique name per write.
+        handle, tmp_name = tempfile.mkstemp(
+            prefix=self.store_path.name + '.', suffix='.tmp', dir=str(self.store_path.parent),
+        )
+        try:
+            with os.fdopen(handle, 'w', encoding='utf-8', newline='\n') as stream:
+                stream.write(format_text(cleaned))
+            os.replace(tmp_name, self.store_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
         return cleaned
 
     def replace(self, lines: list[str]) -> list[str]:
-        return self._write(lines, backup=True)
+        with _LIST_LOCK:
+            return self._write(lines, backup=True)
 
     def add(self, lines: list[str]) -> list[str]:
-        current = self.lines()
-        merged = list(current)
-        for url in parse_text('\n'.join(lines)):
-            if url not in merged:
-                merged.append(url)
-        if len(merged) > MAX_LINES:
-            raise ValueError(f'Too many URLs: the list holds at most {MAX_LINES} entries.')
-        return self._write(merged)
+        with _LIST_LOCK:
+            merged = list(self.lines())
+            for url in parse_text('\n'.join(lines)):
+                if url not in merged:
+                    merged.append(url)
+            if len(merged) > MAX_LINES:
+                raise ValueError(f'Too many URLs: the list holds at most {MAX_LINES} entries.')
+            return self._write(merged)
 
     def remove(self, url: str) -> list[str]:
-        target = normalize_url(url)
+        with _LIST_LOCK:
+            target = normalize_url(url)
         return self._write([line for line in self.lines() if line != target])
 
     def clear(self) -> list[str]:
-        return self._write([])
+        with _LIST_LOCK:
+            return self._write([])
 
     # -- server path sync ------------------------------------------------
     def _read_config(self) -> dict:
@@ -193,6 +215,10 @@ class UrlListStore:
         return {'direction': 'pull', 'lines': lines, 'path': str(target)}
 
     def push(self) -> dict:
+        with _LIST_LOCK:
+            return self._push_locked()
+
+    def _push_locked(self) -> dict:
         """Write the local list to the server file."""
         target = self._sync_target()
         lines = self.lines()

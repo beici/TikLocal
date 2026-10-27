@@ -38,6 +38,17 @@ class MediaIndexStore:
         with self.database.connect() as conn:
             conn.execute("CREATE TEMP TABLE media_index_seen(uri TEXT PRIMARY KEY)")
             for record in records:
+                uri = str(record.get('uri') or '')
+                try:
+                    uri.encode('utf-8')
+                except UnicodeEncodeError:
+                    # sqlite3 cannot bind a lone surrogate: one weird filename used
+                    # to abort the whole scan (and with it application startup).
+                    LOGGER.warning('Skipping a file whose name is not valid UTF-8: %r', uri)
+                    continue
+                if Path(uri).name != Path(uri).name.strip():
+                    LOGGER.warning('Skipping a file with trailing whitespace in its name: %r', uri)
+                    continue
                 values = self._record_values(record, now)
                 conn.execute(
                     """
@@ -260,25 +271,72 @@ class MediaIndexStore:
                 total += int(row[0] if row else 0)
         return total
 
-    def on_days(self, month_days: list[str], before_year: str, limit: int = 200) -> list[dict]:
-        """Photos and videos captured on the given MM-DD days in years before `before_year`, newest first."""
+    def on_days(
+        self,
+        month_days: list[str],
+        before_year: str,
+        limit: int = 200,
+        per_year: int | None = None,
+    ) -> list[dict]:
+        """Photos and videos captured on the given MM-DD days in years before `before_year`, newest first.
+
+        With ``per_year`` the quota is applied inside each year instead of to the
+        whole result: a global LIMIT used to let one busy day eat the budget, so
+        every older year silently vanished from "On This Day".
+        """
         days = [day for day in month_days if re.fullmatch(r"\d{2}-\d{2}", day)]
         if not days:
             return []
         placeholders = ",".join("?" for _ in days)
         with self.database.connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT * FROM media_items
-                WHERE media_type IN ('video', 'image', 'live')
-                  AND capture_year < ?
-                  AND substr(captured_local_date, 6, 5) IN ({placeholders})
-                ORDER BY captured_at DESC, uri
-                LIMIT ?
-                """,
-                (before_year, *days, limit),
-            ).fetchall()
+            if per_year:
+                rows = conn.execute(
+                    f"""
+                    SELECT * FROM (
+                      SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY substr(captured_local_date, 1, 4)
+                        ORDER BY captured_at DESC, uri
+                      ) AS _rn
+                      FROM media_items
+                      WHERE media_type IN ('video', 'image', 'live')
+                        AND capture_year < ?
+                        AND substr(captured_local_date, 6, 5) IN ({placeholders})
+                    ) WHERE _rn <= ?
+                    ORDER BY captured_at DESC, uri
+                    """,
+                    (before_year, *days, int(per_year)),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT * FROM media_items
+                    WHERE media_type IN ('video', 'image', 'live')
+                      AND capture_year < ?
+                      AND substr(captured_local_date, 6, 5) IN ({placeholders})
+                    ORDER BY captured_at DESC, uri
+                    LIMIT ?
+                    """,
+                    (before_year, *days, limit),
+                ).fetchall()
         return [self._to_library_record(row) for row in rows]
+
+    def existing_uris(self, uris) -> set[str]:
+        """Which of the given URIs are still indexed, in one round trip."""
+        wanted = sorted({str(uri) for uri in uris if uri})
+        found: set[str] = set()
+        if not wanted:
+            return found
+        chunk = 500
+        with self.database.connect() as conn:
+            for start in range(0, len(wanted), chunk):
+                part = wanted[start:start + chunk]
+                placeholders = ",".join("?" for _ in part)
+                rows = conn.execute(
+                    f"SELECT uri FROM media_items WHERE uri IN ({placeholders})",
+                    part,
+                ).fetchall()
+                found.update(str(row[0]) for row in rows)
+        return found
 
     def page(
         self,
@@ -783,6 +841,12 @@ class LibraryIndexer:
         return result
 
     def register_uris(self, uris: list[str]) -> int:
+        # A download finishing mid-scan must not be treated as "not seen by the
+        # scan" by replace_snapshot(), which deletes every row outside its seen set.
+        with self._sync_lock:
+            return self._register_uris_locked(uris)
+
+    def _register_uris_locked(self, uris: list[str]) -> int:
         time_states = self.store.time_states()
         records = []
         for uri in uris:

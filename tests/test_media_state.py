@@ -39,17 +39,15 @@ def test_old_media_favorites_do_not_restore_removed_items(tmp_path):
     assert FavoriteService(path, library).load() == set()
 
 
-@pytest.mark.parametrize('failure', ['replace', 'corrupt'])
-def test_failed_favorite_write_preserves_file_and_reports_failure(tmp_path, monkeypatch, failure):
+def test_failed_favorite_write_preserves_file_and_reports_failure(tmp_path, monkeypatch):
     client = create_app({'TESTING': True, 'MEDIA_ROOT': tmp_path}).test_client()
     assert client.post('/api/favorite/photo.jpg').get_json()['favorite']
     path = tmp_path / 'tiklocal-data' / 'favorites.json'
-    if failure == 'corrupt':
-        path.write_text('[broken', encoding='utf-8')
-    else:
-        def fail_replace(source, destination):
-            raise PermissionError('read-only storage')
-        monkeypatch.setattr(os, 'replace', fail_replace)
+
+    def fail_replace(source, destination):
+        raise PermissionError('read-only storage')
+
+    monkeypatch.setattr(os, 'replace', fail_replace)
     before = path.read_bytes()
 
     response = client.post('/api/favorite/photo.jpg')
@@ -57,6 +55,22 @@ def test_failed_favorite_write_preserves_file_and_reports_failure(tmp_path, monk
     assert response.status_code == 503
     assert response.get_json()['success'] is False
     assert path.read_bytes() == before
+
+
+def test_corrupt_favorite_file_is_quarantined_instead_of_locking_writes(tmp_path):
+    client = create_app({'TESTING': True, 'MEDIA_ROOT': tmp_path}).test_client()
+    assert client.post('/api/favorite/photo.jpg').get_json()['favorite']
+    path = tmp_path / 'tiklocal-data' / 'favorites.json'
+    path.write_text('[broken', encoding='utf-8')
+
+    response = client.post('/api/favorite/photo.jpg')
+
+    # A truncated file used to make every write fail with 503 forever, because
+    # save() loads before it writes. The broken file is now set aside.
+    assert response.status_code == 200
+    assert any(item.name.startswith('favorites.json.') and item.name.endswith('.corrupt')
+               for item in path.parent.iterdir())
+    assert client.get('/api/library/stats').get_json()['favorites'] == 1
 
 
 def test_caption_update_preserves_dimensions_written_after_old_snapshot(tmp_path):

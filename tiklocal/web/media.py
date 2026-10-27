@@ -333,4 +333,5 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
 
         if success:
              return {'success': True, 'url': f"{media_urls(name)['thumb_url']}&v={time.time_ns()}"}
-        return {'success': False, 'error': t('detail.error.thumbnail_generate')}, 500
+        # A cover that cannot be generated is a per-file failure, not a server bug.
+        return {'success': False, 'error': t('detail.error.thumbnail_generate')}, 502

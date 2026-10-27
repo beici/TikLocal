@@ -13,7 +13,7 @@
   --download-card: rgba(34, 34, 30, 0.9);
   --download-ink: rgba(255, 255, 255, 0.92);
   --download-muted: rgba(255, 255, 255, 0.45);
-  --download-faint: rgba(255, 255, 255, 0.3);
+  --download-faint: rgba(255, 255, 255, 0.45);
   --download-line: rgba(255, 255, 255, 0.085);
   --download-soft: rgba(255, 255, 255, 0.06);
   --download-accent: #f3efe4;
@@ -125,6 +125,10 @@ body[data-nav-context="download"] {
 .download-action.is-retry { color: var(--download-ink); background: var(--download-soft); }
 .download-action:disabled, .download-icon-btn:disabled { cursor: wait; opacity: .45; }
 .download-icon-btn { width: 34px; padding: 0; margin-left: auto; border-color: transparent; }
+@media (pointer: coarse) {
+  .download-action, .download-icon-btn { min-height: 44px; }
+  .download-icon-btn { width: 44px; }
+}
 .download-job-menu { position: relative; margin-left: auto; }
 .download-job-menu-panel { position: absolute; right: 0; bottom: calc(100% + 5px); z-index: 15; min-width: 116px; padding: 5px; border: 1px solid var(--download-line); border-radius: 12px; background: var(--download-card); box-shadow: 0 14px 36px rgba(24,23,20,.14); }
 .download-job-menu-panel[hidden] { display: none; }
@@ -293,6 +297,7 @@ body[data-nav-context="download"] {
 .download-confirm-copy { margin: 7px 0 0; color: var(--download-muted); font-size: 11px; line-height: 1.55; }
 .download-confirm-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 18px; }
 .download-action.is-danger { color: #a54a43; border-color: rgba(165,74,67,.15); background: rgba(165,74,67,.06); }
+[data-theme="dark"] .download-action.is-danger { color: #e69a93; border-color: rgba(230,154,147,.2); background: rgba(230,154,147,.08); }
 @media (max-width: 560px) {
   .download-editor { min-height: 46px; padding: 0 11px; }
   .download-input { height: 46px; line-height: 46px; }
@@ -474,6 +479,7 @@ body[data-nav-context="download"] {
 .history-sheet-option.is-danger { border-color: rgba(165, 74, 67, .18); }
 .history-sheet-option.is-danger .history-sheet-option-icon { color: #a54a43; background: rgba(165, 74, 67, .08); }
 .history-sheet-option.is-danger strong { color: #a54a43; }
+[data-theme="dark"] .history-sheet-option.is-danger strong { color: #e69a93; }
 .history-sheet-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 
 @media (min-width: 561px) {

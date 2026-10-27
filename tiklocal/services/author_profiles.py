@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 from tiklocal.paths import get_data_dir
+from tiklocal.services.json_storage import write_json_atomic
 
 DEFAULT_AVATAR_FILENAME = 'default-avatar.jpg'
 AVATAR_USER_AGENT = (
@@ -27,6 +29,10 @@ AVATAR_USER_AGENT = (
 )
 AVATAR_REFERER = 'https://www.douyin.com/'
 MAX_AVATAR_BYTES = 4 * 1024 * 1024
+
+#: Binding a home-page link and syncing the profile can run on two threads at
+#: once; both used one fixed ``.json.tmp`` and lost each other's fields.
+_PROFILE_LOCK = threading.RLock()
 
 _UID_FOLDER = re.compile(r'^UID(?P<uid>\d+)_')
 _AVATAR_KEYS = ('avatar_larger', 'avatar_medium', 'avatar_thumb', 'avatar_168x168', 'avatar_300x300')
@@ -69,17 +75,15 @@ def load_profile(source_id: str) -> dict:
 
 def save_profile(source_id: str, values: dict) -> dict:
     """Merge ``values`` into the cached profile and persist it."""
-    profile = load_profile(source_id)
-    for key, value in (values or {}).items():
-        if value in (None, ''):
-            continue
-        profile[key] = value
-    profile['updated_at'] = int(time.time())
-    path = profile_path(source_id)
-    tmp = path.with_suffix('.json.tmp')
-    tmp.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding='utf-8')
-    tmp.replace(path)
-    return profile
+    with _PROFILE_LOCK:
+        profile = load_profile(source_id)
+        for key, value in (values or {}).items():
+            if value in (None, ''):
+                continue
+            profile[key] = value
+        profile['updated_at'] = int(time.time())
+        write_json_atomic(profile_path(source_id), profile)
+        return profile
 
 
 def set_profile_url(source_id: str, url: str) -> dict:
@@ -91,14 +95,12 @@ def set_profile_url(source_id: str, url: str) -> dict:
     """
     cleaned = str(url or '').strip()
     if not cleaned:
-        profile = load_profile(source_id)
-        profile.pop('profile_url', None)
-        profile['updated_at'] = int(time.time())
-        path = profile_path(source_id)
-        tmp = path.with_suffix('.json.tmp')
-        tmp.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding='utf-8')
-        tmp.replace(path)
-        return profile
+        with _PROFILE_LOCK:
+            profile = load_profile(source_id)
+            profile.pop('profile_url', None)
+            profile['updated_at'] = int(time.time())
+            write_json_atomic(profile_path(source_id), profile)
+            return profile
     return save_profile(source_id, {'profile_url': cleaned})
 
 
