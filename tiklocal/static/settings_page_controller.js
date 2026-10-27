@@ -26,7 +26,14 @@
   }
 
   function currentThemePreference() {
-    const saved = localStorage.getItem('theme');
+    let saved = null;
+    try {
+      saved = localStorage.getItem('theme');
+    } catch (_) {
+      // Reading storage throws when it is blocked; fall back to the default
+      // instead of breaking the whole settings controller.
+      saved = null;
+    }
     return ['light', 'dark', 'system'].includes(saved) ? saved : 'system';
   }
 

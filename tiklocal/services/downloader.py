@@ -1362,8 +1362,11 @@ class DownloadManager:
         with self._lock:
             if self._closed or self._cancel_events[job_id].is_set():
                 raise RuntimeError('Download canceled.')
+            # Decode with the locale the child actually writes with: yt-dlp.exe on a
+            # zh-CN Windows emits cp936 bytes on the pipe, so pinning utf-8 turned
+            # every non-ASCII media root into mojibake and the outputs were dropped.
             process = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT, text=True,
-                               encoding='utf-8', errors='replace',
+                               errors='replace',
                                bufsize=1, start_new_session=os.name == 'posix')
             self._processes[job_id] = process
             return process

@@ -2,6 +2,7 @@
 
 import datetime
 import random
+import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
@@ -387,7 +388,16 @@ def register_library_routes(
 
     @app.route('/api/library/sync', methods=['POST'])
     def api_library_sync():
-        result = library_indexer.sync()
+        # Another connection holding the write lock (a second tab syncing, the
+        # downloader registering outputs) surfaced as a bare 500 with the raw
+        # SQLite English text; it is a retryable conflict, not a server fault.
+        try:
+            result = library_indexer.sync()
+        except sqlite3.OperationalError as exc:
+            if 'locked' in str(exc) or 'busy' in str(exc):
+                app.logger.warning('Library sync hit a busy database: %s', exc)
+                return {'success': False, 'error': t('library.error.busy')}, 409
+            raise
         return {'success': True, 'data': result}
 
     @app.route('/api/favorite/<path:name>', methods=['GET', 'POST'])
@@ -418,8 +428,16 @@ def register_library_routes(
             return {'success': True, 'data': {'items': items}}
 
         payload = json_body()
-        name = str(payload.get('name', '')).strip()
-        description = str(payload.get('description', '')).strip()
+        raw_name = payload.get('name', '')
+        raw_description = payload.get('description', '')
+        # str(None) is 'None' and str([]) is '[]': a JSON null/array used to land in
+        # the store as a collection literally named "None".
+        if raw_name is not None and not isinstance(raw_name, str):
+            return {'success': False, 'error': t('library.error.name_required')}, 400
+        if raw_description is not None and not isinstance(raw_description, str):
+            return {'success': False, 'error': t('library.error.name_required')}, 400
+        name = (raw_name or '').strip()
+        description = (raw_description or '').strip()
         if not name:
             return {'success': False, 'error': t('library.error.name_required')}, 400
         try:

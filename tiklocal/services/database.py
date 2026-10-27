@@ -338,6 +338,17 @@ def _migrate_013_douyin_media_groups(conn: sqlite3.Connection) -> None:
     conn.execute('CREATE INDEX idx_media_items_album ON media_items(album_key, album_index)')
 
 
+def _migrate_014_index_media_items_mtime(conn: sqlite3.Connection) -> None:
+    """Covering index for the timeline page order (mtime DESC, uri).
+
+    Without it a deep offset built a temporary B-tree over the whole table: 20k rows
+    meant ~20 MB of scratch space and 220 ms for one 40-row page.
+    """
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_media_items_mtime_uri ON media_items(mtime DESC, uri)'
+    )
+
+
 MIGRATIONS = [
     Migration(1, "create_image_vectors", _migrate_001_create_image_vectors),
     Migration(2, "create_media_similarity_groups", _migrate_002_create_media_similarity_groups),
@@ -352,6 +363,7 @@ MIGRATIONS = [
     Migration(11, "simplify_media_vectors", _migrate_011_simplify_media_vectors),
     Migration(12, "add_video_frames", _migrate_012_add_video_frames),
     Migration(13, "douyin_media_groups", _migrate_013_douyin_media_groups),
+    Migration(14, "index_media_items_mtime", _migrate_014_index_media_items_mtime),
 ]
 
 

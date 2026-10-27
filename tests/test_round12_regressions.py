@@ -1,6 +1,7 @@
 """Regressions from the round-12 review: logging, probing and message localization."""
 
 import io
+import locale
 import logging
 import re
 import sys
@@ -36,11 +37,14 @@ def test_probe_pass_accepts_a_time_budget(tmp_path):
     assert probe.run_once(budget_sec=5.0) == 1
 
 
-def test_download_output_survives_non_gbk_bytes(tmp_path):
-    """A zh-CN Windows box decodes pipes as cp936; a UTF-8 check mark killed the pump.
+def test_download_output_survives_locale_encoded_bytes(tmp_path):
+    """yt-dlp writes its pipe with the console encoding (cp936 on zh-CN Windows).
 
-    The tool then exited 0 with zero captured lines, so the job was "completed" with
-    no outputs: the file sat on disk but never reached the index.
+    Round 12 forced `encoding="utf-8"` on the child: every Chinese path in a
+    `[MoveFiles]` line became replacement characters, so the job finished with
+    `file_count=0` while the file sat on disk. Decode the pipe with the same
+    locale the child uses, and keep `errors="replace"` so one stray byte cannot
+    kill the pump again.
     """
     manager = DownloadManager(
         tmp_path / 'media',
@@ -51,14 +55,18 @@ def test_download_output_survives_non_gbk_bytes(tmp_path):
     manager._cancel_events['job'] = threading.Event()
     lines: list[str] = []
 
-    # The child writes raw UTF-8 bytes: on a zh-CN Windows console its own text mode
-    # would be cp936 and could not encode the check mark at all.
-    code = 'import sys; sys.stdout.buffer.write("✓ 中文标题 downloaded\\n".encode("utf-8"))'
+    encoding = locale.getpreferredencoding(False)
+    title = "中文标题"
+    code = (
+        'import sys; sys.stdout.buffer.write(b"\\xff\\xfe"); '
+        'sys.stdout.buffer.write((' + repr(title + " downloaded") + ').encode('
+        + repr(encoding) + ', "replace"))'
+    )
     returncode, error = manager._run_tool('job', [sys.executable, '-c', code], lines.append)
 
-    assert returncode == 0
+    assert returncode == 0, lines
     assert error == ''
-    assert any('中文标题' in line for line in lines)
+    assert any(title in line for line in lines), lines
 
 
 def test_traceback_and_short_credentials_are_redacted():

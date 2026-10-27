@@ -500,7 +500,13 @@
         if (!focusable.length) return;
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
-        if (event.shiftKey && document.activeElement === first) {
+        // Clicking the sheet's own text (h2/p) blurs to <body>, which is neither
+        // first nor last, so the two branches below used to let Tab escape the
+        // modal. Pull focus back into the sheet whenever it is outside.
+        if (!focusable.includes(document.activeElement)) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        } else if (event.shiftKey && document.activeElement === first) {
           event.preventDefault();
           last.focus();
         } else if (!event.shiftKey && document.activeElement === last) {

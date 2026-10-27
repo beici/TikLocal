@@ -8,7 +8,7 @@ import time
 from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
 
-from flask import Flask, render_template, request, send_file, url_for
+from flask import Flask, jsonify, render_template, request, send_file, url_for
 
 # Service Imports
 from tiklocal.logging_setup import configure_logging
@@ -455,7 +455,18 @@ def create_app(test_config=None):
 
     @app.errorhandler(405)
     def handle_method_not_allowed(error):
-        return _api_error(405, t('common.error.method_not_allowed'), error)
+        # _api_error builds a fresh response, which drops Werkzeug's Allow header; a
+        # 405 without Allow leaves clients guessing which verb the route accepts.
+        message = t('common.error.method_not_allowed')
+        if request.path.startswith('/api/'):
+            response = jsonify({'success': False, 'error': message})
+        else:
+            response = app.make_response(render_template('error.html', status=405, message=message))
+        response.status_code = 405
+        methods = getattr(error, 'valid_methods', None)
+        if methods:
+            response.headers['Allow'] = ', '.join(methods)
+        return response
 
     @app.errorhandler(500)
     def handle_server_error(error):

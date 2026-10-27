@@ -35,7 +35,12 @@
       button.type = 'button';
       button.className = 'ui-toast-action';
       button.textContent = action.label;
-      button.addEventListener('click', function () {
+      button.addEventListener('click', function once() {
+        // The toast stays clickable for the 180 ms leave animation; a double
+        // click (or a held Enter) fired the action twice, so the second restore
+        // request answered 404 and its error toast covered the success one.
+        button.removeEventListener('click', once);
+        button.disabled = true;
         leave();
         action.run();
       });

@@ -10,6 +10,29 @@ from tiklocal.services.url_list import UrlListStore, format_text, parse_text
 from tiklocal.web import json_body
 
 
+# UrlListStore raises English ValueErrors that used to be echoed to the browser.
+# Map them back to localized copy so a zh-CN UI never shows raw service text.
+_URL_LIST_ERROR_KEYS = (
+    ('Too many URLs', 'download.urls.error_too_many'),
+    ('must be absolute', 'download.urls.error_path_absolute'),
+    ('must point at a file', 'download.urls.error_path_folder'),
+    ('plain text list', 'download.urls.error_path_text'),
+    ('application state file', 'download.urls.error_path_state'),
+    ('No server path configured', 'download.urls.error_no_path'),
+    ('too large to import', 'download.urls.error_too_large'),
+    ('Unable to read', 'download.urls.error_read'),
+    ('Unable to write', 'download.urls.error_write'),
+)
+
+
+def url_list_error_message(exc):
+    message = str(exc)
+    for marker, key in _URL_LIST_ERROR_KEYS:
+        if marker in message:
+            return t(key)
+    return t('download.urls.error')
+
+
 def register_download_routes(app, download_manager, library_service, tiktok_service=None,
                              trash_service=None, media_index=None):
     def mask_secrets(config):
@@ -71,7 +94,8 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         try:
             download_manager.update_config(validated)
         except ValueError as exc:
-            return {'success': False, 'error': str(exc)}, 400
+            app.logger.warning('URL list request rejected: %s', exc)
+            return {'success': False, 'error': url_list_error_message(exc)}, 400
 
         return {'success': True, 'data': build_download_config_payload()}
 
@@ -94,7 +118,8 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             # Uploading consistently replaces a file with the same name.
             data = download_manager.upload_cookie_file(filename, content, replace=True)
         except ValueError as exc:
-            return {'success': False, 'error': str(exc)}, 400
+            app.logger.warning('URL list request rejected: %s', exc)
+            return {'success': False, 'error': url_list_error_message(exc)}, 400
         return {'success': True, 'data': data}
 
     def url_list_store():
@@ -125,7 +150,8 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             else:
                 return {'success': False, 'error': t('download.urls.error')}, 400
         except ValueError as exc:
-            return {'success': False, 'error': str(exc)}, 400
+            app.logger.warning('URL list request rejected: %s', exc)
+            return {'success': False, 'error': url_list_error_message(exc)}, 400
         except OSError as exc:
             app.logger.warning('Could not write the download URL list', exc_info=exc)
             return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
@@ -135,7 +161,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
     @app.route('/api/download/urls/export')
     def api_download_urls_export():
         body = format_text(url_list_store().lines())
-        response = app.response_class(body, mimetype='text/plain; charset=utf-8')
+        response = app.response_class(body, mimetype='text/plain')
         response.headers['Content-Disposition'] = 'attachment; filename="download-urls.txt"'
         return response
 
@@ -157,7 +183,8 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             else:
                 result = store.push()
         except ValueError as exc:
-            return {'success': False, 'error': str(exc)}, 400
+            app.logger.warning('URL list request rejected: %s', exc)
+            return {'success': False, 'error': url_list_error_message(exc)}, 400
         except OSError as exc:
             app.logger.warning('Could not write the download URL list', exc_info=exc)
             return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
@@ -241,7 +268,8 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         try:
             data = tiktok_service.enqueue_from_url(url, tab=tab, count=count)
         except ValueError as exc:
-            return {'success': False, 'error': str(exc)}, 400
+            app.logger.warning('URL list request rejected: %s', exc)
+            return {'success': False, 'error': url_list_error_message(exc)}, 400
         except TikTokDownloaderError as exc:
             return {'success': False, 'error': str(exc)}, 502
         return {'success': True, 'data': data}
@@ -266,7 +294,8 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         try:
             download_manager.update_config({'tiktok_downloader': section})
         except ValueError as exc:
-            return {'success': False, 'error': str(exc)}, 400
+            app.logger.warning('URL list request rejected: %s', exc)
+            return {'success': False, 'error': url_list_error_message(exc)}, 400
         updated = download_manager.get_config().get('tiktok_downloader') or {}
         return {'success': True, 'data': {'tiktok_downloader': mask_secrets({'tiktok_downloader': updated})['tiktok_downloader']}}
 
@@ -355,6 +384,18 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
                 uris.extend(
                     str(value) for value in job.get('output_files_rel') or [] if str(value).strip()
                 )
+            # A retried or duplicated job can share output files with the one being
+            # removed; deleting the file for the removed job left the surviving card
+            # pointing at a file that had already moved to the trash.
+            if uris:
+                doomed = set(job_ids)
+                still_used = {
+                    str(value)
+                    for other in download_manager.list_jobs(limit=200)
+                    if other.get('id') not in doomed
+                    for value in other.get('output_files_rel') or []
+                }
+                uris = [uri for uri in uris if uri not in still_used]
             file_result = delete_downloaded_files(uris)
 
         result = download_manager.delete_jobs(job_ids)

@@ -76,3 +76,16 @@
 | 空态/加载态 `aria-live` 播报 | 需要逐页设计播报文案，否则会形成朗读风暴，属体验设计 |
 | 会话过期时各页 401 跳转统一 | 已由 `base.js` 的 fetch 补丁兜底，逐页差异未造成实际故障 |
 
+## 第 13 轮新增（未修，按严重度）
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| [P1] 首次建索引同步读 EXIF，20k 库冷启动 11 s | `tiklocal/services/library_index.py`（`_record_for_path`） | 正确修法是「先入库 + 后台补时间元数据」（`time_metadata_version=0` → 探测线程回填），要同时改写入路径、探测队列与按时间排序的回退，属结构性改动 |
+| [P2] 缩略图解码并发只有 2 路且无 single-flight，冷缓存 200 张 p95 7.4 s | `tiklocal/services/thumbnail.py:22` | 提高并发会顶高 Pillow 内存峰值（第 09 轮才为 222 MB 峰值加过 `draft()`），需按 CPU 数设上限 + 同路径 single-flight 并配套压测 |
+| [P3] 取消落在「工具已退出、`on_outputs` 执行中」窗口 → `canceled` 但 `file_count=1` | `tiklocal/services/downloader.py:938-979` | 需把产物登记与状态写入放进同一事务，牵动 job 状态机 |
+| [P3] 中途取消在库根留 `.info.json` 孤儿 | `tiklocal/services/download_tools.py:116`、`downloader.py:1072` | 需按 job 记录本次产生的 info 文件并在取消时回收，收益低 |
+| [P3] 字面量端点被 `<job_id>`/`<collection_id>` 遮蔽（`/api/download/jobs/clear` 404 而非 405） | `tiklocal/web/downloads.py:273`、`:287`、`tiklocal/web/library.py:434` | 需调整路由顺序或改用 uuid 校验器，牵动前端调用，当前无真实调用方 |
+| [P3] 多源指向同一目录 → 全部归第一个源 | `tiklocal/web/library.py:202`、`:210` | 需先定义「同目录多源」语义（重复行还是按序归属），属配置约定问题 |
+| [P3] 源移出配置后回收站条目失联（`restore` 抛 `KeyError`） | `tiklocal/services/trash.py:86-97` | 回收站条目需冗余保存 `media_root`，涉及存储格式迁移 |
+| [P3] i18n 6 条：`media_common` 英文键、`sub_locale` 类型、`_js_catalog_guard` 只扫模板、`search.js` 混排、JS 内拼串、`<html lang>` 静态 | `tiklocal/i18n*.py`、`tiklocal/static/*.js`、`templates/base.html` | 第 13 轮报告后改动未落到工作区（连续第二次回滚）；下一轮改为「改一条 → 立刻跑 `test_i18n.py`」的小步模式 |
+

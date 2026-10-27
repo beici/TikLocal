@@ -2,6 +2,8 @@
 
 from flask import render_template
 
+from tiklocal.i18n import t
+
 
 def register_settings_routes(app, media_index, favorite_service, thumbnail_service, app_version):
     @app.route('/')
@@ -22,8 +24,10 @@ def register_settings_routes(app, media_index, favorite_service, thumbnail_servi
     def api_clear_cache():
         try:
             return {'success': True, **thumbnail_service.clear_cache()}
-        except Exception as exc:
-            return {'success': False, 'error': str(exc)}, 500
+        except Exception:
+            # The raw OSError carries the absolute cache path; keep it in the log.
+            app.logger.exception('Could not clear the thumbnail cache')
+            return {'success': False, 'error': t('settings.cache.failed')}, 500
 
     def library_stats() -> dict:
         # Settings is the only page that can clear the thumbnail cache or repair the

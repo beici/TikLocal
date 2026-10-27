@@ -93,9 +93,15 @@ class MediaIndexStore:
                 keep_prefix_sql = ""
                 keep_params: list[str] = []
                 for prefix in preserved_prefixes or ():
-                    escaped = prefix.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-                    keep_prefix_sql += " AND uri NOT LIKE ? ESCAPE '\\'"
-                    keep_params.append(f'{escaped}%')
+                    # The scanner reports folder prefixes with a trailing slash
+                    # ("@default/sub/"); normalise before building the pattern.
+                    key = prefix.rstrip('/') or prefix
+                    escaped = key.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+                    # Match the folder itself or its children only: a plain
+                    # `LIKE prefix%` also protected siblings such as `subdir` when
+                    # the skipped folder was `sub`, leaving ghost rows forever.
+                    keep_prefix_sql += " AND uri <> ? AND uri NOT LIKE ? ESCAPE '\\'"
+                    keep_params.extend([key, f'{escaped}/%'])
                 deleted = conn.execute(
                     f"""
                     DELETE FROM media_items
@@ -191,18 +197,31 @@ class MediaIndexStore:
                 )
         return bool(deleted)
 
-    def unprobed(self, limit: int = 50) -> list[dict]:
-        """Media whose dimensions were never read, or were read before the file changed."""
+    def unprobed(self, limit: int = 50, exclude: tuple[str, ...] = ()) -> list[dict]:
+        """Media whose dimensions were never read, or were read before the file changed.
+
+        ``exclude`` lets the probe pass step over rows that just failed: without it
+        the head of ``ORDER BY mtime DESC`` was re-probed every five seconds and
+        every row behind it stayed unmeasured forever.
+        """
+        skip_sql = ""
+        params: list = []
+        if exclude:
+            placeholders = ",".join("?" for _ in exclude)
+            skip_sql = f" AND uri NOT IN ({placeholders})"
+            params.extend(exclude)
+        params.append(int(limit))
         with self.database.connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT uri, media_type, mtime FROM media_items
                 WHERE media_type IN ('video', 'image', 'live')
                   AND (probed_mtime IS NULL OR probed_mtime != mtime)
+                  {skip_sql}
                 ORDER BY mtime DESC
                 LIMIT ?
                 """,
-                (int(limit),),
+                params,
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -1006,6 +1025,9 @@ class MediaProbeWorker:
         self.store = store
         self._wake = threading.Event()
         self._warned: set[str] = set()
+        # uri -> (attempts, retry_at_monotonic). A failed probe backs off instead of
+        # being retried first on every wake, which used to starve the whole library.
+        self._backoff: dict[str, tuple[int, float]] = {}
         self.failures = 0
 
     def start(self) -> None:
@@ -1014,16 +1036,35 @@ class MediaProbeWorker:
     def wake(self) -> None:
         self._wake.set()
 
+    def _defer_probe(self, uri: str, reason: str, base_delay: float = 5.0) -> None:
+        attempts = self._backoff.get(uri, (0, 0.0))[0] + 1
+        delay = min(300.0, base_delay * (2 ** (attempts - 1)))
+        self._backoff[uri] = (attempts, time.monotonic() + delay)
+        if uri not in self._warned:
+            if len(self._warned) > 500:
+                self._warned.clear()
+            self._warned.add(uri)
+            LOGGER.warning('Could not read media dimensions for %s (%s); will retry later', uri, reason)
+
     def run_once(self, batch: int = 50, budget_sec: float | None = None) -> int:
         """Probe until nothing is left (or the time budget is spent); return how many files were read."""
         done = 0
         deadline = time.monotonic() + budget_sec if budget_sec else None
-        deferred: set[str] = set()
         # Without ffprobe (the bundled imageio-ffmpeg build) or ffmpeg, a video's
         # size is unknown rather than unmeasurable: keep probed_mtime unset so a
         # later pass retries once a tool is installed.
         can_probe_video = probe_tool_available()
-        while rows := [row for row in self.store.unprobed(batch) if row["uri"] not in deferred]:
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                break
+            now = time.monotonic()
+            if len(self._backoff) > 400:
+                for stale in [u for u, (_, at) in self._backoff.items() if at <= now][:200]:
+                    self._backoff.pop(stale, None)
+            skip = tuple(uri for uri, (_, at) in self._backoff.items() if at > now)[:400]
+            rows = self.store.unprobed(batch, exclude=skip)
+            if not rows:
+                break
             results = []
             for row in rows:
                 if deadline is not None and time.monotonic() > deadline:
@@ -1034,25 +1075,24 @@ class MediaProbeWorker:
                     # Audio has no dimensions to read; record the pass so the row
                     # stops showing up in every batch.
                     results.append((None, None, row["mtime"], row["uri"]))
+                    self._backoff.pop(row["uri"], None)
                     continue
                 if media_type != 'image' and not can_probe_video:
-                    deferred.add(row["uri"])
+                    self._defer_probe(row["uri"], 'no probe tool', base_delay=60.0)
                     continue
                 width, height = probe_media_dims(self.library, row["uri"], media_type)
                 if width is None or height is None:
                     # Writing probed_mtime for a failed read made the failure
                     # permanent: a corrupt JPEG or a timed-out ffprobe never got a
                     # second chance and nothing explained the missing tile size.
-                    deferred.add(row["uri"])
-                    if row["uri"] not in self._warned:
-                        if len(self._warned) > 500:
-                            self._warned.clear()
-                        self._warned.add(row["uri"])
-                        LOGGER.warning('Could not read media dimensions for %s; will retry', row["uri"])
+                    self._defer_probe(row["uri"], 'read failed')
                     continue
+                self._backoff.pop(row["uri"], None)
                 results.append((width, height, row["mtime"], row["uri"]))
             if not results:
-                break
+                # The whole batch failed or was deferred. The exclusion list makes the
+                # next query start deeper, so a bad head no longer starves the rest.
+                continue
             self.store.set_dimensions(results)
             done += len(results)
         return done

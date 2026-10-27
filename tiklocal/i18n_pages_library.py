@@ -120,6 +120,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # ---- library: Python-side payload messages (web/library.py) ----
         'library.error.collection_id_required': 'collection_id 不能为空。',
         'library.error.name_required': 'name 不能为空。',
+        'library.error.busy': '索引正在被其它操作占用，请稍后再试。',
         'library.error.uris_required': 'uris 不能为空。',
         'library.error.uri_required': 'uri 不能为空。',
         'library.error.favorite_failed': '收藏无法保存或读取，请稍后再试。',
@@ -319,6 +320,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         # ---- library: Python-side payload messages (web/library.py) ----
         'library.error.collection_id_required': 'collection_id cannot be empty.',
         'library.error.name_required': 'name cannot be empty.',
+        'library.error.busy': 'The index is busy with another operation. Please try again in a moment.',
         'library.error.uris_required': 'uris cannot be empty.',
         'library.error.uri_required': 'uri cannot be empty.',
         'library.error.favorite_failed': 'Favorites could not be saved or read. Please try again later.',

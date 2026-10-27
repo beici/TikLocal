@@ -22,6 +22,15 @@ class ThemeManager {
     } else {
       this.mediaQuery.addListener?.(onSystemThemeChange);
     }
+    // Changing the theme in one tab left every other tab on the old theme until
+    // a manual reload; mirror the stored value when another tab writes it.
+    window.addEventListener('storage', (event) => {
+      if (event.key !== 'theme') return;
+      const next = ['light', 'dark', 'system'].includes(event.newValue) ? event.newValue : 'system';
+      if (next === this.preference) return;
+      this.preference = next;
+      this.apply();
+    });
     feather.replace();
   }
   resolvedTheme() {
@@ -46,7 +55,13 @@ class ThemeManager {
   setPreference(preference) {
     if (!['light', 'dark', 'system'].includes(preference)) return;
     this.preference = preference;
-    localStorage.setItem('theme', preference);
+    try {
+      localStorage.setItem('theme', preference);
+    } catch (error) {
+      // Storage can be disabled (private mode, blocked cookies). Reading was
+      // already guarded; writing threw and aborted the caller, so the theme
+      // buttons never re-synced even though the theme itself was applied.
+    }
     this.apply();
   }
 }
