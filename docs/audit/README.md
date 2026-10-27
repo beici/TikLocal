@@ -32,6 +32,7 @@
 | 14 | 2026-10-27 | 448P→450P/6S/0F | 0/0/3/10（确认 13，修复 13） | `1d199f3`，17 文件 `+212/-91` | [round-14](round-14.md) |
 | 15 | 2026-10-27 | 450P/6S/0F | 1/0/4/7（确认 12，修复 10，转 backlog 2） | `dfee70e`，9 文件 `+356/-8` | [round-15](round-15.md) |
 | 16 | 2026-10-27 | 455P/6S/0F | 3/6/11（确认 20，修复 14，转 backlog 6） | `fix: serialize instance access and stop silent store wipes`，19 文件 | [round-16](round-16.md) |
+| 17 | 2026-10-27 | 462P/6S/0F | 1/10/8（确认 19，修复 19） | `8b6900e`，28 文件 `+485/-68` | [round-17](round-17.md) |
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
 
@@ -62,6 +63,8 @@
 第 15 轮结束后：`pytest -q` = **455 passed / 6 skipped / 0 failed**（167.63s，新增 5 个用例：`tests/test_round15_regressions.py`）。
 
 第 16 轮结束后：`pytest -q` = **462 passed / 6 skipped / 0 failed**（190.57s，新增 6 个用例：`tests/test_round16_regressions.py`）。
+
+第 17 轮结束后：`pytest -q` = **469 passed / 6 skipped / 0 failed**（151.95s，新增 7 个用例：`tests/test_round17_regressions.py`）。
 
 ## 目录
 
