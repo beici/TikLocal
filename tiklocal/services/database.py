@@ -15,6 +15,10 @@ class Migration:
     up: Callable[[sqlite3.Connection], None]
 
 
+class DatabaseVersionError(RuntimeError):
+    """The database was written by a newer TikLocal than this build understands."""
+
+
 def _migrate_001_create_image_vectors(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -411,6 +415,19 @@ class AppDatabase:
                 )
                 """
             )
+            # A database written by a newer release must not be migrated by an older
+            # one: the old code knows nothing about columns added later, and silently
+            # running on that schema writes rows that violate the new constraints (or
+            # crashes with "no such table" after a rename). Refuse loudly instead.
+            latest_known = MIGRATIONS[-1].version if MIGRATIONS else 0
+            row = conn.execute('SELECT MAX(version) FROM schema_migrations').fetchone()
+            applied = int(row[0]) if row and row[0] is not None else 0
+            if applied > latest_known:
+                raise DatabaseVersionError(
+                    f'This database was created by a newer TikLocal (schema version '
+                    f'{applied}, this build knows {latest_known}). Upgrade TikLocal or '
+                    'start with a different instance directory.'
+                )
 
         for migration in MIGRATIONS:
             if self._is_applied(migration.version):

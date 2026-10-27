@@ -7,6 +7,7 @@ downloaded by TikLocal itself through the ``tiktok-downloader`` engine in
 """
 
 import json
+import logging
 import re
 import time
 import urllib.error
@@ -18,6 +19,8 @@ from urllib.parse import urlparse
 from tiklocal.i18n import t
 from tiklocal.services import author_profiles
 from tiklocal.services.media_naming import post_title
+
+LOGGER = logging.getLogger(__name__)
 
 
 DEFAULT_TIKTOK_DOWNLOADER_CONFIG: dict[str, Any] = {
@@ -305,6 +308,13 @@ class TikTokDownloaderClient:
             raise TikTokDownloaderError("TikTokDownloader returned an invalid response.") from exc
         if not isinstance(decoded, dict):
             raise TikTokDownloaderError("TikTokDownloader returned an invalid response.")
+        # The sidecar answers 200 with {"code": 500, "data": null} for upstream
+        # failures (rate limit, expired cookie). Reading only ``data`` turned that
+        # into "this author has no works", so the user never retried.
+        code = decoded.get("code")
+        if code not in (None, 0, 200, "0", "200") and decoded.get("data") in (None, [], {}):
+            message = str(decoded.get("message") or "").strip()
+            raise TikTokDownloaderError(message or f"TikTokDownloader returned code {code}.")
         return decoded
 
     def check_connection(self) -> dict[str, Any]:
@@ -851,13 +861,22 @@ class TikTokDownloadService:
                     result = self.store_author_block(
                         source_id, author, folder_uid=folder_uid, profile_url=profile_url,
                     )
-            except (TikTokDownloaderError, ValueError) as exc:
+            except TikTokDownloaderError as exc:
+                # Only our own error type carries text written for the user.
                 results.append({"ok": False, "source_id": source_id, "error": str(exc)})
-            except Exception as exc:  # a broken sidecar reply must not kill the batch
+            except ValueError:
+                # json/urlparse errors embed raw offsets and absolute paths.
+                LOGGER.exception('Author sync failed for source %s', source_id)
+                results.append({"ok": False, "source_id": source_id, "error": t('author.sync.error.unknown')})
+            except Exception:  # a broken sidecar reply must not kill the batch
+                # Only our own error type may carry text into the response: a raw
+                # KeyError/OSError leaked internal keys and absolute paths into the
+                # sync table the user reads.
+                LOGGER.exception('Author sync failed for source %s', source_id)
                 results.append({
                     "ok": False,
                     "source_id": source_id,
-                    "error": str(exc) or t('author.sync.error.unknown'),
+                    "error": t('author.sync.error.unknown'),
                 })
             else:
                 results.append({"ok": True, **result})

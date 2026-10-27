@@ -70,7 +70,7 @@
         favoriteState.set(key, !before);
         onFavoriteChange(!before, key);
         try {
-          var result = await actions.toggleFavorite(key);
+          var result = await actions.toggleFavorite(key, !before);
           favoriteState.set(key, result);
           onFavoriteChange(result, key);
           return result;

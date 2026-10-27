@@ -3,7 +3,7 @@ import io
 import math
 import os
 import re
-import tempfile
+import shutil
 import threading
 import time
 import subprocess as sp
@@ -28,6 +28,32 @@ THUMB_VERSION = 2
 #: Bounds concurrent decode/encode work so a cold /library grid cannot balloon RSS,
 #: while still letting a multi-core box fill the grid faster than two at a time.
 _GENERATE_SLOTS = threading.BoundedSemaphore(max(2, min(4, (os.cpu_count() or 4) // 2)))
+
+#: A frame whose mean luminance sits below this is treated as a black title card:
+#: the next candidate timestamp is tried instead of publishing a black tile.
+_TEMP_COUNTER = 0
+
+
+BLACK_FRAME_LUMA = 6.0
+#: HDR transfer functions whose frames need a tonemap before being stored as sRGB.
+HDR_TRANSFERS = frozenset({'smpte2084', 'arib-std-b67'})
+#: Filter support is probed once per process: a build without zscale/tonemap must
+#: not pay for a failed ffmpeg run on every HDR video.
+_FILTER_SUPPORT = {'tonemap': True}
+
+
+def _frame_luma(path: Path) -> float | None:
+    """Mean luminance (0-255) of a rendered frame, or None when it cannot be read."""
+    try:
+        with Image.open(path) as frame:
+            grey = frame.convert('L')
+            grey.thumbnail((32, 32))
+            pixels = list(grey.tobytes())
+    except Exception:
+        return None
+    if not pixels:
+        return None
+    return sum(pixels) / len(pixels)
 
 
 def ffmpeg_argv() -> list[str]:
@@ -290,14 +316,23 @@ class ThumbnailService:
                         return output
                 except OSError:
                     pass
+            # `tempfile` is avoided on purpose: a write-denied cache directory makes
+            # mkdtemp retry TMP_MAX (2**31-1) names, pinning the request thread.
+            global _TEMP_COUNTER
+            _TEMP_COUNTER += 1
+            temporary = self.thumb_dir / f'.thumb-{os.getpid()}-{_TEMP_COUNTER}.jpg'
             try:
-                with tempfile.TemporaryDirectory(dir=self.thumb_dir) as directory:
-                    temporary = Path(directory) / 'thumbnail.jpg'
-                    if self._generate(source, temporary, timestamp, auto_timestamp=auto_timestamp):
-                        if _replace_with_retry(temporary, output):
-                            return output
+                if self._generate(source, temporary, timestamp, auto_timestamp=auto_timestamp):
+                    if _replace_with_retry(temporary, output):
+                        return output
             except OSError:
                 return None
+            finally:
+                for leftover in (temporary, temporary.with_name(temporary.name + '.dark')):
+                    try:
+                        leftover.unlink(missing_ok=True)
+                    except OSError:
+                        pass
         return None
 
     def delete_thumbnail(self, uri: str) -> bool:
@@ -345,6 +380,22 @@ class ThumbnailService:
         # imageio-ffmpeg ships ffmpeg without ffprobe: read the duration from its banner.
         return banner_duration(path)
 
+    @staticmethod
+    def _probe_color_transfer(path: Path) -> str:
+        """Return the video stream's transfer function, or '' when unknown."""
+        probe = ffprobe_argv()
+        if not probe:
+            return ''
+        try:
+            output = sp.check_output([
+                *probe, '-v', 'error', '-select_streams', 'v:0',
+                '-show_entries', 'stream=color_transfer',
+                '-of', 'default=noprint_wrappers=1:nokey=1', str(path),
+            ], stderr=sp.DEVNULL, timeout=10)
+        except (OSError, sp.SubprocessError):
+            return ''
+        return output.decode('utf-8', errors='replace').strip().lower()
+
     def _generate(self, video_path: Path, output_path: Path, timestamp: float | None, *, auto_timestamp: bool) -> bool:
         # Decoding one 24MP JPEG peaks at ~192MB; six concurrent cold thumbnails
         # took RSS to ~983MB. Two slots keeps the peak bounded and still parallel.
@@ -376,6 +427,21 @@ class ThumbnailService:
             if duration and duration > 1:
                 candidates.insert(0, max(1.0, min(duration - 1.0, duration * 0.2)))
 
+        hdr_filter = None
+        if _FILTER_SUPPORT['tonemap'] and self._probe_color_transfer(video_path) in HDR_TRANSFERS:
+            hdr_filter = (
+                "zscale=t=linear:npl=100,format=gbrpf32le,"
+                "zscale=p=bt709,tonemap=tonemap=hable:desat=0,"
+                "zscale=t=bt709:m=bt709:r=tv,format=yuv420p,"
+                "scale=-2:'min(ih,640)'"
+            )
+
+        # A clip that fades in from black, a screen recording that starts with a
+        # black slate or an animation with a black title card all produced a pure
+        # black tile at 5.0 s. Keep the brightest frame we saw so a genuinely dark
+        # video still gets a poster, but prefer a candidate that is not black.
+        fallback_path = output_path.with_name(output_path.name + '.dark')
+        best_luma = -1.0
         for t in candidates:
             cmd = [
                 *ffmpeg_argv(), '-y',
@@ -386,36 +452,65 @@ class ThumbnailService:
                 # portrait clips at 203x360, and that poster is stretched across a
                 # full-screen card, so it looked blurred. min() keeps small videos
                 # from being upscaled, and -2 keeps the width even for yuv420p.
-                '-vf', "scale=-2:'min(ih,640)'",
+                '-vf', hdr_filter or "scale=-2:'min(ih,640)'",
                 '-q:v', '3',
                 str(output_path)
             ]
             try:
                 result = sp.run(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=FFMPEG_TIMEOUT_SEC)
+                if hdr_filter and result.returncode != 0:
+                    # The bundled ffmpeg may be built without zscale/tonemap (the
+                    # measured build fails every tonemap chain), so fall back to a
+                    # plain frame instead of losing the poster entirely.
+                    _FILTER_SUPPORT['tonemap'] = False
+                    hdr_filter = None
+                    cmd[-3] = "scale=-2:'min(ih,640)'"
+                    result = sp.run(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=FFMPEG_TIMEOUT_SEC)
                 if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
-                    return True
+                    luma = _frame_luma(output_path)
+                    if luma is None or luma >= BLACK_FRAME_LUMA:
+                        fallback_path.unlink(missing_ok=True)
+                        return True
+                    if luma > best_luma:
+                        best_luma = luma
+                        shutil.copyfile(output_path, fallback_path)
             except (OSError, sp.SubprocessError):
                 continue
+        if best_luma >= 0 and fallback_path.exists():
+            os.replace(fallback_path, output_path)
+            return True
+        fallback_path.unlink(missing_ok=True)
         return False
 
     @staticmethod
     def _generate_image(image_path: Path, output_path: Path) -> bool:
         try:
             with Image.open(image_path) as source:
+                # Palette images (PNG stickers, 2-frame GIFs) keep transparency in
+                # info['transparency'] instead of an alpha band, so getbands() alone
+                # missed them and convert('RGB') painted the transparent area black.
+                has_alpha = 'A' in source.getbands() or 'transparency' in source.info
+                # A Display P3 / Adobe RGB photo without its ICC profile looks more
+                # saturated in the grid than in the viewer, where the browser honours
+                # the embedded profile.
+                icc_profile = source.info.get('icc_profile')
                 # draft() lets libjpeg decode at 1/2, 1/4 or 1/8 scale: asking for
                 # 2x the 640px target keeps the final LANCZOS pass at full quality
                 # (a 24MP photo drops from ~101MB extra RSS to ~6MB).
                 source.draft('RGB', (1280, 1280))
                 image = ImageOps.exif_transpose(source)
                 image.thumbnail((640, 640), Image.Resampling.LANCZOS)
-                if 'A' in image.getbands():
+                if has_alpha:
                     rgba = image.convert('RGBA')
                     background = Image.new('RGB', rgba.size, (247, 246, 242))
                     background.paste(rgba, mask=rgba.getchannel('A'))
                     image = background
                 else:
                     image = image.convert('RGB')
-                image.save(output_path, 'JPEG', quality=84, optimize=True, progressive=True)
+                options: dict[str, Any] = {'quality': 84, 'optimize': True, 'progressive': True}
+                if icc_profile:
+                    options['icc_profile'] = icc_profile
+                image.save(output_path, 'JPEG', **options)
             return output_path.exists() and output_path.stat().st_size > 0
         except Exception:
             return False

@@ -2,7 +2,9 @@ import json
 import threading
 from pathlib import Path
 
-from tiklocal.services.json_storage import read_json_file, write_json_atomic
+import pytest
+
+from tiklocal.services.json_storage import StoreUnreadableError, read_json_file, write_json_atomic
 
 
 def test_transient_sharing_violation_does_not_quarantine_the_store(tmp_path: Path, monkeypatch) -> None:
@@ -27,7 +29,7 @@ def test_transient_sharing_violation_does_not_quarantine_the_store(tmp_path: Pat
     assert not list(tmp_path.glob('store.json.corrupt*'))
 
 
-def test_persistent_sharing_violation_returns_default_without_quarantine(tmp_path: Path, monkeypatch) -> None:
+def test_persistent_sharing_violation_refuses_to_answer_empty(tmp_path: Path, monkeypatch) -> None:
     store = tmp_path / 'store.json'
     store.write_text(json.dumps({'marker': 'USER-DATA'}), encoding='utf-8')
 
@@ -35,11 +37,13 @@ def test_persistent_sharing_violation_returns_default_without_quarantine(tmp_pat
         raise PermissionError(13, 'The process cannot access the file', str(self))
 
     monkeypatch.setattr(Path, 'read_text', always_fail)
-    value = read_json_file(store, {'fallback': True})
+    # Returning the default here used to look like "empty store": the next save
+    # published that empty value over data the user still had.
+    with pytest.raises(StoreUnreadableError):
+        read_json_file(store, {'fallback': True})
     monkeypatch.undo()
 
-    assert value == {'fallback': True}
-    assert store.exists()
+    assert json.loads(store.read_text(encoding='utf-8')) == {'marker': 'USER-DATA'}
     assert not list(tmp_path.glob('store.json.corrupt*'))
 
 

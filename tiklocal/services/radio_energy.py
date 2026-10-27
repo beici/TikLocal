@@ -20,7 +20,6 @@ import os
 import shutil
 import subprocess as sp
 import sys
-import tempfile
 import wave
 from pathlib import Path
 from typing import Callable, Iterator
@@ -32,6 +31,7 @@ DECODE_RATE = 4000
 WINDOW_DB = 24.0
 LOUD_PERCENTILE = 0.95
 MAX_HOPS = 4 * 60 * 60 * 4
+_TEMP_COUNTER = 0
 FORMAT_VERSION = 1
 
 
@@ -74,18 +74,18 @@ class RadioEnergyService:
 
     def _write_cache(self, cache: Path, envelope: dict) -> None:
         # Publish atomically so a concurrent reader never sees a partial file.
+        # `tempfile` is avoided on purpose: when the cache directory denies writes,
+        # mkstemp treats PermissionError as "name taken" and retries TMP_MAX times.
+        global _TEMP_COUNTER
+        _TEMP_COUNTER += 1
+        temporary = cache.with_name(f'{cache.name}.{os.getpid()}.{_TEMP_COUNTER}.tmp')
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
-            descriptor, temporary = tempfile.mkstemp(dir=self.cache_dir, suffix='.tmp')
-        except OSError:
-            return
-        try:
-            with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
-                json.dump(envelope, handle, separators=(',', ':'))
+            temporary.write_text(json.dumps(envelope, separators=(',', ':')), encoding='utf-8')
             os.replace(temporary, cache)
         except OSError:
             try:
-                os.unlink(temporary)
+                temporary.unlink(missing_ok=True)
             except OSError:
                 pass
 

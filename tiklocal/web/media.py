@@ -30,8 +30,11 @@ def _byte_range(header: str | None, size: int):
     parses but points past the end. Werkzeug answers every non-single-range request
     with 416, which makes a legal multi-range request look like a missing file.
     """
-    if not header or not header.startswith('bytes=') or size <= 0:
+    if not header or not header.startswith('bytes='):
         return 'ignore'
+    if size <= 0:
+        # RFC 9110: no byte range of an empty representation is satisfiable.
+        return 'unsatisfiable'
     spec = header[len('bytes='):].strip()
     if ',' in spec or '-' not in spec:
         return 'ignore'

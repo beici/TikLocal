@@ -425,7 +425,7 @@
     var track = currentTrack;
     var ratio = playbackRatio();
     els.btnFav.disabled = true;
-    fetch('/api/favorite/' + encodeURIComponent(track.name), { method: 'POST' })
+    fetch('/api/favorite/' + encodeURIComponent(track.name) + '?favorited=' + (track.is_favorite ? 'false' : 'true'), { method: 'POST' })
       .then(async function (response) {
         var data = await response.json();
         if (!response.ok || typeof data.favorite !== 'boolean') {

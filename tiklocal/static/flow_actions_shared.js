@@ -26,10 +26,12 @@
     return data.favorite;
   }
 
-  async function toggleFavorite(name) {
+  async function toggleFavorite(name, desired) {
     var encoded = encodeName(name);
     if (!encoded) return false;
-    var response = await fetch('/api/favorite/' + encoded, { method: 'POST' });
+    var url = '/api/favorite/' + encoded;
+    if (typeof desired === 'boolean') url += '?favorited=' + (desired ? 'true' : 'false');
+    var response = await fetch(url, { method: 'POST' });
     var data = await readJsonResponse(response);
     if (!response.ok || !data || typeof data.favorite !== 'boolean') {
       throw new Error((data && data.error) || T('flow.error.favorite_update'));

@@ -92,3 +92,21 @@ def test_missing_nested_media_root_is_created(tmp_path, monkeypatch):
 
     create_app({'TESTING': True, 'MEDIA_ROOT': media_root})
     assert media_root.is_dir()
+
+
+def test_range_request_for_an_empty_file_is_unsatisfiable(tmp_path, monkeypatch):
+    """RFC 9110: no byte range of an empty representation is satisfiable."""
+    instance = tmp_path / 'instance'
+    instance.mkdir()
+    monkeypatch.setenv('TIKLOCAL_INSTANCE', str(instance))
+    media_root = tmp_path / 'media'
+    media_root.mkdir()
+    (media_root / 'empty.mp4').write_bytes(b'')
+
+    app = create_app({'TESTING': True, 'MEDIA_ROOT': media_root})
+    client = app.test_client()
+    client.post('/api/library/sync')
+
+    response = client.get('/media/%40default/empty.mp4', headers={'Range': 'bytes=0-'})
+    assert response.status_code == 416
+    assert response.headers['Content-Range'] == 'bytes */0'

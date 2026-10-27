@@ -1,6 +1,5 @@
 import json
 import os
-import tempfile
 import time
 from pathlib import Path
 
@@ -9,15 +8,31 @@ from pathlib import Path
 # briefly instead of failing the save, and never treat that as corruption.
 _REPLACE_ATTEMPTS = 5
 _REPLACE_DELAY_SEC = 0.03
-_READ_ATTEMPTS = 3
-_READ_DELAY_SEC = 0.02
+_READ_ATTEMPTS = 5
+_READ_DELAY_SEC = 0.05
 _QUARANTINE_KEEP = 3
+_TEMP_COUNTER = 0
+
+
+class StoreUnreadableError(OSError):
+    """The store exists but could not be read.
+
+    Callers must not fall back to an empty default: the next save would publish
+    that empty value over the real data. Subclassing OSError keeps the existing
+    `except OSError` -> 503 route handlers working.
+    """
 
 
 def write_json_atomic(path: Path, value: object) -> None:
     """Publish complete JSON or leave the previous file intact."""
-    with tempfile.TemporaryDirectory(dir=path.parent) as directory:
-        temporary = Path(directory) / path.name
+    global _TEMP_COUNTER
+    _TEMP_COUNTER += 1
+    # `tempfile` is deliberately avoided: when the directory itself denies writes,
+    # CPython's mkdtemp/mkstemp treat PermissionError as "name taken" and retry
+    # TMP_MAX (2**31-1) times, pinning a request thread for days. A sibling name
+    # built from pid+counter lets PermissionError surface immediately.
+    temporary = path.with_name(f'{path.name}.{os.getpid()}.{_TEMP_COUNTER}.tmp')
+    try:
         temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
         for attempt in range(_REPLACE_ATTEMPTS):
             try:
@@ -27,6 +42,11 @@ def write_json_atomic(path: Path, value: object) -> None:
                 if attempt == _REPLACE_ATTEMPTS - 1:
                     raise
                 time.sleep(_REPLACE_DELAY_SEC)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def quarantine_corrupt_file(path: Path) -> Path | None:
@@ -79,13 +99,13 @@ def read_json_file(path: Path, default: object, *, expected_type: type | tuple[t
         # Not UTF-8 at all: that is corruption, not a sharing violation.
         quarantine_corrupt_file(path)
         return default
-    except OSError:
+    except OSError as error:
         # A transient sharing violation is not corruption: quarantining here
         # would rename a perfectly good store and hand back the defaults, which
-        # the next save would then write over. Retry, then leave the file alone.
+        # the next save would then write over. Retry, then refuse to answer:
+        # returning the default would let the caller erase real data on save.
+        last_error: OSError = error
         for attempt in range(_READ_ATTEMPTS):
-            if attempt == _READ_ATTEMPTS - 1:
-                return default
             time.sleep(_READ_DELAY_SEC)
             try:
                 raw = path.read_text(encoding='utf-8')
@@ -95,7 +115,12 @@ def read_json_file(path: Path, default: object, *, expected_type: type | tuple[t
             except UnicodeDecodeError:
                 quarantine_corrupt_file(path)
                 return default
-            except OSError:
+            except OSError as retry_error:
+                last_error = retry_error
+                if attempt == _READ_ATTEMPTS - 1:
+                    raise StoreUnreadableError(
+                        f'{path.name} exists but cannot be read; refusing to treat it as empty.'
+                    ) from last_error
                 continue
     try:
         value = json.loads(raw)

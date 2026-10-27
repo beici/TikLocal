@@ -406,6 +406,17 @@ def register_library_routes(
         try:
             if request.method == 'GET':
                 return {'favorite': favorite_service.is_favorite(name)}
+            # A tab that has been open for a while holds a stale `isFavorited`, so a
+            # blind toggle can execute the opposite of what the button promised when
+            # another tab (or device) changed it. Callers may therefore state the
+            # desired end state and get an idempotent set instead of a toggle.
+            desired = request.args.get('favorited')
+            if desired is None:
+                body = request.get_json(silent=True)
+                if isinstance(body, dict) and isinstance(body.get('favorited'), bool):
+                    return {'success': True, 'favorite': favorite_service.set_favorite(name, body['favorited'])}
+            elif desired.lower() in {'1', 'true', 'yes', 'on', 'false', '0', 'no', 'off'}:
+                return {'success': True, 'favorite': favorite_service.set_favorite(name, desired.lower() in {'1', 'true', 'yes', 'on'})}
             return {'success': True, 'favorite': favorite_service.toggle(name)}
         except (OSError, ValueError):
             return {'success': False, 'error': t('library.error.favorite_failed')}, 503

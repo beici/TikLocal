@@ -11,6 +11,7 @@ from tiklocal.thumbs import generate_thumbnails
 from tiklocal.paths import get_data_dir
 from tiklocal.paths import get_auth_path
 from tiklocal.services.auth import AuthStore
+from tiklocal.services.instance_lock import InstanceLockError, acquire_instance_lock
 from tiklocal.services.library import normalize_source_id
 from tiklocal.config import normalize_media_sources, similarity_enabled
 
@@ -382,6 +383,16 @@ Examples:
             print("| Save it; change it with tiklocal auth set-password |")
             print("+--------------------------------------------+")
 
+    # Two servers on one instance directory corrupt each other's download history
+    # (the second marks the first one's running jobs as interrupted, and every
+    # jobs.json write is a whole-list overwrite). Take the lock before building
+    # the app; the OS releases it when this process exits, crash included.
+    try:
+        instance_lock = acquire_instance_lock(Path(resolve_data_dir(parser)))
+    except InstanceLockError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     try:
         app = create_app({
             "MEDIA_ROOT": media_path,
@@ -395,6 +406,8 @@ Examples:
         })
     except ValueError as exc:
         parser.error(str(exc))
+    # Keep the lock handle alive for the whole process lifetime.
+    app.extensions['instance_lock'] = instance_lock
     bootstrap = app.extensions.get('auth_bootstrap')
     download_manager = app.extensions['download_manager']
     # The banner only reaches the terminal, and a service manager restarts the

@@ -1,4 +1,5 @@
 import ipaddress
+import locale
 import logging
 import os
 import queue
@@ -68,6 +69,26 @@ DIRECT_DOWNLOAD_USER_AGENT = (
 )
 #: gallery-dl also writes sidecar metadata and archives; only media belongs in the library.
 GALLERY_MEDIA_SUFFIXES = frozenset(VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS)
+#: Code pages a child tool may have written its stdout with, most likely first. The
+#: interpreter locale is only a hint: yt-dlp.exe writes cp936 on a zh-CN console even
+#: when the parent runs in UTF-8 mode, and a hard-coded choice breaks the other case.
+OUTPUT_ENCODINGS = tuple(
+    dict.fromkeys(
+        encoding
+        for encoding in (locale.getpreferredencoding(False), 'utf-8', 'cp936', 'gbk')
+        if encoding
+    )
+)
+
+
+def _decode_output(raw: bytes) -> str:
+    """Decode one line of tool output by trying every plausible code page."""
+    for encoding in OUTPUT_ENCODINGS:
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode(OUTPUT_ENCODINGS[0] or 'utf-8', errors='replace')
 
 
 def gallery_media_outputs(temp_dir: Path, log_file: Path, cookie_copy: Path | None) -> list[Path]:
@@ -406,7 +427,7 @@ class DownloadManager:
         self._jobs: dict[str, dict[str, Any]] = {}
         self._job_order: list[str] = []
         self._cancel_events: dict[str, threading.Event] = {}
-        self._processes: dict[str, sp.Popen[str]] = {}
+        self._processes: dict[str, sp.Popen[bytes]] = {}
         self._workers: dict[str, threading.Thread] = {}
 
         self._config = self.config_store.get()
@@ -803,7 +824,7 @@ class DownloadManager:
         return self.source_store.delete(file_rel)
 
     def cancel(self, job_id: str) -> dict[str, Any] | None:
-        process: sp.Popen[str] | None = None
+        process: sp.Popen[bytes] | None = None
         with self._lock:
             job = self._jobs.get(job_id)
             if not job:
@@ -959,12 +980,23 @@ class DownloadManager:
                 else:
                     job["status"] = "failed"
                     job["error_message"] = error_message or "Download failed. Check the URL and network connection."
+                    if output_rel_list:
+                        # A playlist item can finish before the next one fails: the
+                        # file is already in the library, so dropping it from the job
+                        # made the UI report "failed, 0 files" while the media sat on
+                        # disk with no history entry.
+                        job["output_files_rel"] = list(output_rel_list)
+                        job["file_count"] = len(output_rel_list)
+                        job["output_path_rel"] = output_rel_list[0]
+                        job["partial"] = True
                     job["finished_at"] = utc_now_iso()
                     self._persist_locked()
 
             if source_context:
                 self._record_job_sources_on_success(source_context)
-            if return_code == 0 and output_rel_list and self.on_outputs:
+            if output_rel_list and self.on_outputs:
+                # Partial results (a failed playlist) must reach the index too, or the
+                # files that did download stay invisible until the next manual sync.
                 self.on_outputs(output_rel_list)
             if return_code == 0:
                 # Do not expose a successful job until its outputs are visible in
@@ -1281,7 +1313,7 @@ class DownloadManager:
                 return
             try:
                 for raw_line in process.stdout:
-                    lines.put(raw_line.strip())
+                    lines.put(_decode_output(raw_line).strip())
             except Exception:  # noqa: BLE001 - the pump thread must never die silently
                 # A decode error here used to kill the thread while the tool kept
                 # running, so a "successful" job reported zero outputs.
@@ -1356,22 +1388,22 @@ class DownloadManager:
         job["eta_sec"] = None
         self._persist_locked()
 
-    def _start_process(self, job_id: str, cmd: list[str]) -> sp.Popen[str]:
+    def _start_process(self, job_id: str, cmd: list[str]) -> sp.Popen[bytes]:
         # Cancellation and process registration share the lock: no late child can
         # escape close() while it is taking its process snapshot.
         with self._lock:
             if self._closed or self._cancel_events[job_id].is_set():
                 raise RuntimeError('Download canceled.')
-            # Decode with the locale the child actually writes with: yt-dlp.exe on a
-            # zh-CN Windows emits cp936 bytes on the pipe, so pinning utf-8 turned
-            # every non-ASCII media root into mojibake and the outputs were dropped.
-            process = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT, text=True,
-                               errors='replace',
-                               bufsize=1, start_new_session=os.name == 'posix')
+            # Keep the pipe in bytes and decode in _decode_output: the child's
+            # encoding is not knowable from here (cp936 on a zh-CN console, utf-8
+            # under PYTHONUTF8=1), and either hard-coded choice turned the other
+            # case into mojibake paths whose outputs were then dropped.
+            process = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT,
+                               bufsize=0, start_new_session=os.name == 'posix')
             self._processes[job_id] = process
             return process
 
-    def _terminate_process(self, process: sp.Popen[str]) -> None:
+    def _terminate_process(self, process: sp.Popen[bytes]) -> None:
         try:
             if os.name == 'posix':
                 os.killpg(process.pid, signal.SIGTERM)

@@ -92,3 +92,15 @@
 | [P3] 源移出配置后回收站条目失联（`restore` 抛 `KeyError`） | `tiklocal/services/trash.py:86-97` | 回收站条目需冗余保存 `media_root`，涉及存储格式迁移 |
 | [P3] i18n 6 条：`media_common` 英文键、`sub_locale` 类型、`_js_catalog_guard` 只扫模板、`search.js` 混排、JS 内拼串、`<html lang>` 静态 | `tiklocal/i18n*.py`、`tiklocal/static/*.js`、`templates/base.html` | 第 13 轮报告后改动未落到工作区（连续第二次回滚）；下一轮改为「改一条 → 立刻跑 `test_i18n.py`」的小步模式 |
 
+## 第 16 轮新增（按严重度）
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| [P3] 缩略图/索引只按 mtime 判新鲜，同 mtime 替换内容后封面与入库宽高永久陈旧 | `tiklocal/services/thumbnail.py:146`、`library_index.py:219` | 需要 `content_hash` 列 + 回填迁移，且缩略图与索引两处判定要一起改 |
+| [P3] 下载无 URL 幂等：同一链接两标签各提交一次 → 两条任务、两份文件 | `tiklocal/services/downloader.py::enqueue` | 需先定产品语义（重复即合并 vs 允许重下） |
+| [P3] 跨标签数据变更无广播：收藏/删除/集合在别的标签发生，本标签只同步主题 | `tiklocal/static/base.js:27-33` | `BroadcastChannel` + 每页订阅，单独立一轮做 |
+| [P3] 列表页在别的标签删除后不重校验（详情页已修） | `tiklocal/static/library_page_controller.js` | 需要保留滚动位置与筛选状态的重载路径 |
+| [P3] `config.yaml` 的 `download:` 段无读取入口，改了没反应也无日志 | `tiklocal/app.py:391`、`tiktok_downloader.py:511-514` | 需先定 YAML 与 store 的优先级语义 |
+| [P2] 服务管理器强杀后立即重启，日志轮转仍撞 WinError 32 | `tiklocal/services/logging_setup.py:89-94` | 单实例锁只挡正常双开；需按 pid 命名日志文件并清理旧文件 |
+
+

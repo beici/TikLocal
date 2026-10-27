@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (favoriteBtn.disabled) return;
     favoriteBtn.disabled = true;
     try {
-      const response = await fetch(`/api/favorite/${encodeURIComponent(fileName)}`, {
+      const response = await fetch(`/api/favorite/${encodeURIComponent(fileName)}?favorited=${isFavorited ? 'false' : 'true'}`, {
         method: 'POST'
       });
       const data = await response.json();
@@ -233,6 +233,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initialize.
   initFavoriteStatus();
+
+  // Another tab may have toggled the favorite while this one sat in the background;
+  // re-read the server state when the page becomes visible again so the button never
+  // promises the opposite of what the next click will do.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') initFavoriteStatus();
+  });
 
   // Use the current paused frame as the thumbnail.
   setThumbBtn?.addEventListener('click', async () => {

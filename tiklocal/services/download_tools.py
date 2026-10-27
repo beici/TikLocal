@@ -204,6 +204,12 @@ def probe_binary(command: str) -> tuple[str | None, str]:
             return display, (lines[0] if lines else "")
         except Exception:
             continue
+    # A configured path that does not exist used to be reported as "available" with
+    # an "unknown" version, so the settings page said "ready" until the first job
+    # died with WinError 2.
+    candidate = Path(prefix[0])
+    if candidate.is_absolute() and not candidate.exists():
+        return None, ""
     return display, ""
 
 

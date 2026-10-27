@@ -10,13 +10,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import threading
 from pathlib import Path
 from urllib.parse import urlparse
 
 from tiklocal.paths import get_download_urls_config_path, get_download_urls_path
-from tiklocal.services.json_storage import write_json_atomic
+from tiklocal.services.json_storage import StoreUnreadableError, write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +23,7 @@ logger = logging.getLogger(__name__)
 #: Without this the read-modify-write below silently drops rows, and both writers
 #: fight over one fixed ``.tmp`` name (WinError 32 -> HTTP 500).
 _LIST_LOCK = threading.RLock()
+_TEMP_COUNTER = 0
 
 STORE_FILENAME = 'download-urls.txt'
 CONFIG_FILENAME = 'download-urls.json'
@@ -102,8 +102,12 @@ class UrlListStore:
     def lines(self) -> list[str]:
         try:
             text = self.store_path.read_text(encoding='utf-8')
-        except (FileNotFoundError, OSError):
+        except FileNotFoundError:
             return []
+        except OSError as error:
+            # Returning [] here would let the next save publish an empty list over
+            # a queue that is merely unreadable (ACL deny, EFS, AV lock).
+            raise StoreUnreadableError(f'{self.store_path.name} exists but cannot be read.') from error
         return parse_text(text)
 
     def _write(self, lines: list[str], *, backup: bool = False) -> list[str]:
@@ -119,17 +123,17 @@ class UrlListStore:
                 pass
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
         # A fixed ``.tmp`` name lets concurrent writers replace each other's
-        # half-written file: use a unique name per write.
-        handle, tmp_name = tempfile.mkstemp(
-            prefix=self.store_path.name + '.', suffix='.tmp', dir=str(self.store_path.parent),
-        )
+        # half-written file: use a unique name per write. `tempfile` is avoided
+        # because a write-denied directory makes it spin through TMP_MAX names.
+        global _TEMP_COUNTER
+        _TEMP_COUNTER += 1
+        tmp_name = self.store_path.with_name(f'{self.store_path.name}.{os.getpid()}.{_TEMP_COUNTER}.tmp')
         try:
-            with os.fdopen(handle, 'w', encoding='utf-8', newline='\n') as stream:
-                stream.write(format_text(cleaned))
+            tmp_name.write_text(format_text(cleaned), encoding='utf-8', newline='\n')
             os.replace(tmp_name, self.store_path)
         except BaseException:
             try:
-                os.unlink(tmp_name)
+                tmp_name.unlink()
             except OSError:
                 pass
             raise
