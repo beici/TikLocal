@@ -101,7 +101,11 @@ class UrlListStore:
     # -- storage ---------------------------------------------------------
     def lines(self) -> list[str]:
         try:
-            text = self.store_path.read_text(encoding='utf-8')
+            # errors='replace': Notepad on a Chinese Windows saves this file as GBK,
+            # and a strict decode raised UnicodeDecodeError (a ValueError the callers
+            # below do not catch) so the whole download page answered 500. pull()
+            # already tolerated bad bytes; the local read did not.
+            text = self.store_path.read_text(encoding='utf-8', errors='replace')
         except FileNotFoundError:
             return []
         except OSError as error:

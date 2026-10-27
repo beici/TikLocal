@@ -1,6 +1,8 @@
 import hashlib
 import json
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -113,10 +115,73 @@ def test_oversized_images_are_reduced_instead_of_rendering_invisible(tmp_path, m
     previous_limit = Image.MAX_IMAGE_PIXELS
 
     assert thumbnail_module.ThumbnailService._generate_image(source, output) is True
+    # The ceiling is widened only for the header parse: every other Pillow user keeps
+    # Pillow's default, so absurd images are still refused there.
     assert Image.MAX_IMAGE_PIXELS == previous_limit
     with Image.open(output) as rendered:
         assert max(rendered.size) <= 640
         assert rendered.size[0] == rendered.size[1]
+
+
+def test_the_pixel_ceiling_is_widened_only_while_opening(tmp_path, monkeypatch):
+    # Save/raise/restore used to run unlocked, so one decode thread restored the default
+    # while another was still inside Image.open and a legal 182 MP PNG raised
+    # DecompressionBombError. The window is serialised now and scoped to the open.
+    from tiklocal.services import thumbnail as thumbnail_module
+
+    real_open = thumbnail_module.Image.open
+    observed: list[int | None] = []
+    concurrency = {'now': 0, 'max': 0}
+    gate = threading.Lock()
+
+    def recording_open(*args, **kwargs):
+        with gate:
+            concurrency['now'] += 1
+            concurrency['max'] = max(concurrency['max'], concurrency['now'])
+        try:
+            observed.append(thumbnail_module.Image.MAX_IMAGE_PIXELS)
+            time.sleep(0.05)  # keep the window open like a slow header parse
+            return real_open(*args, **kwargs)
+        finally:
+            with gate:
+                concurrency['now'] -= 1
+
+    default_limit = thumbnail_module.Image.MAX_IMAGE_PIXELS
+    monkeypatch.setattr(thumbnail_module.Image, 'open', recording_open)
+    sources = []
+    for index in range(4):
+        path = tmp_path / f'photo-{index}.png'
+        Image.new('RGB', (3000, 3000), 'teal').save(path)
+        sources.append(path)
+
+    outputs = [tmp_path / f'out-{index}.jpg' for index in range(4)]
+    threads = [
+        threading.Thread(target=thumbnail_module.ThumbnailService._generate_image, args=(path, output))
+        for path, output in zip(sources, outputs)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(60)
+
+    assert [output.exists() for output in outputs] == [True] * 4
+    assert observed == [thumbnail_module.MAX_DECODE_PIXELS] * 4
+    assert concurrency['max'] == 1
+    assert thumbnail_module.Image.MAX_IMAGE_PIXELS == default_limit
+
+
+def test_images_above_the_decode_ceiling_are_refused(tmp_path, monkeypatch):
+    # Past MAX_DECODE_PIXELS the thumbnailer must refuse before decoding, with a log
+    # line, instead of attempting a multi-gigabyte buffer.
+    from tiklocal.services import thumbnail as thumbnail_module
+
+    monkeypatch.setattr(thumbnail_module, 'MAX_DECODE_PIXELS', 100)
+    source = tmp_path / 'scan.png'
+    Image.new('RGB', (64, 64), 'navy').save(source)
+    output = tmp_path / 'out.jpg'
+
+    assert thumbnail_module.ThumbnailService._generate_image(source, output) is False
+    assert not output.exists()
 
 
 def test_successful_generation_clears_an_earlier_failure_marker(tmp_path, monkeypatch):

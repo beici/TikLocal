@@ -26,8 +26,18 @@ GENERATE_WAIT_SEC = 20
 
 #: PIL refuses anything above 2x its MAX_IMAGE_PIXELS (~89 MP by default) with
 #: DecompressionBombError. That made a valid 189 MP panorama render as an invisible
-#: 1x1 placeholder forever, so we raise the ceiling and bound the work ourselves.
+#: 1x1 placeholder forever, so the thumbnailer opens under a higher ceiling and bounds
+#: the work itself with ``MAX_DECODE_PIXELS``.
+#:
+#: That ceiling was saved/raised/restored per call, which raced with the other decode
+#: threads of the grid: a thread that restored the default while a second one was still
+#: inside ``Image.open`` turned a legal 182 MP PNG into a "bomb" (intermittent blank
+#: tiles). The save/raise/restore window is now serialised instead, and it is only the
+#: open: the expensive decode/encode stays fully parallel. The global value is left at
+#: Pillow's default for every other user (captions, embedded metadata, similarity), so
+#: they keep refusing absurd images rather than decoding them.
 MAX_DECODE_PIXELS = 200_000_000
+_PIXEL_LIMIT_LOCK = threading.Lock()
 
 #: Above this many pixels the decode is reduced by an integer factor before the
 #: LANCZOS pass. The final target is 640 px, so 48 MP of detail is already far more
@@ -54,6 +64,23 @@ HDR_TRANSFERS = frozenset({'smpte2084', 'arib-std-b67'})
 #: Filter support is probed once per process: a build without zscale/tonemap must
 #: not pay for a failed ffmpeg run on every HDR video.
 _FILTER_SUPPORT = {'tonemap': True}
+
+
+def _open_image_with_wide_ceiling(image_path: Path) -> Image.Image:
+    """Open ``image_path`` under ``MAX_DECODE_PIXELS`` and restore PIL's ceiling.
+
+    ``Image.open`` reads the header and runs Pillow's bomb check while the module-level
+    ceiling is raised; ``_PIXEL_LIMIT_LOCK`` keeps that window from overlapping another
+    thread's open (see the ``MAX_DECODE_PIXELS`` comment). Decoding happens later, after
+    the ceiling is back to normal and with the pixel count already validated.
+    """
+    with _PIXEL_LIMIT_LOCK:
+        previous_limit = Image.MAX_IMAGE_PIXELS
+        Image.MAX_IMAGE_PIXELS = MAX_DECODE_PIXELS
+        try:
+            return Image.open(image_path)
+        finally:
+            Image.MAX_IMAGE_PIXELS = previous_limit
 
 
 def _frame_luma(path: Path) -> float | None:
@@ -163,6 +190,11 @@ class ThumbnailService:
         else:
             return None
         if candidate == legacy:
+            if not self._claim_legacy_adoption():
+                # A different library already claimed the pre-root-key layout: this
+                # file is its picture, not ours (same relative path, same old mtime).
+                # Serve a freshly generated preview instead of adopting it.
+                return None
             # Adopt a pre-root-key cache file instead of leaving a duplicate that
             # would show up in the settings cache count and never be cleaned.
             try:
@@ -171,6 +203,28 @@ class ThumbnailService:
             except OSError:
                 return legacy
         return canonical
+
+    def _claim_legacy_adoption(self) -> bool:
+        """Adopt legacy (root-key-less) caches only for the first library that does.
+
+        ``_legacy_path_for_key`` hashes the bare relative path, so two libraries that
+        share ``~/.tiklocal`` (the user points MEDIA_ROOT at another folder) produce
+        the same file name; adopting it showed library A's photo for library B's file.
+        The first claim is recorded next to the cache, and any other root regenerates.
+        """
+        marker = self.thumb_dir / '.legacy-root'
+        try:
+            owner = marker.read_text(encoding='utf-8').strip()
+        except OSError:
+            owner = ''
+        if owner and owner != self._root_key:
+            return False
+        if not owner:
+            try:
+                marker.write_text(self._root_key, encoding='utf-8')
+            except OSError:
+                pass
+        return True
 
     def cached_thumbnail(self, uri: str) -> Path | None:
         """Reuse valid canonical caches and legacy caches belonging to the default source."""
@@ -372,7 +426,14 @@ class ThumbnailService:
                     path.unlink()
                     removed = True
                 except OSError:
-                    continue
+                    pass
+                # The failure marker outlived the preview: deleting a broken file and
+                # dropping a good one with the same name (copy2 keeps the old mtime)
+                # kept showing the placeholder for the whole TTL without one try.
+                try:
+                    path.with_name(path.name + '.fail').unlink(missing_ok=True)
+                except OSError:
+                    pass
         return removed
 
     def sample_video_frames(self, uri: str, directory: Path) -> list[Path]:
@@ -513,10 +574,18 @@ class ThumbnailService:
 
     @staticmethod
     def _generate_image(image_path: Path, output_path: Path) -> bool:
-        previous_limit = Image.MAX_IMAGE_PIXELS
         try:
-            Image.MAX_IMAGE_PIXELS = MAX_DECODE_PIXELS
-            with Image.open(image_path) as source:
+            with _open_image_with_wide_ceiling(image_path) as source:
+                pixels = source.size[0] * source.size[1]
+                if pixels > MAX_DECODE_PIXELS:
+                    # Our own ceiling on top of PIL's: refusing here keeps the decision
+                    # per-image and thread-safe, and a 500 MP scan costs nothing but one
+                    # log line instead of a 1.5 GB decode.
+                    logger.warning(
+                        'thumbnail skipped for %s: %d MP exceeds the %d MP decode limit',
+                        image_path.name, pixels // 1_000_000, MAX_DECODE_PIXELS // 1_000_000,
+                    )
+                    return False
                 # Palette images (PNG stickers, 2-frame GIFs) keep transparency in
                 # info['transparency'] instead of an alpha band, so getbands() alone
                 # missed them and convert('RGB') painted the transparent area black.
@@ -558,8 +627,6 @@ class ThumbnailService:
                 'thumbnail decode failed for %s: %s: %s', image_path.name, type(exc).__name__, exc,
             )
             return False
-        finally:
-            Image.MAX_IMAGE_PIXELS = previous_limit
 
 
 def radio_artwork_bytes(uri: str) -> bytes:

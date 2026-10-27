@@ -234,7 +234,14 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
 
         queued: list[dict] = []
         failed: list[dict] = []
-        for url in store.lines():
+        try:
+            stored_urls = store.lines()
+        except OSError as exc:
+            # The GET and export routes already answered 503 for an unreadable store;
+            # this one let the exception escape as a 500 traceback.
+            app.logger.warning('Could not read the download URL list', exc_info=exc)
+            return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
+        for url in stored_urls:
             # Same checks as a single-URL queue: the list endpoint must not be a
             # bypass for localhost/metadata targets or non-http schemes.
             validated, error = validate_download_url({

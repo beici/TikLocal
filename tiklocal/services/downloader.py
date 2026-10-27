@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from tiklocal.i18n import t
+from tiklocal.i18n import DEFAULT_LOCALE, current_locale, t, translate
 from tiklocal.paths import DOWNLOAD_TMP_DIR
 from tiklocal.services.library import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from tiklocal.services.json_storage import read_json_file, write_json_atomic
@@ -472,7 +472,10 @@ class DownloadManager:
                     job['cancel_requested'] = True
                     if job['status'] == 'queued':
                         job.update(status='canceled', finished_at=utc_now_iso(),
-                                   error_message='Canceled.', eta_sec=None)
+                                   error_message=translate(
+                                       str(job.get('locale') or DEFAULT_LOCALE),
+                                       'download.error.canceled'),
+                                   eta_sec=None)
             self._pending.clear()
             processes = list(self._processes.values())
             workers = list(self._workers.values())
@@ -608,6 +611,11 @@ class DownloadManager:
                 "retry_of": retry_of.strip(),
                 "output_token": output_token.strip() or now.replace(":", "").replace("-", "").replace("Z", ""),
                 "download_payload": dict(payload) if isinstance(payload, dict) else {},
+                # Worker threads have no request context, so ``t()`` would fall back to
+                # the default locale and an English UI would show Chinese errors. Record
+                # the enqueuing request's locale and translate the terminal messages
+                # with it instead.
+                "locale": current_locale(),
             }
             self._jobs[job_id] = job
             self._job_order.insert(0, job_id)
@@ -861,7 +869,12 @@ class DownloadManager:
                 status = str(item.get("status") or "failed")
                 if status in {"queued", "running"}:
                     status = "failed"
-                    item["error_message"] = "The job was interrupted by a service restart."
+                    # Persisted jobs from before the locale was recorded translate to
+                    # the default locale, which is what they saw before as well.
+                    item["error_message"] = translate(
+                        str(item.get("locale") or DEFAULT_LOCALE),
+                        'download.error.interrupted_restart',
+                    )
                     item["finished_at"] = now
                 raw_output_files = item.get("output_files_rel")
                 output_files_rel = raw_output_files if isinstance(raw_output_files, list) else []
@@ -1182,7 +1195,7 @@ class DownloadManager:
             downloaded: list[Path] = []
             for index, url in enumerate(downloads, start=1):
                 if cancel_event and cancel_event.is_set():
-                    return 1, "Canceled.", []
+                    return 1, translate(self._job_locale(job_id), 'download.error.canceled'), []
                 extension = guess_download_extension(url, str(naming.get("post_type") or "视频"))
                 filename = build_work_filename(naming, index, total, extension)
                 target = temp_dir / filename
@@ -1197,6 +1210,7 @@ class DownloadManager:
                     on_progress,
                     cancelled=(lambda: bool(cancel_event and cancel_event.is_set())),
                     deadline=deadline,
+                    locale=self._job_locale(job_id),
                 )
                 if error:
                     return 1, error, []
@@ -1217,6 +1231,7 @@ class DownloadManager:
         on_progress: Callable[[float], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
         deadline: float | None = None,
+        locale: str = DEFAULT_LOCALE,
     ) -> str | None:
         """Stream one media file to ``target``; return an error message or None."""
         # The URL comes from a sidecar response, so a rewritten payload must not turn
@@ -1250,7 +1265,7 @@ class DownloadManager:
                     # cancel. Check per chunk: it is a flag read, far cheaper than a read.
                     if cancelled and cancelled():
                         tmp_path.unlink(missing_ok=True)
-                        return "Canceled."
+                        return translate(locale, 'download.error.canceled')
                     if deadline is not None and time.monotonic() > deadline:
                         tmp_path.unlink(missing_ok=True)
                         return "Download exceeded the time limit."
@@ -1359,8 +1374,18 @@ class DownloadManager:
             # stdout pipe open, and waiting for EOF here held a worker slot for up to
             # the full job timeout, stalling the whole download queue.
             self._terminate_process(process)
-            error_message = error_message or "Canceled."
+            error_message = error_message or translate(
+                self._job_locale(job_id), 'download.error.canceled')
         return process.wait(), error_message
+
+    def _job_locale(self, job_id: str | None) -> str:
+        """Locale the job was queued in (worker threads have no request context).
+
+        Deliberately lock-free: it only reads an immutable string out of a dict the
+        caller may already hold ``self._lock`` for, and a stale read is harmless.
+        """
+        job = self._jobs.get(job_id or "")
+        return str((job or {}).get("locale") or DEFAULT_LOCALE)
 
     def _update_progress(self, job_id: str, progress: dict[str, Any]) -> None:
         now = time.monotonic()
@@ -1389,7 +1414,8 @@ class DownloadManager:
     def _mark_canceled_locked(self, job: dict[str, Any]) -> None:
         job["status"] = "canceled"
         job["finished_at"] = utc_now_iso()
-        job["error_message"] = "Canceled."
+        job["error_message"] = translate(
+            str(job.get("locale") or DEFAULT_LOCALE), 'download.error.canceled')
         job["eta_sec"] = None
         self._persist_locked()
 

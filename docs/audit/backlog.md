@@ -115,8 +115,15 @@
 
 | 问题 | 位置 | 为什么暂不修 |
 |------|------|--------------|
-| [P1] 首次索引 19,222 文件 8.19 s，EXIF 同步读取占 6.25 s（76%），无 EXIF 时 1.94 s；暖索引 1.55 s | `tiklocal/services/library_index.py::_extract_time_metadata_batch` | 修法为「扫描先写 `time_metadata_version=0` + mtime 兜底，后台探测线程回填 `captured_at`」，会改变首屏时间线排序语义（探测完成前按 mtime 排），需单列一轮设计与压测 |
+| [P2] 首次索引 EXIF 8.19 s（19,222 文件，占冷索引 76%） | `tiklocal/services/library_index.py::_extract_time_metadata_batch`、`_record_for_path` | 第 20 轮已把逐文件 EXIF 读取改为 8 线程池（`CAPTURE_WORKERS` + `_records_for_paths`），但仍同步阻塞 `_sync_locked`；剩下的结构性修法是「扫描先写 `time_metadata_version=0` + mtime 兜底，后台探测线程回填 `captured_at`」，会改变首屏时间线排序语义（探测完成前按 mtime 排），需单列一轮设计与压测 |
 | [P2] 视频封面每张 1.36 s：先起一次 ffmpeg 读 Duration，再起一次抽帧 | `tiklocal/services/thumbnail.py::_probe_duration` / `_extract_frame` | 需要把时长持久化进 `media_items.duration` 并由扫描写入，否则只能固定时间点抽帧、牺牲封面质量 |
 | [P2] 空态「添加媒体来源」CTA 跳到 `/settings/`，但设置页没有来源管理入口，用户无路可走 | `tiklocal/static/home_page_controller.js`、`templates/settings.html` | 来源由 CLI `--source` / `config.yaml` 决定，网页只能做只读列表 + 指引，属新功能（需先定「网页能否改来源」的产品语义） |
+
+## 第 20 轮新增（按严重度）
+
+本轮 10 条发现全部修复，未新增 backlog 条目。两项说明：
+
+- 第 19 轮 P1（首次索引 EXIF）已在第 20 轮并行化，条目见上，仍保留结构化修法。
+- `data-layer` 域（跨标签广播、下载 URL 幂等、数据层并发）本轮 subagent 中途失败、未交付报告，该域结论停留在第 16 轮的 backlog 条目，未被本轮重新验证。
 
 

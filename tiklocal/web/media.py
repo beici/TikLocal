@@ -364,12 +364,22 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             return send_file(target, conditional=False)
         start, end = span
         length = end - start + 1
-        reader = _BoundedReader(open(target, 'rb'), start, length)
         wrapper = request.environ.get('wsgi.file_wrapper')
-        # ``wsgi.file_wrapper`` is what makes waitress move the bytes off-thread; the
-        # reader must be bounded in both branches, a bare file object is read to EOF
-        # by whoever consumes the response (that shipped the whole file as a 206).
-        body = wrapper(reader, 64 * 1024) if wrapper is not None else _iter_reader(reader)
+        if wrapper is not None:
+            # waitress only moves a body off the worker thread when the app_iter
+            # answers ``prepare(cl)`` with a positive size, which requires a seekable
+            # file object. ``_BoundedReader`` is not seekable, so wrapping it silently
+            # fell back to copying every 206 in the request thread — exactly the
+            # "paused video pins a worker" bug this branch was written to fix. Handing
+            # the real handle positioned at ``start`` keeps the fast path; the bounded
+            # ``Content-Length`` below stops it at ``end``.
+            handle = open(target, 'rb')
+            handle.seek(start)
+            body = wrapper(handle, 64 * 1024)
+        else:
+            # No file wrapper (test client, other WSGI servers): read exactly the
+            # requested window, a bare file object would stream to EOF.
+            body = _iter_reader(_BoundedReader(open(target, 'rb'), start, length))
         response = Response(body, status=206, direct_passthrough=True)
         response.headers['Content-Range'] = f'bytes {start}-{end}/{size}'
         response.headers['Content-Length'] = str(length)

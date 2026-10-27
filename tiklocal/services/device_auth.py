@@ -11,6 +11,10 @@ from pathlib import Path
 
 DEVICE_AUTH_FILE_VERSION = 1
 TOKEN_PREFIX = "tlr_"
+#: A paired phone that is lost or whose QR screenshot leaks must stop working on
+#: its own; until this existed the only way out was a manual revoke or a password
+#: change, and the entries stayed in the file forever.
+DEVICE_TOKEN_TTL_DAYS = 180
 
 
 @dataclass(frozen=True)
@@ -32,15 +36,18 @@ class DeviceAuthStore:
             name = str(device_name or "").strip()[:48] or "TikLocal Radio"
             device_id = secrets.token_hex(8)
             token = TOKEN_PREFIX + secrets.token_urlsafe(32)
-            devices = self._load()
+            now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+            # Drop expired rows while issuing: otherwise a stale token is only
+            # filtered at verify time and the file (read on every request) grows
+            # without bound across re-pairs and password changes.
+            devices = [device for device in self._load() if not self._is_expired(device)]
             devices.append({
                 "id": device_id,
                 "name": name,
                 "token_hash": self._token_hash(token),
                 "auth_revision": int(auth_revision),
-                "created_at": datetime.datetime.now(datetime.timezone.utc)
-                .replace(microsecond=0)
-                .isoformat(),
+                "created_at": now.isoformat(),
+                "expires_at": (now + datetime.timedelta(days=DEVICE_TOKEN_TTL_DAYS)).isoformat(),
             })
             self._save(devices)
         return DeviceCredential(device_id=device_id, device_name=name, token=token)
@@ -53,6 +60,7 @@ class DeviceAuthStore:
         with self._lock:
             return any(
                 int(device.get("auth_revision") or 0) == int(auth_revision)
+                and not self._is_expired(device)
                 and hmac.compare_digest(str(device.get("token_hash") or ""), candidate_hash)
                 for device in self._load()
             )
@@ -65,7 +73,10 @@ class DeviceAuthStore:
                 "id": str(device.get("id") or ""),
                 "name": str(device.get("name") or "TikLocal Radio"),
                 "created_at": str(device.get("created_at") or ""),
-                "active": int(device.get("auth_revision") or 0) == int(auth_revision),
+                "expires_at": str(device.get("expires_at") or ""),
+                "expired": self._is_expired(device),
+                "active": int(device.get("auth_revision") or 0) == int(auth_revision)
+                and not self._is_expired(device),
             }
             for device in devices
             if device.get("id")
@@ -96,6 +107,27 @@ class DeviceAuthStore:
                 ):
                     return self.revoke(str(device.get("id") or ""))
         return False
+
+    @staticmethod
+    def _is_expired(device: dict, *, now: datetime.datetime | None = None) -> bool:
+        """Rows written before ``expires_at`` existed fall back to their age."""
+        current = now or datetime.datetime.now(datetime.timezone.utc)
+        raw = str(device.get("expires_at") or "").strip()
+        if raw:
+            try:
+                return datetime.datetime.fromisoformat(raw) <= current
+            except ValueError:
+                return False
+        created = str(device.get("created_at") or "").strip()
+        if not created:
+            return False
+        try:
+            issued = datetime.datetime.fromisoformat(created)
+        except ValueError:
+            return False
+        if issued.tzinfo is None:
+            issued = issued.replace(tzinfo=datetime.timezone.utc)
+        return issued + datetime.timedelta(days=DEVICE_TOKEN_TTL_DAYS) <= current
 
     def _load(self) -> list[dict]:
         if not self.path.exists():

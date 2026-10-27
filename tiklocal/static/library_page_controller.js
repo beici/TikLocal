@@ -936,7 +936,11 @@
   document.addEventListener('keydown', (event) => {
     // 「加入合集」等弹层里的输入框是 Quick Viewer 的兄弟节点，不挡住会把空格和方向键
     // 透给下面的查看器：空格被吞、方向键换掉底层媒体，最后写进合集的是另一张图。
-    if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]')) {
+    // 按钮/链接/角色按钮同样要放行：查看器里的关闭、倍速、收藏按钮靠 Space 激活，
+    // 第 12 轮在 radio/detail 修过同一个漏网点，这里当时漏了。
+    if (event.target instanceof Element && event.target.closest(
+      'input, textarea, select, [contenteditable="true"], button, a[href], summary, [role="button"]'
+    )) {
       return;
     }
     if (event.key === 'Escape' && organizeSheet?.classList.contains('active')) {
@@ -1087,17 +1091,33 @@
     if (!organizeSheet) return;
     organizeSheet.classList.remove('active');
     organizeSheet.setAttribute('aria-hidden', 'true');
+    // aria-modal opened without moving focus in, so closing must not leave the
+    // keyboard nowhere: hand it back to whichever button opened the sheet.
+    const opener = organizeSheetOpener;
+    organizeSheetOpener = null;
+    if (opener && document.contains(opener)) {
+      try { opener.focus(); } catch (error) { /* trigger went away */ }
+    }
   }
+
+  let organizeSheetOpener = null;
 
   async function openOrganizeSheet(mode) {
     if (!organizeSheet || !selectedNames.size || organizeBusy) return;
     organizeSheetMode = mode === 'move' ? 'move' : 'add';
+    organizeSheetOpener = document.activeElement;
     const title = document.getElementById('organize-sheet-title');
     if (title) title.textContent = organizeSheetMode === 'move' ? T('library.organize.move') : T('library.organize.add');
     const listEl = document.getElementById('organize-sheet-list');
     if (listEl) listEl.innerHTML = `<div class="organize-sheet-empty">${T('common.loading')}</div>`;
     organizeSheet.classList.add('active');
     organizeSheet.setAttribute('aria-hidden', 'false');
+    const closeBtn = document.getElementById('organize-sheet-close');
+    if (closeBtn) {
+      // Focus the sheet's own control first: the row list is still loading and a
+      // screen reader must hear the dialog it just opened.
+      try { closeBtn.focus(); } catch (error) { /* hidden sheet */ }
+    }
     try {
       const data = await window.TikLocalCollections.request('/api/collections');
       const rows = (data?.items || []).filter((item) => organizeSheetMode === 'add' || String(item.id) !== activeCollectionId);

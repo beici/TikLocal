@@ -1,9 +1,11 @@
 import datetime
 import logging
+import os
 import re
 import random
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PIL import Image
@@ -870,10 +872,7 @@ class LibraryIndexer:
         for source in self.library.sources:
             skipped: list[str] = []
             try:
-                records = [
-                    record for path in self.library.scan_source(source, skipped=skipped)
-                    if (record := self._record_for_path(path, time_states))
-                ]
+                records = self._records_for_paths(self.library.scan_source(source, skipped=skipped), time_states)
                 records = self._apply_douyin_pairing(records)
             except OSError as error:
                 failures[source.id] = str(error)
@@ -1000,6 +999,19 @@ class LibraryIndexer:
 
             output.extend(plain)
         return output
+
+    #: EXIF reads dominate a cold index (6.25 s of 8.19 s for 19k images) and each
+    #: file is independent, so they run on a small pool instead of the scan thread.
+    #: Bounded at 8 so a network share is not flooded with parallel opens.
+    CAPTURE_WORKERS = min(8, os.cpu_count() or 4)
+
+    def _records_for_paths(self, paths, time_states: dict[str, dict] | None) -> list[dict]:
+        records: list[dict] = []
+        with ThreadPoolExecutor(max_workers=self.CAPTURE_WORKERS) as pool:
+            for record in pool.map(lambda path: self._record_for_path(path, time_states), paths):
+                if record:
+                    records.append(record)
+        return records
 
     def _record_for_path(self, path: Path, time_states: dict[str, dict] | None = None) -> dict | None:
         try:

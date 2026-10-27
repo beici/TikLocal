@@ -56,6 +56,7 @@
     var catalog = [];
     var selectedIds = new Set();
     var openedAt = 0;
+    var lastFocused = null;
 
     function showNames(names) {
       var count = names.length;
@@ -113,6 +114,12 @@
       modal.setAttribute('aria-hidden', 'true');
       createBtn.disabled = false;
       openedAt = 0;
+      // Return focus the way the dialog took it: the trigger is otherwise lost to a
+      // keyboard user, whose next Tab would start again from the top of the page.
+      if (lastFocused && document.contains(lastFocused)) {
+        try { lastFocused.focus(); } catch (error) { /* element went away */ }
+      }
+      lastFocused = null;
     }
 
     function showMessage(text) {
@@ -142,8 +149,14 @@
       var uri = currentUri();
       if (!uri) return;
       openedAt = Date.now();
+      // The sheet is aria-modal; focus has to move into it or a screen-reader user
+      // never learns it opened and keyboard focus stays behind the backdrop.
+      lastFocused = document.activeElement;
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
+      if (nameInput) {
+        try { nameInput.focus(); } catch (error) { /* hidden card */ }
+      }
       showMessage(T('flow.collection.loading'));
       try {
         var results = await Promise.all([request('/api/collections'), membership(uri, true)]);

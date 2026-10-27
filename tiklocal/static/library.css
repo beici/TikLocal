@@ -766,11 +766,15 @@ body:not([data-nav-context="favorite"]) {
   padding: 16px;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.22s;
+  /* Without visibility the card stayed in the tab order while invisible: Tab walked
+     into a focusable close button and text field inside an aria-hidden subtree. */
+  visibility: hidden;
+  transition: opacity 0.22s, visibility 0.22s;
 }
 .quick-collection-modal.active {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
 }
 .quick-collection-card {
   width: min(440px, 100%);
