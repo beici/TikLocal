@@ -1,6 +1,8 @@
+import contextlib
 import datetime
 import json
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable
@@ -358,7 +360,26 @@ class AppDatabase:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def connect(self) -> sqlite3.Connection:
+    @contextlib.contextmanager
+    def connect(self):
+        """Yield a connection that is closed when the block ends.
+
+        sqlite3.Connection's own context manager only commits or rolls back; it never
+        closes. Every call therefore leaked a handle until garbage collection, which
+        kept the WAL files locked and made it impossible to move a damaged database
+        file aside while the app was starting.
+        """
+        conn = self._open_connection()
+        try:
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _open_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
@@ -432,6 +453,19 @@ class MediaActivityStore:
         self.database = database
 
     def record_many(self, events: list[dict]) -> int:
+        # A full index sync plus several pages reporting playback at once could make
+        # SQLite answer "database is locked"; the batch then surfaced as a 500 and its
+        # complete/skip signals (which move recommendation weights) were lost.
+        for attempt in range(3):
+            try:
+                return self._record_many_once(events)
+            except sqlite3.OperationalError as error:
+                if 'locked' not in str(error).lower() or attempt == 2:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+        return 0
+
+    def _record_many_once(self, events: list[dict]) -> int:
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         accepted = 0
         with self.database.connect() as conn:

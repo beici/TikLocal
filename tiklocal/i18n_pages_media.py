@@ -59,6 +59,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'detail.error.thumbnail_generate': '生成失败',
         'detail.error.invalid_time': '时间点无效，请重新选择',
         'detail.error.trash_purge_failed': '文件正在使用中，无法彻底删除，请关闭后重试',
+        'detail.error.play_unsupported': '浏览器无法播放该格式，可尝试转码为 MP4',
+        'detail.error.play_failed': '视频播放失败，文件可能已损坏',
 
         'image.previous': '上一张',
         'image.next': '下一张',
@@ -304,6 +306,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'detail.error.thumbnail_generate': 'Failed to generate',
         'detail.error.invalid_time': 'That timestamp is not valid; pick another point.',
         'detail.error.trash_purge_failed': 'The file is in use and could not be purged; close it and try again.',
+        'detail.error.play_unsupported': 'This browser cannot play that format; try converting it to MP4.',
+        'detail.error.play_failed': 'The video failed to play; the file may be damaged.',
 
         'image.previous': 'Previous image',
         'image.next': 'Next image',

@@ -2,7 +2,7 @@ import json
 import re
 import subprocess as sp
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from tiklocal.services.download_tools import resolve_tool
 from tiklocal.services.thumbnail import ffmpeg_argv, ffprobe_argv
@@ -25,7 +25,12 @@ def probe_media_dims(library_service, name: str, media_type: str) -> tuple[int |
     if media_type == 'image':
         try:
             with Image.open(target) as img:
-                width, height = img.size
+                # Phone cameras store the sensor's landscape frame plus an EXIF
+                # orientation flag, so the raw size is the picture rotated by 90°.
+                # The waterfall builds its tiles from this pair, and the thumbnail
+                # is generated already transposed, so an unrotated pair stretches
+                # every portrait shot.
+                width, height = ImageOps.exif_transpose(img).size
             if int(width) > 0 and int(height) > 0:
                 return int(width), int(height)
         except Exception:

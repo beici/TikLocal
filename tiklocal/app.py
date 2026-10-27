@@ -1,6 +1,10 @@
 import os
 import datetime
+import gc
+import logging
+import sqlite3
 import socket
+import time
 from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
 
@@ -89,6 +93,79 @@ def get_app_version():
 
 
 app_version = get_app_version()
+
+_logger = logging.getLogger(__name__)
+
+_DAMAGED_DATABASE_MARKERS = (
+    'malformed',
+    'not a database',
+    'file is encrypted',
+    'corrupt',
+)
+
+
+def _is_damaged_database(error: sqlite3.DatabaseError) -> bool:
+    message = str(error).lower()
+    return any(marker in message for marker in _DAMAGED_DATABASE_MARKERS)
+
+
+def _quarantine_database(db_path: Path) -> Path | None:
+    """Move a damaged SQLite file aside so a fresh one can be created."""
+    suffix = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    backup = db_path.with_name(f'{db_path.name}.{suffix}.corrupt')
+    for attempt in range(3):
+        try:
+            db_path.replace(backup)
+            break
+        except OSError as error:
+            # Windows keeps the file locked until the last handle is closed; the
+            # failing sqlite connection is usually released by the next GC pass.
+            if attempt == 2:
+                _logger.error('Unable to quarantine damaged database %s: %s', db_path, error)
+                return None
+            gc.collect()
+            time.sleep(0.05)
+    for extra in ('-wal', '-shm'):
+        sidecar = db_path.with_name(db_path.name + extra)
+        try:
+            sidecar.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return backup
+
+
+def _open_database(db_path: Path) -> AppDatabase:
+    """Open and migrate the SQLite store, rebuilding it when the file is damaged.
+
+    A half-written file after a power cut (or a cloud client / antivirus rewriting
+    it) used to abort start-up with a raw sqlite traceback, leaving the whole app
+    unusable with no hint about what to delete. The media index is rebuildable, so
+    the damaged file is kept next to the new one instead of blocking boot.
+    """
+    database = AppDatabase(db_path)
+    try:
+        database.migrate()
+        return database
+    except sqlite3.DatabaseError as error:
+        if not _is_damaged_database(error):
+            raise
+        message = str(error)
+        # The traceback keeps the failing frame (and its sqlite handle) alive, which
+        # blocks the rename on Windows; drop it before moving the file.
+        error.__traceback__ = None
+        del error
+        gc.collect()
+        backup = _quarantine_database(db_path)
+        if backup is None:
+            raise sqlite3.DatabaseError(message)
+        _logger.warning(
+            'Database file was damaged (%s); moved it to %s and started with an empty index.',
+            message,
+            backup,
+        )
+        fresh = AppDatabase(db_path)
+        fresh.migrate()
+        return fresh
 
 
 def create_app(test_config=None):
@@ -228,8 +305,11 @@ def create_app(test_config=None):
     metadata_store = ImageMetadataStore(get_metadata_path())
     caption_settings = CaptionSettings(app.config.get('VISION_CONFIG'), get_prompt_config_path(), get_llm_config_path())
     register_caption_routes(app, library_service, metadata_store, caption_settings)
-    app_database = app.config.get('APP_DATABASE') or AppDatabase(get_database_path())
-    app_database.migrate()
+    app_database = app.config.get('APP_DATABASE')
+    if app_database is None:
+        app_database = _open_database(get_database_path())
+    else:
+        app_database.migrate()
     media_index = MediaIndexStore(app_database)
     library_indexer = LibraryIndexer(library_service, media_index)
     index_sync_result = library_indexer.sync()
@@ -324,6 +404,7 @@ def create_app(test_config=None):
     register_media_routes(
         app, library_service, media_index, thumbnail_service, download_manager,
         trash_service, library_indexer, activity_store,
+        favorite_service=favorite_service, collection_store=collection_store,
     )
     register_settings_routes(app, media_index, favorite_service, thumbnail_service, app_version)
 

@@ -484,9 +484,21 @@ def test_cli_owns_download_lifecycle_and_skips_reloader_parent(client, monkeypat
             manager.enqueue('https://example.com/video')
         raise RuntimeError('test server stopped')
 
+    class FakeWaitressServer:
+        def __init__(self, app, **kwargs):
+            self.app = app
+
+        def run(self):
+            server(self.app)
+
     monkeypatch.setenv('FLASK_AUTH_COOKIE_SECURE', 'true')
     monkeypatch.setattr('tiklocal.run.load_config', lambda: {})
-    monkeypatch.setattr('tiklocal.run.serve', server)
+    # The CLI binds waitress explicitly (so a busy port fails before the banner),
+    # which is why the stub is a server factory instead of the old serve() call.
+    monkeypatch.setattr(
+        'tiklocal.run.create_waitress_server',
+        lambda app, **kwargs: FakeWaitressServer(app, **kwargs),
+    )
     monkeypatch.setattr('flask.Flask.run', server)
     monkeypatch.setenv('WERKZEUG_RUN_MAIN', 'true' if child else 'false')
     monkeypatch.setenv('TIKLOCAL_AUTH_PASSWORD', 'test-only-password')

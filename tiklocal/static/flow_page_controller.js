@@ -107,7 +107,11 @@
         const entries = Array.isArray(item.items) ? item.items : [];
         const index = Math.max(0, Math.min(Number(item.activeChildIndex) || 0, entries.length - 1));
         const entry = entries[index];
-        return entry?.name ? { uri: entry.name, type: 'image', el: item.el } : null;
+        if (!entry?.name) return null;
+        // A live-photo album can hold a video cover, so report the child's own
+        // type: the impression penalty is keyed by media_type, and marking a
+        // video as an image leaves it unpenalised for the next page.
+        return { uri: entry.name, type: entry.type === 'video' ? 'video' : 'image', el: item.el };
       }
       if (!['video', 'image'].includes(item.type) || !item.name) return null;
       return { uri: item.name, type: item.type, el: item.el };

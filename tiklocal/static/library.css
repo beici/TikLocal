@@ -292,6 +292,10 @@ body:not([data-nav-context="favorite"]) {
   width: 100%;
   height: auto;
   display: block;
+  /* Tiles size themselves from the indexed width/height pair. Rows indexed
+     before EXIF-aware probing still carry the unrotated pair, so crop instead
+     of letting the browser squash a portrait shot into a landscape box. */
+  object-fit: cover;
 }
 .media-tile video {
   width: 100%;

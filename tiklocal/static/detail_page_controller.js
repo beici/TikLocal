@@ -217,6 +217,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   TikLocalResume.track(mainVideo, fileName, detailBoot.resumePosition || 0);
 
+  // The library indexes .mkv/.avi too, and a truncated file plays as a black
+  // box with no explanation. Say what happened instead of leaving the poster up.
+  mainVideo?.addEventListener('error', () => {
+    const code = mainVideo.error?.code;
+    const message = code === 4
+      ? T('detail.error.play_unsupported')
+      : T('detail.error.play_failed');
+    TikLocalUI.toast(message, 'error');
+  });
+
   // Initialize.
   initFavoriteStatus();
 

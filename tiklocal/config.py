@@ -34,8 +34,18 @@ def normalize_media_sources(config, cli_sources=None, media_root=None):
             else:
                 positions[item['id']] = len(sources)
                 sources.append(item)
-    if media_root and all(item.get('id') != 'default' for item in sources):
-        sources.insert(0, {'id': 'default', 'name': 'Default', 'path': str(media_root)})
+    if media_root:
+        # An explicit directory (CLI argument or MEDIA_ROOT) must win over a
+        # 'default' source declared in config.yaml. Skipping the insert when such a
+        # source existed meant `tiklocal /new/library` silently served the configured
+        # library instead, so deletions and downloads landed in the wrong place.
+        explicit = str(media_root)
+        for index, item in enumerate(sources):
+            if item.get('id') == 'default':
+                sources[index] = {**item, 'path': explicit}
+                break
+        else:
+            sources.insert(0, {'id': 'default', 'name': 'Default', 'path': explicit})
     return sources
 
 

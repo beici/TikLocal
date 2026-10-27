@@ -4,7 +4,7 @@ import signal
 import argparse
 import getpass
 from pathlib import Path
-from waitress import serve
+from waitress.server import create_server as create_waitress_server
 from tiklocal.app import create_app
 from tiklocal.thumbs import generate_thumbnails
 from tiklocal.paths import get_data_dir
@@ -62,6 +62,38 @@ def resolve_data_dir(parser):
         parser.error(f"Cannot create the data directory: {exc}")
 
 
+def validate_config_types(config):
+    """Reject configuration values of the wrong type instead of failing later.
+
+    `media_root: 123` used to raise "TypeError: expected str, bytes or os.PathLike
+    object" from deep inside Path(), and `port: true` silently became port 1 because
+    int(True) == 1 passes the range check.
+    """
+    if not isinstance(config, dict):
+        return
+    expectations = {
+        'media_root': (str, 'a path'),
+        'host': (str, 'a host name'),
+        'name': (str, 'a name'),
+        'download_source': (str, 'a source id'),
+    }
+    for key, (expected, description) in expectations.items():
+        value = config.get(key)
+        if value is not None and not isinstance(value, expected):
+            print(
+                f"Error: config.yaml option '{key}' must be {description}, got {type(value).__name__}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+    port = config.get('port')
+    if port is not None and (not isinstance(port, int) or isinstance(port, bool)):
+        print(
+            f"Error: config.yaml option 'port' must be an integer, got {type(port).__name__}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
 def parse_cli_media_source(value):
     text = str(value or '').strip()
     if '=' not in text:
@@ -86,6 +118,7 @@ def main():
                 pass
     # Read the configuration file.
     config = load_config()
+    validate_config_types(config)
 
     # Normalize argv to support the following forms.
     # 1) tiklocal                      -> serve
@@ -174,11 +207,16 @@ Examples:
     # Treat a missing subcommand as serve.
     cmd = args.command or 'serve'
 
+    # Validate the data directory for every subcommand: `auth` calls get_auth_path()
+    # directly, so TIKLOCAL_INSTANCE pointing at a file used to raise a raw
+    # FileExistsError from paths.py while serve/thumbs printed a readable error.
+    resolve_data_dir(parser)
+
     if cmd == 'thumbs':
         media_root = args.media_root or os.environ.get('MEDIA_ROOT') or config.get('media_root')
         if not media_root:
             parser.error('Specify a media directory:\n  - tiklocal thumbs /path/to/media\n  - or set MEDIA_ROOT=/path/to/media')
-        media_path = Path(media_root)
+        media_path = Path(media_root).expanduser()
         if not media_path.exists() or not media_path.is_dir():
             print(f"Error: Media directory is unavailable: {media_root}", file=sys.stderr)
             sys.exit(1)
@@ -194,7 +232,7 @@ Examples:
         if not media_root:
             parser.error('Specify a media directory:\n  - tiklocal dedupe /path/to/media\n  - or set MEDIA_ROOT=/path/to/media')
 
-        media_path = Path(media_root)
+        media_path = Path(media_root).expanduser()
         if not media_path.exists() or not media_path.is_dir():
             print(f"Error: Media directory is unavailable: {media_root}", file=sys.stderr)
             sys.exit(1)
@@ -329,7 +367,19 @@ Examples:
         print(f"Media directory: {media_path.absolute()}")
     print(f"Data directory: {resolve_data_dir(parser)}")
     display_host = f'[{host}]' if ':' in host and not host.startswith('[') else host
-    print(f"Open: http://{display_host}:{port}")
+
+    def print_banner():
+        print(f"Open: http://{display_host}:{port}")
+        print("Access authentication: enabled")
+        if bootstrap and bootstrap.generated_password:
+            # Plain ASCII: a redirected stdout uses the locale encoding (cp1252 has no
+            # box-drawing characters), and an UnicodeEncodeError here would abort the
+            # first start right after the password was generated but before it printed.
+            print("+--------------------------------------------+")
+            print("| Initial access password                    |")
+            print(f"| {bootstrap.generated_password:<42} |")
+            print("| Save it; change it with tiklocal auth set-password |")
+            print("+--------------------------------------------+")
 
     try:
         app = create_app({
@@ -345,16 +395,6 @@ Examples:
     except ValueError as exc:
         parser.error(str(exc))
     bootstrap = app.extensions.get('auth_bootstrap')
-    print("Access authentication: enabled")
-    if bootstrap and bootstrap.generated_password:
-        # Plain ASCII: a redirected stdout uses the locale encoding (cp1252 has no
-        # box-drawing characters), and an UnicodeEncodeError here would abort the
-        # first start right after the password was generated but before it printed.
-        print("+--------------------------------------------+")
-        print("| Initial access password                    |")
-        print(f"| {bootstrap.generated_password:<42} |")
-        print("| Save it; change it with tiklocal auth set-password |")
-        print("+--------------------------------------------+")
     download_manager = app.extensions['download_manager']
     previous_sigterm = signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
@@ -362,11 +402,23 @@ Examples:
             download_manager.start()
         if getattr(args, 'dev', False):
             # Development mode uses Flask's built-in server.
+            print_banner()
             print("⚠️  Development mode is enabled; do not use it in production")
             app.run(host=host, port=port, debug=True, use_reloader=True)
         else:
-            # Production mode uses Waitress. Cold thumbnails run ffmpeg, so allow a few more workers than the default 4.
-            serve(app, host=host, port=port, threads=8)
+            # Production mode uses Waitress. Bind before printing the banner: a port
+            # clash used to print the URL and the freshly generated password first and
+            # then die inside waitress with a bare "PermissionError: WinError 10013",
+            # which reads like a firewall problem instead of "the port is taken".
+            try:
+                # Cold thumbnails run ffmpeg, so allow a few more workers than the default 4.
+                server = create_waitress_server(app, host=host, port=port, threads=8)
+            except OSError as exc:
+                print(f"Error: cannot listen on {display_host}:{port} ({exc})", file=sys.stderr)
+                print("Another process may already use this port; retry with --port <free port>.", file=sys.stderr)
+                sys.exit(1)
+            print_banner()
+            server.run()
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
         try:

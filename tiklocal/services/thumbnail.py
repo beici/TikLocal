@@ -343,7 +343,11 @@ class ThumbnailService:
                 '-ss', str(max(0.0, float(t))),
                 '-i', str(video_path),
                 '-frames:v', '1',
-                '-vf', 'scale=-1:360:force_original_aspect_ratio=decrease',
+                # Cap the height at 640 instead of pinning it: a fixed 360 left
+                # portrait clips at 203x360, and that poster is stretched across a
+                # full-screen card, so it looked blurred. min() keeps small videos
+                # from being upscaled, and -2 keeps the width even for yuv420p.
+                '-vf', "scale=-2:'min(ih,640)'",
                 '-q:v', '3',
                 str(output_path)
             ]

@@ -18,7 +18,7 @@ from tiklocal.web.media_payloads import media_urls
 
 
 def register_media_routes(app, library_service, media_index, thumbnail_service, download_manager, trash_service, library_indexer,
-                          activity_store):
+                          activity_store, favorite_service=None, collection_store=None):
     def neighbors(media_type, name):
         """Previous and next items in library order (newest first)."""
         names = [str(record['name']) for record in media_index.records(media_type=media_type)]
@@ -122,6 +122,17 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             # The trashed file is already gone; the derived cleanup is best effort and
             # must not turn a successful purge into an error response.
             pass
+        # Saved lists are keyed by URI, so a leftover row silently re-attaches to the
+        # next file that lands on the same name. Purge is the last point where the
+        # file is known to be gone for good.
+        try:
+            if favorite_service is not None:
+                favorite_service.set_favorite(uri, False)
+            if collection_store is not None:
+                for collection in collection_store.list_for_media(uri):
+                    collection_store.remove_items(collection['id'], [uri])
+        except Exception:  # noqa: BLE001 - derived cleanup must never fail the purge
+            app.logger.warning('saved-list cleanup failed for %s', uri, exc_info=True)
 
     def purge_expired():
         for entry_id in trash_service.expired():
@@ -153,7 +164,13 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             )
             message = t('detail.error.file_in_use') if in_use else t('detail.error.delete_failed')
             return ({'error': message}, 409 if in_use else 500) if wants_json else (message, 409 if in_use else 500)
-        media_index.delete(entry['uri'])
+        try:
+            media_index.delete(entry['uri'])
+        except Exception:  # noqa: BLE001
+            # The file is already in the trash, so the delete itself succeeded. A
+            # failed index write used to surface as a 500 with a ghost tile that
+            # opened to a 404; the next sync prunes unseen rows anyway.
+            app.logger.warning('index delete failed for %s', entry['uri'], exc_info=True)
         return {'id': entry['id'], 'name': entry['name']} if wants_json else redirect('/library')
 
     @app.route('/api/trash')
@@ -169,7 +186,14 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             return {'error': t('detail.error.not_in_trash')}, 404
         except FileExistsError:
             return {'error': t('detail.error.trash_conflict')}, 409
-        library_indexer.register_uris([uri])
+        try:
+            library_indexer.register_uris([uri])
+        except Exception:  # noqa: BLE001
+            # The file is back on disk and the trash entry is gone, so reporting a
+            # failure here reads as "the file was lost". The index self-heals on the
+            # next scan, so say so instead of raising.
+            app.logger.warning('index register failed after restore for %s', uri, exc_info=True)
+            return {'uri': uri, 'url': detail_url(uri), 'indexed': False}
         return {'uri': uri, 'url': detail_url(uri)}
 
     @app.route('/api/trash/<entry_id>', methods=['DELETE'])

@@ -27,6 +27,7 @@ class MediaIndexStore:
         *,
         synced_source_ids: set[str] | None = None,
         preserved_prefixes: list[str] | None = None,
+        configured_source_ids: set[str] | None = None,
     ) -> dict:
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         source_ids = sorted(
@@ -92,6 +93,20 @@ class MediaIndexStore:
                     """,
                     [*source_ids, *keep_params],
                 ).rowcount
+            if configured_source_ids is not None:
+                # A source that was removed from the config never reaches the scan
+                # loop, so the seen-based delete above can never clear its rows: the
+                # grid kept cards whose files answer 404. Rows of a source that is
+                # still configured but failed to scan are protected by source_ids.
+                configured = sorted(str(source_id) for source_id in configured_source_ids)
+                if configured:
+                    placeholders = ",".join("?" for _ in configured)
+                    deleted += conn.execute(
+                        f"DELETE FROM media_items WHERE source_id NOT IN ({placeholders})",
+                        configured,
+                    ).rowcount
+                else:
+                    deleted += conn.execute("DELETE FROM media_items").rowcount
             conn.execute("DROP TABLE media_index_seen")
             item_count = int(conn.execute("SELECT COUNT(*) FROM media_items").fetchone()[0])
             conn.execute(
@@ -219,6 +234,31 @@ class MediaIndexStore:
                 wanted,
             ).fetchall()
         return [self._to_library_record(row) for row in rows]
+
+    def count_uris(self, uris) -> int:
+        """How many of the given URIs are still indexed.
+
+        Collection cards store the length of their saved list, which never shrinks
+        when a file is deleted outside the collection, so a card could promise three
+        items and open on two. Counting against the index keeps the card honest
+        without loading the rows.
+        """
+
+        wanted = sorted({str(uri) for uri in uris if uri})
+        if not wanted:
+            return 0
+        total = 0
+        chunk = 500
+        with self.database.connect() as conn:
+            for start in range(0, len(wanted), chunk):
+                part = wanted[start:start + chunk]
+                placeholders = ','.join('?' for _ in part)
+                row = conn.execute(
+                    f"SELECT COUNT(*) FROM media_items WHERE uri IN ({placeholders})",
+                    part,
+                ).fetchone()
+                total += int(row[0] if row else 0)
+        return total
 
     def on_days(self, month_days: list[str], before_year: str, limit: int = 200) -> list[dict]:
         """Photos and videos captured on the given MM-DD days in years before `before_year`, newest first."""
@@ -733,6 +773,7 @@ class LibraryIndexer:
             list(records_by_uri.values()),
             synced_source_ids=completed_sources,
             preserved_prefixes=preserved,
+            configured_source_ids={source.id for source in self.library.sources},
         )
         if preserved:
             result['skipped_prefixes'] = list(preserved)

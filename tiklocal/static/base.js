@@ -126,3 +126,22 @@ window.addEventListener('pageshow', (event) => {
   if (window.moreMenu) window.moreMenu.close({ restoreFocus: false });
   document.body.classList.remove('app-nav-menu-open');
 });
+
+// 会话过期（30 天到期，或 `tiklocal auth set-password` 把 revision 加一）之后，
+// 每个请求都只拿到 401 JSON，页面静默失灵、必须手动刷新才会被门禁送回登录页。
+// 在这里统一把 401 变成一次跳转，页面自己的 catch 分支照旧执行也不会卡住。
+(() => {
+  const nativeFetch = window.fetch?.bind(window);
+  if (!nativeFetch) return;
+  window.fetch = async (...args) => {
+    const response = await nativeFetch(...args);
+    if (response.status === 401 && !window.__tiklocalRedirecting) {
+      const target = `${window.location.pathname}${window.location.search}`;
+      if (!window.location.pathname.startsWith('/login')) {
+        window.__tiklocalRedirecting = true;
+        window.location.href = `/login?next=${encodeURIComponent(target)}`;
+      }
+    }
+    return response;
+  };
+})();

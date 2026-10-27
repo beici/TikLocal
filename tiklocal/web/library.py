@@ -147,11 +147,20 @@ def register_library_routes(
             if len(previews) == 4:
                 break
         cover_uri = previews[0]['uri'] if previews else ''
+        # The stored list never shrinks when a file is deleted elsewhere, so the
+        # card kept promising more items than the collection can open. Count through
+        # the same query the detail header uses so both agree.
+        item_count = int(collection.get('item_count') or 0)
+        if collection_id:
+            try:
+                item_count = int(_build_library_page(collection_id=collection_id, offset=0, limit=1).get('total') or 0)
+            except Exception:  # noqa: BLE001 - a broken index must not hide the card
+                item_count = int(collection.get('item_count') or 0)
         return {
             'id': collection_id,
             'name': str(collection.get('name') or ''),
             'description': str(collection.get('description') or ''),
-            'item_count': int(collection.get('item_count') or 0),
+            'item_count': item_count,
             'cover_uri': cover_uri,
             'cover_type': previews[0]['type'] if previews else '',
             'cover_media_url': media_urls(cover_uri)['media_url'] if cover_uri else '',
