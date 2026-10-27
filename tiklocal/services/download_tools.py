@@ -23,9 +23,16 @@ TOOL_ENV_VARS = {
 _PROGRESS_RE = re.compile(r"\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%")
 _ETA_RE = re.compile(r"ETA\s+(?P<eta>[0-9:]+)")
 _DESTINATION_PATTERNS = [
+    # --paths temp: moves finished files into place at the end, so with the
+    # template pointing at the temp dir the Destination line names the temp
+    # path and only [MoveFiles] knows the real one.
+    re.compile(r'^\[MoveFiles\] Moving file ".+?" to "(?P<path>.+)"$'),
     re.compile(r"^\[download\] Destination: (?P<path>.+)$"),
     re.compile(r'^\[Merger\] Merging formats into "(?P<path>.+)"$'),
     re.compile(r'^\[ExtractAudio\] Destination: (?P<path>.+)$'),
+    # Re-downloading a URL that is already on disk prints this instead of a
+    # Destination line; without it the job reported success with no files.
+    re.compile(r"^\[download\] (?P<path>.+?) has already been downloaded$"),
 ]
 # Keeps the fields source_from_filename reads back when no source was recorded.
 # display_id/id are bounded because some extractors put the whole page title in

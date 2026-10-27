@@ -12,9 +12,13 @@ from flask import redirect, render_template, request, send_file
 
 from tiklocal.i18n import t
 from tiklocal.services.embedded_metadata import read_embedded_generation
-from tiklocal.services.library import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+from tiklocal.services.library import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from tiklocal.web import json_body
 from tiklocal.web.media_payloads import media_urls
+
+# Inline delivery is limited to formats the app itself renders; anything else in
+# the media library (svg, html, js) is downloaded as an opaque attachment.
+INLINE_MEDIA_SUFFIXES = frozenset(VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS)
 
 
 def register_media_routes(app, library_service, media_index, thumbnail_service, download_manager, trash_service, library_indexer,
@@ -238,7 +242,12 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         target = library_service.resolve_path(filename)
         if not target or not target.exists() or not target.is_file():
             return "File not found", 404
-        return send_file(target)
+        # 只对已知音视频/图片内联下发：媒体库是用户可写目录，一个 .svg/.html 落进来
+        # 再给个链接，脚本就会在本应用源内执行（可带 cookie 调 /api/*）。
+        if target.suffix.lower() in INLINE_MEDIA_SUFFIXES:
+            return send_file(target)
+        return send_file(target, mimetype='application/octet-stream', as_attachment=True,
+                         download_name=target.name)
 
     @app.route("/media")
     def serve_media_legacy():
@@ -273,11 +282,14 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             payload = path.read_bytes()
         except OSError:
             return _placeholder_response()
-        response = send_file(io.BytesIO(payload), mimetype=mimetype, max_age=3600)
+        response = send_file(io.BytesIO(payload), mimetype=mimetype, max_age=0)
         # max-age without a validator means "must-revalidate" never actually
         # revalidates; the cache file identity is the cheapest correct validator.
         response.set_etag(f'{stat.st_mtime_ns:x}-{stat.st_size:x}')
-        return response
+        # 换封面后列表里的缩略图要能立刻更新：一小时 max-age 会让浏览器完全不发请求，
+        # 改成 no-cache 后每次用 ETag 条件请求（未变则是 304，几乎零成本）。
+        response.headers['Cache-Control'] = 'private, no-cache'
+        return response.make_conditional(request.environ)
 
     @app.route('/api/image/embedded-metadata')
     def api_image_embedded_metadata():

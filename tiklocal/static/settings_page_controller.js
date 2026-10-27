@@ -53,7 +53,8 @@
 
 
   async function requestJson(url, options = {}) {
-    const response = await fetch(url, options);
+    // 无超时兜底时设置页会一直转圈（尤其大库扫描期间），用户只能整页刷新。
+    const response = await fetch(url, options.signal ? options : { ...options, signal: AbortSignal.timeout(20000) });
     const payload = await response.json();
     if (!response.ok || payload.success === false) {
       const message = typeof payload.error === 'object' ? payload.error?.message : payload.error;
@@ -63,7 +64,7 @@
   }
 
   async function requestForm(url, formData) {
-    const response = await fetch(url, { method: 'POST', body: formData });
+    const response = await fetch(url, { method: 'POST', body: formData, signal: AbortSignal.timeout(30000) });
     const payload = await response.json();
     if (!response.ok || payload.success === false) throw new Error(payload.error || T('settings.request_failed'));
     return payload;
@@ -837,6 +838,18 @@
       authorSyncList.querySelector('.author-sync-empty').textContent = T('settings.sync.author_sources_empty');
     }
   }
+
+  // 设置页会被 bfcache 原样恢复（no-cache 不阻止 bfcache），回来时表单还是旧值，
+  // 此时点保存会把旧配置写回去。恢复时整页重载一次最稳妥。
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) window.location.reload();
+  });
+
+  // 设置页的统计/下载状态在断网时只会显示「暂不可用」，恢复后自动补一次。
+  window.addEventListener('tiklocal:online', () => {
+    loadStats();
+    loadDownloadSettings();
+  });
 
   loadStats();
   loadRadioDevices();

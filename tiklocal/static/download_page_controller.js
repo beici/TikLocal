@@ -529,22 +529,37 @@
     }
   }
 
+  let pollBackoffMs = 0;
+
   async function refreshJobs({ force = false } = {}) {
     try {
       const data = await api('/api/download/jobs?limit=80');
       const jobs = data.jobs || [];
+      pollBackoffMs = 0;
       renderJobs(jobs, { force });
     } catch (error) {
+      // 断网时后台轮询每 12 秒弹一条英文红条，还会把用户刚触发的提示挤掉；
+      // 离线只静默等待恢复，非离线失败才退避提示。
+      if (navigator.onLine === false) {
+        schedulePolling(false);
+        return;
+      }
+      pollBackoffMs = pollBackoffMs ? Math.min(pollBackoffMs * 2, 30000) : 2000;
       TikLocalUI.toast(error.message, 'error');
-      schedulePolling(false);
+      schedulePolling(false, pollBackoffMs);
     }
   }
 
-  function schedulePolling(hasActiveJobs) {
+  function schedulePolling(hasActiveJobs, overrideDelay) {
     if (pollTimer) window.clearTimeout(pollTimer);
-    const delay = document.hidden ? 15000 : (hasActiveJobs ? 2200 : 12000);
+    const delay = overrideDelay || (document.hidden ? 15000 : (hasActiveJobs ? 2200 : 12000));
     pollTimer = window.setTimeout(() => refreshJobs(), delay);
   }
+
+  window.addEventListener('tiklocal:online', () => {
+    pollBackoffMs = 0;
+    refreshJobs({ force: true });
+  });
 
   async function refreshSetup() {
     try {

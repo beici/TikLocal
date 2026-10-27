@@ -948,9 +948,10 @@ class MediaProbeWorker:
     def wake(self) -> None:
         self._wake.set()
 
-    def run_once(self, batch: int = 50) -> int:
-        """Probe until nothing is left; return how many files were read."""
+    def run_once(self, batch: int = 50, budget_sec: float | None = None) -> int:
+        """Probe until nothing is left (or the time budget is spent); return how many files were read."""
         done = 0
+        deadline = time.monotonic() + budget_sec if budget_sec else None
         deferred: set[str] = set()
         # Without ffprobe (the bundled imageio-ffmpeg build) or ffmpeg, a video's
         # size is unknown rather than unmeasurable: keep probed_mtime unset so a
@@ -959,6 +960,8 @@ class MediaProbeWorker:
         while rows := [row for row in self.store.unprobed(batch) if row["uri"] not in deferred]:
             results = []
             for row in rows:
+                if deadline is not None and time.monotonic() > deadline:
+                    break
                 # A live entry is probed through its jpeg cover.
                 media_type = 'image' if row["media_type"] == 'live' else row["media_type"]
                 if media_type != 'image' and not can_probe_video:
@@ -975,12 +978,19 @@ class MediaProbeWorker:
     def _loop(self) -> None:
         while True:
             self._wake.clear()
+            done = 0
             try:
-                self.run_once()
+                # A first scan of 8000 videos means 8000 ffprobe calls (~15 min).
+                # Without a per-round budget that ran flat out and starved the
+                # request threads; five seconds per round keeps the box usable.
+                done = self.run_once(budget_sec=5.0)
             except Exception:
                 # Dimensions are optional and the next wake retries, but swallowing
                 # this silently meant a locked database left every new file without
                 # width/height with nothing in the log to explain it.
                 self.failures += 1
                 LOGGER.warning('Media probe pass failed; dimensions stay unset for now', exc_info=True)
-            self._wake.wait()
+            if done:
+                self._wake.wait(0.5)
+            else:
+                self._wake.wait()

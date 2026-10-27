@@ -443,7 +443,8 @@
       await flowSession.loadMore(async (cursor) => {
         const offset = Number(cursor?.offset || 0);
         const url = `/api/library/items?${apiParams(offset).toString()}`;
-        const res = await fetch(url);
+        // 没有超时兜底时，连接挂起会让列表永远停在「加载中…」，重试按钮也不会出现。
+        const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
         const data = await res.json();
         if (!data?.success) throw new Error('request failed');
 
@@ -1452,6 +1453,13 @@
   } else {
     setLoadingText(T('library.status.keep_scrolling'));
   }
+  // 网络恢复后自动补拉：否则首屏失败时用户只看到「加载失败/重试」，
+  // 明明网络已经恢复也会以为应用坏了。
+  window.addEventListener('tiklocal:online', () => {
+    if (flowSession.isLoading()) return;
+    loadNextPage();
+  });
+
   feather.replace();
   syncSearchUI();
   maybeOpenFocusedItem();

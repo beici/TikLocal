@@ -40,6 +40,8 @@ from tiklocal.web.media_payloads import media_urls
 AVATAR_MAX_AGE = 300
 COMPACT_COUNT_THRESHOLD = 10000
 TEN_THOUSAND = 10000
+# 每次 sidecar 调用最长 150 s；没有上限时一个请求会串行跑几十分钟。
+MAX_SYNC_AUTHORS_PER_REQUEST = 200
 
 
 def folder_name_for(source) -> str:
@@ -374,6 +376,13 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             entries = parse_sync_text(payload.get('text'))
         if not entries:
             return jsonify({'ok': False, 'error': t('settings.sync.author_need_url')}), 400
+        if len(entries) > MAX_SYNC_AUTHORS_PER_REQUEST:
+            # 单次请求里串行调 N 次外部 sidecar（每次最长 150 s）会让一个 HTTP
+            # 请求跑几十分钟、无进度且不可取消；超限直接拒绝，让前端分批。
+            return jsonify({
+                'ok': False,
+                'error': t('settings.sync.author_too_many', n=MAX_SYNC_AUTHORS_PER_REQUEST),
+            }), 400
 
         index = _uid_index()
         results = []

@@ -145,3 +145,32 @@ window.addEventListener('pageshow', (event) => {
     return response;
   };
 })();
+
+// 断网/切网后各页只做「报错 + 等用户动作」，网络恢复也不会自动重拉，用户会以为应用坏了。
+// 这里只负责广播：页面监听 `tiklocal:online` 后重跑自己的首屏加载。
+window.addEventListener('online', () => {
+  window.dispatchEvent(new CustomEvent('tiklocal:online'));
+});
+window.addEventListener('offline', () => {
+  window.dispatchEvent(new CustomEvent('tiklocal:offline'));
+});
+
+// 缩略图/封面 404 时浏览器会显示破图图标（alt 为空，读屏也没有提示）。
+// 用捕获阶段统一兜底：隐藏图片并给父节点留一个占位底色，覆盖所有网格与卡片。
+document.addEventListener(
+  'error',
+  (event) => {
+    const img = event.target;
+    if (!(img instanceof HTMLImageElement)) return;
+    if (img.dataset.fallbackApplied) return;
+    img.dataset.fallbackApplied = '1';
+    img.style.visibility = 'hidden';
+    const parent = img.parentElement;
+    if (parent && !parent.dataset.imageFallback) {
+      parent.dataset.imageFallback = '1';
+      parent.style.background = 'var(--surface-muted, rgba(127, 127, 127, 0.12))';
+    }
+  },
+  true,
+);
+

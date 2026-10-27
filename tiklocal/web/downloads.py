@@ -142,16 +142,19 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
     def api_download_urls_sync():
         payload = json_body()
         direction = str(payload.get('direction') or 'pull')
+        if direction not in ('pull', 'push'):
+            return {'success': False, 'error': t('download.urls.error')}, 400
         store = url_list_store()
         try:
-            if 'source_path' in payload:
-                store.set_source_path(str(payload.get('source_path') or ''))
+            # Validate the direction first: a rejected request used to persist
+            # source_path anyway (and an empty string silently wiped it).
+            source = str(payload.get('source_path') or '').strip()
+            if source:
+                store.set_source_path(source)
             if direction == 'pull':
                 result = store.pull()
-            elif direction == 'push':
-                result = store.push()
             else:
-                return {'success': False, 'error': t('download.urls.error')}, 400
+                result = store.push()
         except ValueError as exc:
             return {'success': False, 'error': str(exc)}, 400
         except OSError as exc:

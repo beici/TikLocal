@@ -26,7 +26,8 @@
 | 登录失败锁定的剩余时间未通过 `Retry-After` 暴露 | `tiklocal/auth.py`（限流响应） | 前端已能按 429 提示「稍后再试」；精确倒计时需前端状态机，收益低 |
 | 电台冷启动时 `items` 逐条 ffprobe | `tiklocal/web/radio.py`（已加 `MAX_PROBE_PER_REQUEST` 上限） | 彻底解决需后台预热线程与进度反馈，属新功能；上限已把单次请求的探测成本封住 |
 | flow 页边界首滑必然回弹且无提示 | `tiklocal/static/flow_page_controller.js`（`endGesture` 边界分支） | 回弹本身是防误触设计；加提示需非模态 toast，且不能在手势中插入全屏 loading（会锁手势） |
-| `create_app()` 在端口监听前同步重建全量索引（8000 文件 8.6 s） | `tiklocal/services/library.py` 构造器里的 `sync()` | 已把 `source.path.resolve()` 提到循环外（去掉 8000 次重复 resolve）；把 `sync()` 挪到后台线程会改变启动语义（首屏可能看到空库/进度态），需要单独设计就绪标志 |
+| `create_app()` 在端口监听前同步重建全量索引（8000 文件 8.6 s） | `tiklocal/services/library.py` 构造器里的 `sync()` | 第 09 轮已把每文件的 `Path.resolve()` 换成 `path.relative_to(resolved_root)` 快路径（8000 次 4173ms → 272ms），但 `sync()` 本身仍是同步的；把它挪到后台线程会改变启动语义（首屏可能看到空库/进度态），需要单独设计就绪标志 |
+| 每个页面内嵌 905 条 / 48 KB i18n 目录 | `tiklocal/templates/base.html:28` + `tiklocal/i18n.py` 的 `js_catalog()` | 需按页面拆分 key 或产出 `i18n.<locale>.<hash>.js` 走浏览器缓存；改动覆盖所有模板与控制器，单独一轮做 |
 | 盲 SSRF：重定向目标请求仍会发出（只在读 body 前拦） | `tiklocal/services/downloader.py::_direct_fetch` | 已用 `response.geturl()` 复验最终地址并丢弃结果；彻底修复需要出口地址过滤（socket 级），属于部署层能力 |
 | 缩略图冷缓存无进程内 single-flight | `tiklocal/services/thumbnail.py:144-152` | 10 个并发请求会起 10 个 ffmpeg；结果正确（原子 `os.replace`），只是浪费 CPU。加 in-flight 字典需处理异常与超时回收 |
 | yt-dlp / gallery-dl 引擎没有重定向内网约束 | `tiklocal/services/downloader.py`（子进程引擎） | 子进程内的 HTTP 客户端不受本进程控制，只能靠部署层出口过滤 |

@@ -286,9 +286,10 @@ def create_app(test_config=None):
         elif request.path.startswith('/media'):
             response.headers['Cache-Control'] = 'private, no-cache'
         elif request.path == '/thumb':
-            # The route marks fallback/placeholder responses no-store; only real
-            # thumbnails get the hour-long cache.
-            if 'no-store' not in response.headers.get('Cache-Control', ''):
+            # The route marks fallback/placeholder responses no-store and real
+            # thumbnails no-cache; only untouched 2xx/3xx responses get an hour.
+            cache_control = response.headers.get('Cache-Control', '')
+            if response.status_code < 400 and 'no-store' not in cache_control and 'no-cache' not in cache_control:
                 response.headers['Cache-Control'] = 'private, max-age=3600, must-revalidate'
         elif response.mimetype == 'text/html':
             response.headers['Cache-Control'] = 'private, no-cache'

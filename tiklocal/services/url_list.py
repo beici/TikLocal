@@ -8,11 +8,15 @@ line is one URL; blank lines and ``#`` comments are ignored.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from urllib.parse import urlparse
 
 from tiklocal.paths import get_download_urls_config_path, get_download_urls_path
+from tiklocal.services.json_storage import write_json_atomic
+
+logger = logging.getLogger(__name__)
 
 STORE_FILENAME = 'download-urls.txt'
 CONFIG_FILENAME = 'download-urls.json'
@@ -42,17 +46,28 @@ def normalize_url(raw: str) -> str:
 
 def parse_text(text: str) -> list[str]:
     """Parse a block of text into de-duplicated URLs, keeping the given order."""
+    return parse_text_limited(text)[0]
+
+
+def parse_text_limited(text: str) -> tuple[list[str], bool]:
+    """Parse text and report whether the line cap dropped anything.
+
+    Silently truncating a paste of 6000 URLs made the import look successful
+    while the tail vanished, so callers that write the list surface the flag.
+    """
     lines: list[str] = []
     seen: set[str] = set()
+    truncated = False
     for raw in str(text or '').splitlines():
         url = normalize_url(raw)
         if not url or url in seen:
             continue
+        if len(lines) >= MAX_LINES:
+            truncated = True
+            break
         seen.add(url)
         lines.append(url)
-        if len(lines) >= MAX_LINES:
-            break
-    return lines
+    return lines, truncated
 
 
 def format_text(lines: list[str]) -> str:
@@ -84,8 +99,17 @@ class UrlListStore:
             return []
         return parse_text(text)
 
-    def _write(self, lines: list[str]) -> list[str]:
-        cleaned = parse_text('\n'.join(lines))
+    def _write(self, lines: list[str], *, backup: bool = False) -> list[str]:
+        cleaned, truncated = parse_text_limited('\n'.join(lines))
+        if truncated:
+            raise ValueError(f'Too many URLs: the list holds at most {MAX_LINES} entries.')
+        if backup and self.store_path.exists():
+            # Bulk overwrites (import, pull) used to be unrecoverable: a stale or
+            # emptied server file silently wiped a hand-written queue.
+            try:
+                self.store_path.replace(self.store_path.with_suffix(self.store_path.suffix + '.bak'))
+            except OSError:
+                pass
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self.store_path.with_suffix(self.store_path.suffix + '.tmp')
         tmp_path.write_text(format_text(cleaned), encoding='utf-8')
@@ -93,7 +117,7 @@ class UrlListStore:
         return cleaned
 
     def replace(self, lines: list[str]) -> list[str]:
-        return self._write(lines)
+        return self._write(lines, backup=True)
 
     def add(self, lines: list[str]) -> list[str]:
         current = self.lines()
@@ -101,6 +125,8 @@ class UrlListStore:
         for url in parse_text('\n'.join(lines)):
             if url not in merged:
                 merged.append(url)
+        if len(merged) > MAX_LINES:
+            raise ValueError(f'Too many URLs: the list holds at most {MAX_LINES} entries.')
         return self._write(merged)
 
     def remove(self, url: str) -> list[str]:
@@ -114,13 +140,16 @@ class UrlListStore:
     def _read_config(self) -> dict:
         try:
             data = json.loads(self.config_path.read_text(encoding='utf-8'))
-        except (FileNotFoundError, OSError, ValueError):
+        except (FileNotFoundError, OSError):
+            return {}
+        except ValueError:
+            logger.warning('Ignoring unreadable URL-list config at %s', self.config_path)
             return {}
         return data if isinstance(data, dict) else {}
 
     def _write_config(self, data: dict) -> None:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+        write_json_atomic(self.config_path, data)
 
     def source_path(self) -> str:
         return str(self._read_config().get('source_path') or '')
@@ -160,7 +189,7 @@ class UrlListStore:
             text = target.read_text(encoding='utf-8', errors='replace')
         except OSError as exc:
             raise ValueError(f'Unable to read {target}: {exc.strerror or exc}') from exc
-        lines = self._write(parse_text(text))
+        lines = self._write(parse_text(text), backup=True)
         return {'direction': 'pull', 'lines': lines, 'path': str(target)}
 
     def push(self) -> dict:

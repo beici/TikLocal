@@ -1,6 +1,7 @@
 import datetime
 import math
 import random
+import time
 import zlib
 
 from tiklocal.services.library import LibraryService, VIDEO_EXTENSIONS
@@ -8,6 +9,11 @@ from tiklocal.services.favorites import FavoriteService
 
 # Media this old, and not shown for as long, counts as forgotten.
 FORGOTTEN_DAYS = 180
+
+# Building the candidate list reads every index row (0.2s on 8000 files) and the
+# favourite test normalises each URI; a short cache keeps a page burst cheap while
+# a newly imported file still shows up within a couple of seconds.
+CANDIDATE_TTL_SEC = 2.0
 
 # Beyond this many picks the O(picks * pool) diversity reshuffle stops paying off; the
 # remaining items follow one seed-stable weighted ordering instead.
@@ -53,6 +59,32 @@ class RecommendService:
         self.favorites = favorite_service
         self.activity_store = activity_store
         self.media_index = media_index
+        self._candidate_cache: dict[tuple[str, str], tuple[float, list[dict]]] = {}
+
+    def _candidates(self, file_type: str, source_id: str) -> list[dict]:
+        if self.media_index:
+            return [
+                {'uri': item['name'], 'mtime': item['mtime_ts']}
+                for item in self.media_index.records(
+                    media_type=file_type, source_id=source_id, album_covers_only=True,
+                )
+            ]
+        paths = self.library.scan_videos() if file_type == 'video' else self.library.scan_images()
+        return [
+            {'uri': uri, 'mtime': path.stat().st_mtime}
+            for path in paths
+            if (uri := self.library.get_relative_path(path))
+        ]
+
+    def _cached_candidates(self, file_type: str, source_id: str) -> list[dict]:
+        key = (file_type, source_id)
+        cached = self._candidate_cache.get(key)
+        now = time.monotonic()
+        if cached and now - cached[0] < CANDIDATE_TTL_SEC:
+            return cached[1]
+        candidates = self._candidates(file_type, source_id)
+        self._candidate_cache[key] = (now, candidates)
+        return candidates
 
     def get_weighted_selection(self, file_type='video', limit=20, seed=None, source_id='',
                                session_start=None) -> list[str]:
@@ -62,29 +94,11 @@ class RecommendService:
         item shown after that moment is not penalised again, otherwise every page
         request would re-rank the pool and page 2 repeated cards from page 1.
         """
-        if self.media_index:
-            candidates = [
-                {'uri': item['name'], 'mtime': item['mtime_ts']}
-                for item in self.media_index.records(
-                    media_type=file_type, source_id=source_id, album_covers_only=True,
-                )
-            ]
-        elif file_type == 'video':
-            candidates = [
-                {'uri': uri, 'mtime': path.stat().st_mtime}
-                for path in self.library.scan_videos()
-                if (uri := self.library.get_relative_path(path))
-            ]
-        else:
-            candidates = [
-                {'uri': uri, 'mtime': path.stat().st_mtime}
-                for path in self.library.scan_images()
-                if (uri := self.library.get_relative_path(path))
-            ]
+        candidates = self._cached_candidates(file_type, source_id)
         if not candidates:
             return []
 
-        favs = self.favorites.load()
+        favs = self.library.canonicalize_many(self.favorites.load())
         names = [item['uri'] for item in candidates]
         profiles = self.activity_store.profiles_for(names) if self.activity_store else {}
         dimension_scores = self.activity_store.dimension_scores() if self.activity_store else {}
@@ -95,7 +109,7 @@ class RecommendService:
             try:
                 rel_path = candidate['uri']
                 mtime = candidate['mtime']
-                is_fav = self.library.is_uri_in_set(rel_path, favs)
+                is_fav = rel_path in favs
                 base_score = 2.0 if is_fav else 1.0
                 age_days = max((now - datetime.datetime.fromtimestamp(mtime)).total_seconds() / 86400, 0.0)
                 time_score = math.exp(-age_days / 180.0)

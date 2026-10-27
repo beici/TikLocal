@@ -18,6 +18,9 @@ from tiklocal.services.library import LibraryService, AUDIO_EXTENSIONS, IMAGE_EX
 #: How long a video frame extraction may take before the request gives up.
 FFMPEG_TIMEOUT_SEC = 30
 
+#: Bounds concurrent decode/encode work so a cold /library grid cannot balloon RSS.
+_GENERATE_SLOTS = threading.BoundedSemaphore(2)
+
 
 def ffmpeg_argv() -> list[str]:
     """Resolve ffmpeg once per call: PATH, venv console script, then the bundled build."""
@@ -313,6 +316,12 @@ class ThumbnailService:
         return banner_duration(path)
 
     def _generate(self, video_path: Path, output_path: Path, timestamp: float | None, *, auto_timestamp: bool) -> bool:
+        # Decoding one 24MP JPEG peaks at ~192MB; six concurrent cold thumbnails
+        # took RSS to ~983MB. Two slots keeps the peak bounded and still parallel.
+        with _GENERATE_SLOTS:
+            return self._render(video_path, output_path, timestamp, auto_timestamp=auto_timestamp)
+
+    def _render(self, video_path: Path, output_path: Path, timestamp: float | None, *, auto_timestamp: bool) -> bool:
         suffix = video_path.suffix.lower()
 
         if suffix in IMAGE_EXTENSIONS:
@@ -363,6 +372,10 @@ class ThumbnailService:
     def _generate_image(image_path: Path, output_path: Path) -> bool:
         try:
             with Image.open(image_path) as source:
+                # draft() lets libjpeg decode at 1/2, 1/4 or 1/8 scale: asking for
+                # 2x the 640px target keeps the final LANCZOS pass at full quality
+                # (a 24MP photo drops from ~101MB extra RSS to ~6MB).
+                source.draft('RGB', (1280, 1280))
                 image = ImageOps.exif_transpose(source)
                 image.thumbnail((640, 640), Image.Resampling.LANCZOS)
                 if 'A' in image.getbands():

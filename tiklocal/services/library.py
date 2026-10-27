@@ -196,11 +196,25 @@ class LibraryService:
         return ref.to_uri() if ref else ''
 
     def ref_for_path(self, path: Path) -> MediaRef | None:
-        target = path.resolve()
+        # resolve() costs ~290µs per file on Windows (2.3s for 8000 files) and the
+        # scan hands us paths that already start with the source root, so try the
+        # lexical match first and only resolve when that fails (symlinked roots).
         for source, root in self._resolved_roots:
             try:
-                rel = str(target.relative_to(root)).replace('\\', '/')
-                return MediaRef(source.id, rel)
+                rel = path.relative_to(root)
+            except ValueError:
+                continue
+            parts = rel.parts
+            if not parts or '..' in parts:
+                continue
+            return MediaRef(source.id, '/'.join(parts))
+        try:
+            target = path.resolve()
+        except OSError:
+            return None
+        for source, root in self._resolved_roots:
+            try:
+                return MediaRef(source.id, str(target.relative_to(root)).replace('\\', '/'))
             except ValueError:
                 continue
         return None

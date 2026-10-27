@@ -571,7 +571,17 @@ class DownloadManager:
             self._jobs[job_id] = job
             self._job_order.insert(0, job_id)
             self._cancel_events[job_id] = threading.Event()
-            self._persist_locked()
+            try:
+                self._persist_locked()
+            except Exception:
+                # A failed jobs.json write used to leave a queued job that is
+                # never dispatched and can only be cancelled: roll it back so the
+                # caller sees one clean error instead of a ghost row.
+                self._jobs.pop(job_id, None)
+                self._cancel_events.pop(job_id, None)
+                if job_id in self._job_order:
+                    self._job_order.remove(job_id)
+                raise
             self._pending.append(job_id)
             self._dispatch_locked()
         return self.get_job(job_id) or job
@@ -1360,6 +1370,11 @@ class DownloadManager:
             media_root = self.media_root.resolve()
             if str(absolute).startswith(str(media_root)):
                 rel = str(absolute.relative_to(media_root)).replace("\\", "/")
+                # --paths temp: moves files into place at the end; a path still
+                # inside the temp dir is deleted right after the run, so it can
+                # never be a library file (it used to be recorded as one).
+                if rel.split("/", 1)[0] == DOWNLOAD_TMP_DIR:
+                    return ""
                 return f"@{self.output_source_id}/{rel}"
         except Exception:
             return ""
