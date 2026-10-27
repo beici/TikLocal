@@ -84,6 +84,12 @@ def build_media_sources(media_root: str | Path | None = None, raw_sources: Any =
             return
         sid = normalize_source_id(source_id)
         if sid in seen:
+            # Silently dropping the second source made its directory disappear from
+            # the index while the startup banner still listed it.
+            logger.warning(
+                'Duplicate media source id %r in MEDIA_SOURCES; ignoring path %s '
+                '(first path for this id wins).', sid, path_text,
+            )
             return
         seen.add(sid)
         sources.append(MediaSource(

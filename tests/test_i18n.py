@@ -95,6 +95,10 @@ def test_templates_and_scripts_only_use_known_keys():
     root = Path(__file__).resolve().parents[1] / 'tiklocal'
     files = list((root / 'templates').rglob('*.html'))
     files += [p for p in (root / 'static').glob('*.js') if '.min.' not in p.name]
+    # Python call sites matter too: the radio device API used to call
+    # t('radio.error.audio_not_found'), a key that never existed, and every
+    # response shipped the raw key because only templates/JS were scanned.
+    files += list(root.rglob('*.py'))
     pattern = re.compile(r"""\b(?:t|T)\(\s*['"]([A-Za-z][\w.]*)['"]""")
     used = set()
     for path in files:

@@ -98,3 +98,40 @@ def test_poster_frame_request_actually_regenerates_the_cache(tmp_path, monkeypat
     assert response.status_code == 200
     assert response.get_json()['success'] is True
     assert calls == [None, 7.5]
+
+
+def test_oversized_images_are_reduced_instead_of_rendering_invisible(tmp_path, monkeypatch):
+    # PIL's DecompressionBombError used to make a valid 189 MP photo render as a
+    # transparent 1x1 placeholder that looked like a broken tile. The ceiling is
+    # raised and the decode is reduced to a bounded pixel count instead.
+    from tiklocal.services import thumbnail as thumbnail_module
+
+    monkeypatch.setattr(thumbnail_module, 'REDUCE_ABOVE_PIXELS', 1_000_000)
+    source = tmp_path / 'huge.png'
+    Image.new('RGB', (3000, 3000), 'teal').save(source)
+    output = tmp_path / 'out.jpg'
+    previous_limit = Image.MAX_IMAGE_PIXELS
+
+    assert thumbnail_module.ThumbnailService._generate_image(source, output) is True
+    assert Image.MAX_IMAGE_PIXELS == previous_limit
+    with Image.open(output) as rendered:
+        assert max(rendered.size) <= 640
+        assert rendered.size[0] == rendered.size[1]
+
+
+def test_successful_generation_clears_an_earlier_failure_marker(tmp_path, monkeypatch):
+    # A file that failed once (still copying) kept the placeholder for the whole
+    # TTL even after a retry produced a valid thumbnail.
+    from tiklocal.services.thumbnail import ThumbnailService
+
+    (tmp_path / 'photo.jpg').write_bytes(b'not-an-image-yet')
+    service = ThumbnailService(tmp_path)
+    service.thumb_dir = tmp_path / 'cache'
+    service.thumb_dir.mkdir()
+    assert service.generate_thumbnail('photo.jpg') is None
+    service._mark_failure('photo.jpg')
+    assert service._failure_path('photo.jpg').exists()
+
+    Image.new('RGB', (64, 64), 'red').save(tmp_path / 'photo.jpg')
+    assert service.generate_thumbnail('photo.jpg') is not None
+    assert not service._failure_path('photo.jpg').exists()

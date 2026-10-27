@@ -441,7 +441,18 @@ def create_app(test_config=None):
     download_source_store = DownloadSourceStore(get_download_sources_path())
     collection_store = CollectionStore(get_collections_path())
     download_source_id = str(app.config.get('DOWNLOAD_SOURCE') or library_service.default_source_id).strip() or library_service.default_source_id
-    download_source = library_service.sources_by_id.get(download_source_id) or library_service.sources_by_id[library_service.default_source_id]
+    download_source = library_service.sources_by_id.get(download_source_id)
+    if download_source is None:
+        # A typo in `download_source` (or a source that was removed) used to fall
+        # back to the default source silently, so downloads landed in the main
+        # library while the config still named another one.
+        download_source = library_service.sources_by_id[library_service.default_source_id]
+        app.logger.warning(
+            'download_source %r is not a configured media source; using %r (%s) instead. '
+            'Configured sources: %s',
+            download_source_id, download_source.id, download_source.path,
+            ', '.join(sorted(library_service.sources_by_id)),
+        )
     tiktok_overrides = app.config.get('TIKTOK_DOWNLOADER')
     if isinstance(tiktok_overrides, dict):
         # Seed before the manager construction so its cached config includes the section.

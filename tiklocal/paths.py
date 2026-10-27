@@ -1,19 +1,37 @@
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 #: Scratch folder a download builds in before it publishes files into the library.
 #: It lives under the media root so the final move is a rename, and the scanner
 #: skips it so half-written files never enter the index.
 DOWNLOAD_TMP_DIR = '.tiklocal-download-tmp'
 
+_relative_instance_warned = False
+
 
 def get_data_dir() -> Path:
     """Return the global data directory for TikLocal.
     Default to ~/.tiklocal unless TIKLOCAL_INSTANCE is set.
     """
+    global _relative_instance_warned
     base = os.environ.get('TIKLOCAL_INSTANCE')
     if base:
         p = Path(base).expanduser()
+        if not p.is_absolute():
+            # A relative instance path resolved against whatever directory the
+            # process happened to start in, so the same command line could read a
+            # different database after a `cd`. Make the resolution explicit and
+            # say so once instead of silently writing next to the CWD.
+            p = (Path.cwd() / p).resolve()
+            if not _relative_instance_warned:
+                _relative_instance_warned = True
+                logger.warning(
+                    'TIKLOCAL_INSTANCE is relative; resolved to %s (the current working directory)',
+                    p,
+                )
     else:
         p = Path.home() / '.tiklocal'
     p.mkdir(parents=True, exist_ok=True)

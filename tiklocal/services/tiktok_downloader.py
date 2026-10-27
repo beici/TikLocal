@@ -95,9 +95,14 @@ def validate_tiktok_downloader_config(payload: Any) -> tuple[dict[str, Any] | No
     section: dict[str, Any] = {}
 
     base_url = str(payload.get("base_url") or "").strip()
-    if base_url and not base_url.startswith(("http://", "https://")):
-        return None, t('download.error.tiktok_base_url')
-    section["base_url"] = base_url.rstrip("/")
+    if base_url:
+        # "http://" passes a prefix check but rstrip("/") turns it into "http:",
+        # which then fails deep inside the client instead of at the settings form.
+        base_url = base_url.rstrip("/")
+        host = base_url.split("://", 1)[1] if "://" in base_url else ""
+        if not base_url.startswith(("http://", "https://")) or not host:
+            return None, t('download.error.tiktok_base_url')
+    section["base_url"] = base_url
 
     token = payload.get("token")
     if token is None:

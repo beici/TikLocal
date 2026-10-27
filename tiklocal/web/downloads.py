@@ -57,6 +57,10 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             'config': mask_secrets(config),
             'defaults': mask_secrets(dict(DEFAULT_DOWNLOAD_CONFIG)),
             'effective': mask_secrets(effective),
+            # The configured download_source may be a typo or a removed source;
+            # surface where files actually land so the UI can show it.
+            'output_source_id': getattr(download_manager, 'output_source_id', ''),
+            'output_source_path': str(getattr(download_manager, 'media_root', '') or ''),
         }
         return payload
 
@@ -129,7 +133,14 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
     def api_download_urls():
         store = url_list_store()
         if request.method == 'GET':
-            return {'success': True, 'data': store.snapshot()}
+            # A list file held open by another process (AV scan, editor) is a
+            # transient storage problem, not a server bug: report it as 503 like
+            # the write paths do instead of letting the OSError escape as a 500.
+            try:
+                return {'success': True, 'data': store.snapshot()}
+            except OSError as exc:
+                app.logger.warning('Could not read the download URL list', exc_info=exc)
+                return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
 
         payload = json_body()
         action = str(payload.get('action') or '')
@@ -177,7 +188,11 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
 
     @app.route('/api/download/urls/export')
     def api_download_urls_export():
-        body = format_text(url_list_store().lines())
+        try:
+            body = format_text(url_list_store().lines())
+        except OSError as exc:
+            app.logger.warning('Could not read the download URL list', exc_info=exc)
+            return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
         response = app.response_class(body, mimetype='text/plain')
         response.headers['Content-Disposition'] = 'attachment; filename="download-urls.txt"'
         return response
@@ -317,8 +332,11 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         try:
             download_manager.update_config({'tiktok_downloader': section})
         except ValueError as exc:
-            app.logger.warning('URL list request rejected: %s', exc)
-            return {'success': False, 'error': url_list_error_message(exc)}, 400
+            # validate_download_config already returns a localized, field-specific
+            # message; mapping it through url_list_error_message() replaced it with
+            # the generic URL-list error, so the form said "invalid URL" for a bad
+            # timeout value.
+            return {'success': False, 'error': str(exc) or t('download.error.tiktok_config_object')}, 400
         updated = download_manager.get_config().get('tiktok_downloader') or {}
         return {'success': True, 'data': {'tiktok_downloader': mask_secrets({'tiktok_downloader': updated})['tiktok_downloader']}}
 

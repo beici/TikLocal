@@ -183,9 +183,12 @@ class UrlListStore:
         return written, added, rejected, truncated
 
     def remove(self, url: str) -> list[str]:
+        # Read and write under one lock: the previous version released the lock
+        # between lines() and _write(), so a concurrent add() could be overwritten
+        # and the freshly added URL silently lost.
         with _LIST_LOCK:
             target = normalize_url(url)
-        return self._write([line for line in self.lines() if line != target])
+            return self._write([line for line in self.lines() if line != target])
 
     def clear(self) -> list[str]:
         with _LIST_LOCK:

@@ -1,5 +1,6 @@
 import hashlib
 import io
+import logging
 import math
 import os
 import re
@@ -15,11 +16,24 @@ from tiklocal.paths import get_thumbnails_dir
 from tiklocal.services.download_tools import resolve_tool
 from tiklocal.services.library import LibraryService, AUDIO_EXTENSIONS, IMAGE_EXTENSIONS
 
+logger = logging.getLogger(__name__)
+
 #: How long a video frame extraction may take before the request gives up.
 FFMPEG_TIMEOUT_SEC = 30
 
 #: How long a second request waits for the in-flight decode of the same file.
 GENERATE_WAIT_SEC = 20
+
+#: PIL refuses anything above 2x its MAX_IMAGE_PIXELS (~89 MP by default) with
+#: DecompressionBombError. That made a valid 189 MP panorama render as an invisible
+#: 1x1 placeholder forever, so we raise the ceiling and bound the work ourselves.
+MAX_DECODE_PIXELS = 200_000_000
+
+#: Above this many pixels the decode is reduced by an integer factor before the
+#: LANCZOS pass. The final target is 640 px, so 48 MP of detail is already far more
+#: than visible, while the intermediate RGB buffer stays around 150 MB instead of
+#: growing with the source (a 189 MP PNG would otherwise decode to ~567 MB).
+REDUCE_ABOVE_PIXELS = 48_000_000
 
 #: Bumped whenever the rendered size or quality changes: the cache key carries it so
 #: an upgrade cannot keep serving previews produced by the previous settings.
@@ -105,8 +119,10 @@ class ThumbnailService:
     #: Requests for one URI arrive in bursts (grid, feed, detail). A small lock pool
     #: keeps a single ffmpeg run per URI without holding a lock per cache file.
     _LOCK_POOL_SIZE = 8
-    #: How long a failed generation is remembered before the file is retried.
-    FAILURE_TTL_SEC = 6 * 3600
+    #: How long a failed generation is remembered before the file is retried. A
+    #: copy that finished mid-generation is retried within the hour, and a corrupt
+    #: file costs one failed decode per hour instead of one per grid refresh.
+    FAILURE_TTL_SEC = 3600
 
     def __init__(self, media_root: Path, library_service=None):
         self.media_root = media_root
@@ -245,6 +261,18 @@ class ThumbnailService:
         except OSError:
             pass
 
+    def _clear_failure(self, uri: str) -> None:
+        """A successful generation invalidates an earlier failure marker.
+
+        Without this a file that failed once (still copying, network hiccup) kept
+        the placeholder for the full TTL even after the retry succeeded, because
+        the marker is only consulted, never removed, on the success path.
+        """
+        try:
+            self._failure_path(uri).unlink()
+        except OSError:
+            pass
+
     def _stale_thumbnail(self, uri: str) -> Path | None:
         for key in self.library.legacy_candidates(self.library.canonicalize_uri(uri)):
             cached = self._cached_path_for_key(key)
@@ -324,6 +352,7 @@ class ThumbnailService:
             try:
                 if self._generate(source, temporary, timestamp, auto_timestamp=auto_timestamp):
                     if _replace_with_retry(temporary, output):
+                        self._clear_failure(uri)
                         return output
             except OSError:
                 return None
@@ -484,7 +513,9 @@ class ThumbnailService:
 
     @staticmethod
     def _generate_image(image_path: Path, output_path: Path) -> bool:
+        previous_limit = Image.MAX_IMAGE_PIXELS
         try:
+            Image.MAX_IMAGE_PIXELS = MAX_DECODE_PIXELS
             with Image.open(image_path) as source:
                 # Palette images (PNG stickers, 2-frame GIFs) keep transparency in
                 # info['transparency'] instead of an alpha band, so getbands() alone
@@ -498,6 +529,13 @@ class ThumbnailService:
                 # 2x the 640px target keeps the final LANCZOS pass at full quality
                 # (a 24MP photo drops from ~101MB extra RSS to ~6MB).
                 source.draft('RGB', (1280, 1280))
+                pixels = source.size[0] * source.size[1]
+                if pixels > REDUCE_ABOVE_PIXELS:
+                    # draft() only helps JPEG, so a huge PNG still arrives at full
+                    # size; reducing by an integer factor keeps the LANCZOS input
+                    # bounded and leaves the visible result identical.
+                    factor = math.isqrt(pixels // REDUCE_ABOVE_PIXELS) + 1
+                    source = source.reduce(factor)
                 image = ImageOps.exif_transpose(source)
                 image.thumbnail((640, 640), Image.Resampling.LANCZOS)
                 if has_alpha:
@@ -512,8 +550,16 @@ class ThumbnailService:
                     options['icc_profile'] = icc_profile
                 image.save(output_path, 'JPEG', **options)
             return output_path.exists() and output_path.stat().st_size > 0
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - one broken file must not fail the grid
+            # Silent before: a 189 MP photo and a truncated download looked identical
+            # in the logs (nothing at all), which made the invisible tile impossible
+            # to diagnose from a bug report.
+            logger.warning(
+                'thumbnail decode failed for %s: %s: %s', image_path.name, type(exc).__name__, exc,
+            )
             return False
+        finally:
+            Image.MAX_IMAGE_PIXELS = previous_limit
 
 
 def radio_artwork_bytes(uri: str) -> bytes:

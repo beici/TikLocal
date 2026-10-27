@@ -47,6 +47,9 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
     app.extensions['auth_store'] = auth_store
     app.extensions['auth_enabled'] = enabled
     limiter = LoginAttemptLimiter()
+    # Shared with the radio pairing endpoint: both validate the same access
+    # password, so one bucket per process keeps the 5-attempt budget honest.
+    app.extensions['login_limiter'] = limiter
 
     if not enabled:
         @app.context_processor

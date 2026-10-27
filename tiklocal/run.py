@@ -362,9 +362,17 @@ Examples:
     print("Starting TikLocal server...")
     if media_sources:
         print("Media sources:")
+        seen_source_ids = set()
         for source in media_sources:
-            marker = " (downloads)" if normalize_source_id(download_source) == source.get('id') else ""
-            print(f"  @{source.get('id')}: {Path(str(source.get('path'))).expanduser().absolute()}{marker}")
+            source_id = normalize_source_id(source.get('id'))
+            if source_id in seen_source_ids:
+                # build_media_sources keeps only the first entry per id; listing the
+                # dropped one here made the banner disagree with what is indexed.
+                print(f"  @{source_id}: ignored (duplicate id)")
+                continue
+            seen_source_ids.add(source_id)
+            marker = " (downloads)" if normalize_source_id(download_source) == source_id else ""
+            print(f"  @{source_id}: {Path(str(source.get('path'))).expanduser().absolute()}{marker}")
     else:
         print(f"Media directory: {media_path.absolute()}")
     print(f"Data directory: {resolve_data_dir(parser)}")
@@ -401,7 +409,7 @@ Examples:
             "VISION_CONFIG": vision_config,
             "EMBEDDING_CONFIG": embedding_config,
             "EXPERIMENTS": config.get('experiments'),
-            "INSTANCE_NAME": args.name or config.get('name') or os.environ.get('TIKLOCAL_NAME'),
+            "INSTANCE_NAME": args.name or os.environ.get('TIKLOCAL_NAME') or config.get('name'),
             "TIKTOK_DOWNLOADER": config.get('tiktok_downloader'),
         })
     except ValueError as exc:

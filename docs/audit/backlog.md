@@ -109,6 +109,14 @@
 | [P3] 重叠源归属语义（两个源指向同一目录时后配置者整体消失） | `tiklocal/web/library.py:202`、`:210` | 第 15 轮已加 `overlap_warnings` 告警收口；彻底解决需要「源优先级」配置项与前端展示，属产品决策 |
 | [P2] 备份/导出/恢复功能整体缺失（无 backup/export/restore 路由与 service） | 全仓 | 属功能缺口而非缺陷，需单独立项，且导出内容要先做敏感字段审查（token/路径） |
 | [P3] `tiklocal/web/settings.py` 的 `safe()` 把统计异常吞成 0，页面上看不出「统计不可用」 | `tiklocal/web/settings.py` | 当前以日志留痕替代；要做用户可见提示需前端配合 |
-| [P3] 首次运行/空态引导复查本轮未执行（派发的 agent 未收到本轮任务） | `tiklocal/app.py`、`templates/home.html` | 顺延到第 19 轮重新派发 |
+| [P3] 首次运行/空态引导复查本轮未执行（派发的 agent 未收到本轮任务） | `tiklocal/app.py`、`templates/home.html` | 已在第 19 轮复查（空态 CTA 死胡同见第 19 轮 #7），本条关闭 |
+
+## 第 19 轮新增（按严重度）
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| [P1] 首次索引 19,222 文件 8.19 s，EXIF 同步读取占 6.25 s（76%），无 EXIF 时 1.94 s；暖索引 1.55 s | `tiklocal/services/library_index.py::_extract_time_metadata_batch` | 修法为「扫描先写 `time_metadata_version=0` + mtime 兜底，后台探测线程回填 `captured_at`」，会改变首屏时间线排序语义（探测完成前按 mtime 排），需单列一轮设计与压测 |
+| [P2] 视频封面每张 1.36 s：先起一次 ffmpeg 读 Duration，再起一次抽帧 | `tiklocal/services/thumbnail.py::_probe_duration` / `_extract_frame` | 需要把时长持久化进 `media_items.duration` 并由扫描写入，否则只能固定时间点抽帧、牺牲封面质量 |
+| [P2] 空态「添加媒体来源」CTA 跳到 `/settings/`，但设置页没有来源管理入口，用户无路可走 | `tiklocal/static/home_page_controller.js`、`templates/settings.html` | 来源由 CLI `--source` / `config.yaml` 决定，网页只能做只读列表 + 指引，属新功能（需先定「网页能否改来源」的产品语义） |
 
 

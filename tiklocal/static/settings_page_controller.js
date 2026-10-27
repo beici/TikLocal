@@ -404,7 +404,24 @@
       runButton(refreshButton, T('settings.scan.busy'), async () => {
         const payload = await requestJson('/api/library/sync', { method: 'POST' });
         await loadStats();
-        TikLocalUI.toast(T('settings.scan.done', { count: Number(payload.data?.indexed || 0) }));
+        const data = payload.data || {};
+        const unavailable = Array.isArray(data.unavailable_sources) ? data.unavailable_sources : [];
+        const failed = data.source_errors && typeof data.source_errors === 'object' ? Object.keys(data.source_errors) : [];
+        const sources = unavailable.concat(failed.filter((id) => unavailable.indexOf(id) < 0));
+        if (data.busy) {
+          // A concurrent scan reports indexed=0; saying "scan complete" made the
+          // library look empty when it was simply still being built.
+          TikLocalUI.toast(T('settings.scan.running'), 'warning');
+          return;
+        }
+        if (sources.length) {
+          TikLocalUI.toast(T('settings.scan.unavailable', {
+            count: Number(data.indexed || 0),
+            sources: sources.map((id) => '@' + id).join(', '),
+          }), 'error');
+          return;
+        }
+        TikLocalUI.toast(T('settings.scan.done', { count: Number(data.indexed || 0) }));
       }).catch(() => TikLocalUI.toast(T('settings.scan.failed'), 'error'));
     });
   });

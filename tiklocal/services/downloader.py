@@ -1616,7 +1616,11 @@ class DownloadManager:
         return "", "none", None
 
     def _expand_cookie_dir(self, cookie_dir_text: str) -> Path:
-        return Path(cookie_dir_text).expanduser()
+        # A relative cookie_dir used to resolve against the process CWD, so the
+        # same setting pointed at a different folder after a restart from another
+        # directory and the settings page reported files that no longer loaded.
+        path = Path(cookie_dir_text).expanduser()
+        return path if path.is_absolute() else (Path.cwd() / path).resolve()
 
     def _cookie_dir_path(self) -> Path:
         with self._lock:
