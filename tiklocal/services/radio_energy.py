@@ -20,17 +20,23 @@ import os
 import shutil
 import subprocess as sp
 import sys
+import threading
 import wave
 from pathlib import Path
 from typing import Callable, Iterator
 
 from tiklocal.paths import get_data_dir
+from tiklocal.services import download_tools
 
 HOP_SECONDS = 0.25
 DECODE_RATE = 4000
 WINDOW_DB = 24.0
 LOUD_PERCENTILE = 0.95
 MAX_HOPS = 4 * 60 * 60 * 4
+# A stalled demuxer (network share, damaged container) must not pin a waitress
+# worker forever: the read loop runs on a helper thread and is abandoned after
+# this long, with the child killed.
+DECODE_TIMEOUT_SEC = 60.0
 _TEMP_COUNTER = 0
 FORMAT_VERSION = 1
 
@@ -108,10 +114,26 @@ def envelope_values(powers: list[float]) -> list[int]:
     return values
 
 
+def _ffmpeg_argv() -> list[str] | None:
+    """Prefer the ffmpeg the project ships with over a bare ``PATH`` lookup.
+
+    The default install has no system ffmpeg: thumbnails and frame extraction go
+    through ``download_tools.resolve_tool``, which also finds the bundled
+    ``imageio-ffmpeg`` binary. Gating on ``shutil.which`` alone made every
+    non-WAV track report "no envelope".
+    """
+    resolved = download_tools.resolve_tool('ffmpeg')
+    if resolved:
+        return resolved
+    found = shutil.which('ffmpeg')
+    return [found] if found else None
+
+
 def decode_powers(source: Path) -> list[float] | None:
     """Mean-square power per hop, from ffmpeg when available, else from a WAV file."""
-    if shutil.which('ffmpeg'):
-        powers = _ffmpeg_powers(source)
+    argv = _ffmpeg_argv()
+    if argv:
+        powers = _ffmpeg_powers(source, argv)
         if powers:
             return powers
     if source.suffix.lower() == '.wav':
@@ -119,9 +141,20 @@ def decode_powers(source: Path) -> list[float] | None:
     return None
 
 
-def _ffmpeg_powers(source: Path) -> list[float] | None:
+def _kill_process(process: sp.Popen) -> None:
+    try:
+        process.kill()
+    except OSError:
+        pass
+    try:
+        process.wait(timeout=5)
+    except (OSError, sp.SubprocessError):
+        pass
+
+
+def _ffmpeg_powers(source: Path, argv: list[str]) -> list[float] | None:
     command = [
-        'ffmpeg', '-v', 'error', '-nostdin', '-i', str(source),
+        *argv, '-v', 'error', '-nostdin', '-i', str(source),
         '-vn', '-ac', '1', '-ar', str(DECODE_RATE), '-f', 's16le', '-acodec', 'pcm_s16le', '-',
     ]
     try:
@@ -129,14 +162,30 @@ def _ffmpeg_powers(source: Path) -> list[float] | None:
     except OSError:
         return None
     hop_bytes = int(DECODE_RATE * HOP_SECONDS) * 2
-    try:
-        powers = _hop_powers(lambda: process.stdout.read(hop_bytes), stride=1)
-        process.stdout.close()
-        process.wait(timeout=60)
-    except (OSError, sp.SubprocessError):
-        process.kill()
+    outcome: dict[str, list[float] | None] = {'powers': None}
+
+    def decode() -> None:
+        try:
+            outcome['powers'] = _hop_powers(lambda: process.stdout.read(hop_bytes), stride=1)
+        except (OSError, ValueError):
+            outcome['powers'] = None
+
+    # `stdout.read` has no deadline of its own; a demuxer stuck on a dead share
+    # would otherwise hold the request thread forever.
+    worker = threading.Thread(target=decode, name='radio-energy-decode', daemon=True)
+    worker.start()
+    worker.join(DECODE_TIMEOUT_SEC)
+    if worker.is_alive():
+        _kill_process(process)
         return None
-    return powers if process.returncode == 0 else None
+    try:
+        process.stdout.close()
+        process.wait(timeout=5)
+    except (OSError, sp.SubprocessError):
+        _kill_process(process)
+        return None
+    powers = outcome['powers']
+    return powers if powers and process.returncode == 0 else None
 
 
 def _wav_powers(source: Path) -> list[float] | None:

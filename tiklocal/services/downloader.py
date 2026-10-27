@@ -1029,6 +1029,11 @@ class DownloadManager:
                 job["finished_at"] = utc_now_iso()
                 if job.get('failure_stage') == 'index':
                     job['error_message'] = f'The file was downloaded, but media registration failed: {exc}'
+                    if job.get('output_files_rel'):
+                        # The bytes are already in the library and only the index
+                        # write failed; without the flag the UI offers a plain
+                        # retry, which re-downloads and duplicates the file.
+                        job['partial'] = True
                 elif isinstance(exc, FileNotFoundError):
                     engine = job.get('engine') or DEFAULT_DOWNLOAD_ENGINE
                     job['error_message'] = f'{engine} was not found. Install it before using this engine.'
@@ -1416,11 +1421,25 @@ class DownloadManager:
             # A downloader may leave a child (such as ffmpeg) holding stdout open.
             if os.name == 'posix':
                 os.killpg(process.pid, signal.SIGKILL)
-            elif process.poll() is None:
-                process.kill()
+            else:
+                # TerminateProcess only reaches the direct child; yt-dlp's ffmpeg
+                # merger keeps writing into the job temp dir after a cancel.
+                self._kill_process_tree_windows(process.pid)
+                if process.poll() is None:
+                    process.kill()
         except ProcessLookupError:
             pass
         process.wait()
+
+    @staticmethod
+    def _kill_process_tree_windows(pid: int) -> None:
+        if os.name != 'nt':
+            return
+        try:
+            sp.run(['taskkill', '/T', '/F', '/PID', str(pid)],
+                   stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=15)
+        except (OSError, sp.SubprocessError):
+            pass
 
     def _to_media_relative(self, path_text: str) -> str:
         if not path_text:

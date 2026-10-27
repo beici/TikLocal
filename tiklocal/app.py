@@ -1,6 +1,8 @@
 import os
 import datetime
 import gc
+import gzip
+import hashlib
 import logging
 import sqlite3
 import socket
@@ -316,6 +318,52 @@ def create_app(test_config=None):
                 response.headers['Cache-Control'] = 'private, max-age=3600, must-revalidate'
         elif response.mimetype == 'text/html':
             response.headers['Cache-Control'] = 'private, no-cache'
+        return response
+
+    # Everything the app serves used to go out uncompressed: the HTML pages inline
+    # the whole i18n catalog (~73 KB of the ~86 KB page) and page JS is sent
+    # verbatim, so a first visit moved roughly four times the bytes it needed to.
+    COMPRESSIBLE_MIMETYPES = frozenset({
+        'text/html',
+        'text/css',
+        'text/plain',
+        'text/javascript',
+        'application/javascript',
+        'application/json',
+        'image/svg+xml',
+    })
+    COMPRESS_MIN_BYTES = 1024
+
+    @app.after_request
+    def finalize_response(response):
+        if response.direct_passthrough or response.status_code != 200:
+            return response
+        if response.headers.get('Content-Encoding'):
+            return response
+        if response.mimetype == 'text/html':
+            # `no-cache` asks the browser to revalidate on every navigation, which
+            # only pays off when there is a validator. Rendering an ETag from the
+            # body makes repeat visits a 304 instead of another ~86 KB transfer.
+            if not response.get_etag()[0]:
+                response.set_etag(hashlib.sha1(response.get_data()).hexdigest()[:16])
+            response = response.make_conditional(request.environ, accept_ranges=False)
+            if response.status_code != 200:
+                return response
+        if 'gzip' not in (request.headers.get('Accept-Encoding') or '').lower():
+            return response
+        if (response.mimetype or '') not in COMPRESSIBLE_MIMETYPES:
+            return response
+        data = response.get_data()
+        if len(data) < COMPRESS_MIN_BYTES:
+            return response
+        compressed = gzip.compress(data, 6)
+        if len(compressed) >= len(data):
+            return response
+        response.set_data(compressed)
+        response.headers['Content-Encoding'] = 'gzip'
+        response.headers['Content-Length'] = str(len(compressed))
+        vary = response.headers.get('Vary')
+        response.headers['Vary'] = f'{vary}, Accept-Encoding' if vary else 'Accept-Encoding'
         return response
 
     # Initialize Services

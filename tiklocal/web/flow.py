@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from urllib.parse import quote
 
-from flask import render_template, request
+from flask import Response, render_template, request
 
 from tiklocal.i18n import t
 from tiklocal.services import media_naming
@@ -585,6 +585,11 @@ def register_flow_routes(
 
     @app.route('/api/feed/mix')
     def api_feed_mix():
+        # Flask maps HEAD onto the GET view and only drops the body afterwards, so a
+        # probe or a player preflight used to pay for the whole candidate pool and
+        # JSON serialisation (139 ms on an 8k library) just to learn nothing.
+        if request.method == 'HEAD':
+            return Response(status=200, mimetype='application/json')
         # The first request of a feed session pins the ranking cutoff; every later
         # page echoes it back, so cards already shown are not re-ranked (which made
         # page 2 repeat page 1 and permanently skip the items pushed up).

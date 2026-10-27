@@ -12,6 +12,7 @@ from tiklocal.services.library import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_
 from tiklocal.services import media_naming
 from tiklocal.services.database import AppDatabase
 from tiklocal.services.media_info import probe_media_dims, probe_tool_available
+from tiklocal.services.search_text import normalize as normalize_search_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -58,8 +59,8 @@ class MediaIndexStore:
                       extension, size_bytes, mtime, captured_at, captured_local_date,
                       capture_year, capture_month, time_source, time_confidence,
                       time_metadata_version, discovered_at, indexed_at,
-                      live_video_uri, album_key, album_index, album_size
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      live_video_uri, album_key, album_index, album_size, search_text
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(uri) DO UPDATE SET
                       source_id = excluded.source_id,
                       rel_path = excluded.rel_path,
@@ -80,7 +81,8 @@ class MediaIndexStore:
                       live_video_uri = excluded.live_video_uri,
                       album_key = excluded.album_key,
                       album_index = excluded.album_index,
-                      album_size = excluded.album_size
+                      album_size = excluded.album_size,
+                      search_text = excluded.search_text
                     """,
                     values,
                 )
@@ -156,8 +158,8 @@ class MediaIndexStore:
                       extension, size_bytes, mtime, captured_at, captured_local_date,
                       capture_year, capture_month, time_source, time_confidence,
                       time_metadata_version, discovered_at, indexed_at,
-                      live_video_uri, album_key, album_index, album_size
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      live_video_uri, album_key, album_index, album_size, search_text
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(uri) DO UPDATE SET
                       size_bytes = excluded.size_bytes,
                       mtime = excluded.mtime,
@@ -173,7 +175,8 @@ class MediaIndexStore:
                       live_video_uri = excluded.live_video_uri,
                       album_key = excluded.album_key,
                       album_index = excluded.album_index,
-                      album_size = excluded.album_size
+                      album_size = excluded.album_size,
+                      search_text = excluded.search_text
                     """,
                     self._record_values(record, now),
                 )
@@ -608,6 +611,7 @@ class MediaIndexStore:
             (str(record["album_key"]) if record.get("album_key") else None),
             (int(record["album_index"]) if record.get("album_index") is not None else None),
             (int(record["album_size"]) if record.get("album_size") is not None else None),
+            normalize_search_text(f"{record['filename']} {record['rel_path']}"),
         )
 
     @staticmethod
@@ -668,11 +672,10 @@ class MediaIndexStore:
         if cls.is_month_key(month):
             clauses.append("capture_month = ?")
             params.append(month)
-        term = str(search or "").strip()
+        term = normalize_search_text(str(search or ""))
         if term:
-            clauses.append("(filename LIKE ? ESCAPE '\\' OR rel_path LIKE ? ESCAPE '\\')")
-            escaped = cls._like_term(term)
-            params.extend((escaped, escaped))
+            clauses.append("search_text LIKE ? ESCAPE '\\'")
+            params.append(cls._like_term(term))
         return f"WHERE {' AND '.join(clauses)}", params
 
     @staticmethod

@@ -6,6 +6,8 @@ import io
 import math
 import mimetypes
 import time
+import zlib
+from email.utils import formatdate
 from pathlib import Path
 from urllib.parse import quote
 
@@ -314,6 +316,25 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         if not uri: return redirect('/library')
         return redirect(f"/delete/{quote(uri)}")
 
+    def _apply_media_validators(response, target):
+        """Give hand-built media responses the same validators as ``send_file``.
+
+        The 200 path goes through ``send_file``, which sets ``ETag`` and
+        ``Last-Modified``; the 206/416 paths build the response by hand and used to
+        ship without either. A player that revalidates a partially downloaded range
+        then had nothing to compare and re-downloaded the whole file.
+        """
+        try:
+            stat = target.stat()
+        except OSError:
+            return response
+        # Same shape as ``werkzeug.utils.send_file`` so the 200 path and the
+        # hand-built range paths answer with one identical validator.
+        check = zlib.adler32(str(target).encode()) & 0xFFFFFFFF
+        response.set_etag(f'{stat.st_mtime}-{stat.st_size}-{check}')
+        response.headers['Last-Modified'] = formatdate(stat.st_mtime, usegmt=True)
+        return response
+
     def _ranged_media(target):
         """Serve a single byte range through ``wsgi.file_wrapper``.
 
@@ -336,7 +357,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             response = Response(status=416)
             response.headers['Content-Range'] = f'bytes */{size}'
             response.headers['Accept-Ranges'] = 'bytes'
-            return response
+            return _apply_media_validators(response, target)
         if span == 'ignore':
             # An unsupported Range (multi-range, bad syntax) must not look like a
             # missing file: RFC 9110 lets the server ignore it and send everything.
@@ -355,7 +376,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         response.headers['Accept-Ranges'] = 'bytes'
         response.headers['Cache-Control'] = 'private, no-cache'
         response.mimetype = mimetypes.guess_type(target.name)[0] or 'application/octet-stream'
-        return response
+        return _apply_media_validators(response, target)
 
     @app.route("/media/<path:filename>")
     def serve_media(filename):

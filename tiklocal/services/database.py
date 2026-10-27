@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
+from tiklocal.services.search_text import normalize as normalize_search_text
+
 
 @dataclass(frozen=True)
 class Migration:
@@ -353,6 +355,24 @@ def _migrate_014_index_media_items_mtime(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_015_add_search_text(conn: sqlite3.Connection) -> None:
+    """Store a case/Unicode folded copy of the name for search.
+
+    SQLite's LIKE only folds ASCII case, so "ärger" never matched "Ärger.jpg" and
+    a decomposed (NFD) name never matched its NFC query. Folding in Python and
+    comparing the folded column keeps the filter inside SQL, which pagination
+    needs; existing rows are backfilled here.
+    """
+    conn.execute('ALTER TABLE media_items ADD COLUMN search_text TEXT')
+    rows = conn.execute('SELECT uri, filename, rel_path FROM media_items').fetchall()
+    updates = [
+        (normalize_search_text(f"{row['filename'] or ''} {row['rel_path'] or ''}"), row['uri'])
+        for row in rows
+    ]
+    if updates:
+        conn.executemany('UPDATE media_items SET search_text = ? WHERE uri = ?', updates)
+
+
 MIGRATIONS = [
     Migration(1, "create_image_vectors", _migrate_001_create_image_vectors),
     Migration(2, "create_media_similarity_groups", _migrate_002_create_media_similarity_groups),
@@ -368,6 +388,7 @@ MIGRATIONS = [
     Migration(12, "add_video_frames", _migrate_012_add_video_frames),
     Migration(13, "douyin_media_groups", _migrate_013_douyin_media_groups),
     Migration(14, "index_media_items_mtime", _migrate_014_index_media_items_mtime),
+    Migration(15, "add_search_text", _migrate_015_add_search_text),
 ]
 
 

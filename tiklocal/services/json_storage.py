@@ -1,13 +1,18 @@
 import json
 import os
+import random
 import time
 from pathlib import Path
 
 # A reader holding the target open (antivirus, Windows Search, another request
 # mid-read) makes `os.replace` fail with a sharing violation on Windows. Retry
-# briefly instead of failing the save, and never treat that as corruption.
-_REPLACE_ATTEMPTS = 5
-_REPLACE_DELAY_SEC = 0.03
+# with a growing, jittered delay instead of failing the save, and never treat
+# that as corruption. Six threads saving the same store in a loop exhaust a flat
+# 5x30ms budget, so the delay doubles up to a cap.
+_REPLACE_ATTEMPTS = 8
+_REPLACE_DELAY_SEC = 0.02
+_REPLACE_MAX_DELAY_SEC = 0.4
+_WRITE_ATTEMPTS = 3
 _READ_ATTEMPTS = 5
 _READ_DELAY_SEC = 0.05
 _QUARANTINE_KEEP = 3
@@ -33,7 +38,16 @@ def write_json_atomic(path: Path, value: object) -> None:
     # built from pid+counter lets PermissionError surface immediately.
     temporary = path.with_name(f'{path.name}.{os.getpid()}.{_TEMP_COUNTER}.tmp')
     try:
-        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
+        payload = json.dumps(value, ensure_ascii=False, indent=2)
+        for attempt in range(_WRITE_ATTEMPTS):
+            try:
+                temporary.write_text(payload, encoding='utf-8')
+                break
+            except PermissionError:
+                if attempt == _WRITE_ATTEMPTS - 1:
+                    raise
+                time.sleep(_REPLACE_DELAY_SEC)
+        delay = _REPLACE_DELAY_SEC
         for attempt in range(_REPLACE_ATTEMPTS):
             try:
                 os.replace(temporary, path)
@@ -41,7 +55,8 @@ def write_json_atomic(path: Path, value: object) -> None:
             except PermissionError:
                 if attempt == _REPLACE_ATTEMPTS - 1:
                     raise
-                time.sleep(_REPLACE_DELAY_SEC)
+                time.sleep(delay * (1 + random.random() * 0.5))
+                delay = min(delay * 2, _REPLACE_MAX_DELAY_SEC)
     finally:
         try:
             temporary.unlink(missing_ok=True)

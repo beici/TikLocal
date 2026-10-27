@@ -102,4 +102,13 @@
 | [P3] `config.yaml` 的 `download:` 段无读取入口，改了没反应也无日志 | `tiklocal/app.py:391`、`tiktok_downloader.py:511-514` | 需先定 YAML 与 store 的优先级语义 |
 | [P2] 服务管理器强杀后立即重启，日志轮转仍撞 WinError 32 | `tiklocal/services/logging_setup.py:89-94` | 单实例锁只挡正常双开；需按 pid 命名日志文件并清理旧文件 |
 
+## 第 18 轮新增（按严重度）
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| [P3] 重叠源归属语义（两个源指向同一目录时后配置者整体消失） | `tiklocal/web/library.py:202`、`:210` | 第 15 轮已加 `overlap_warnings` 告警收口；彻底解决需要「源优先级」配置项与前端展示，属产品决策 |
+| [P2] 备份/导出/恢复功能整体缺失（无 backup/export/restore 路由与 service） | 全仓 | 属功能缺口而非缺陷，需单独立项，且导出内容要先做敏感字段审查（token/路径） |
+| [P3] `tiklocal/web/settings.py` 的 `safe()` 把统计异常吞成 0，页面上看不出「统计不可用」 | `tiklocal/web/settings.py` | 当前以日志留痕替代；要做用户可见提示需前端配合 |
+| [P3] 首次运行/空态引导复查本轮未执行（派发的 agent 未收到本轮任务） | `tiklocal/app.py`、`templates/home.html` | 顺延到第 19 轮重新派发 |
+
 
