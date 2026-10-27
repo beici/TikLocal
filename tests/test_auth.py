@@ -243,3 +243,140 @@ def test_unsafe_api_request_without_session_is_401_not_403(authenticated_app):
 
     assert response.status_code == 401
     assert response.get_json()['success'] is False
+
+
+def _api_csrf(client) -> str:
+    with client.session_transaction() as session:
+        return session['_csrf_token']
+
+
+def _change_password(client, current, new, csrf=None):
+    payload = {'current_password': current, 'new_password': new}
+    if csrf is not None:
+        payload['_csrf_token'] = csrf
+    return client.post('/api/auth/password', json=payload)
+
+
+NEW_PASSWORD = 'replacement-private-password'
+
+
+def test_settings_page_renders_the_password_dialog(authenticated_app):
+    app, _ = authenticated_app
+    client = app.test_client()
+    _login(client)
+
+    page = client.get('/settings/')
+    body = page.get_data(as_text=True)
+
+    assert page.status_code == 200
+    assert 'id="change-password"' in body
+    assert 'id="password-form"' in body
+    assert 'id="password-current"' in body
+    assert f'minlength="{MIN_PASSWORD_LENGTH}"' in body
+
+
+def test_password_change_keeps_this_session_and_signs_out_the_others(authenticated_app):
+    # The owner changes the password from their own browser: that session must
+    # survive, while the revision bump invalidates every other cookie. Otherwise
+    # the "change password" button logs the owner out of the page they clicked it on.
+    app, auth_path = authenticated_app
+    owner = app.test_client()
+    _login(owner)
+    other_device = app.test_client()
+    _login(other_device)
+    assert owner.get('/').status_code == 200
+    assert other_device.get('/').status_code == 200
+
+    response = _change_password(owner, PASSWORD, NEW_PASSWORD, csrf=_api_csrf(owner))
+
+    assert response.status_code == 200
+    assert response.get_json()['success'] is True
+    assert response.get_json()['revision'] == 2
+    assert owner.get('/settings/').status_code == 200
+    assert other_device.get('/').status_code == 302
+    store = AuthStore(auth_path)
+    assert store.verify(NEW_PASSWORD)
+    assert not store.verify(PASSWORD)
+    assert _login(app.test_client(), NEW_PASSWORD).status_code == 302
+    assert _login(app.test_client(), PASSWORD).status_code == 401
+
+
+def test_password_change_rejects_the_wrong_current_password(authenticated_app):
+    app, auth_path = authenticated_app
+    client = app.test_client()
+    _login(client)
+
+    response = _change_password(client, 'not-my-password', NEW_PASSWORD, csrf=_api_csrf(client))
+
+    assert response.status_code == 400
+    assert response.get_json()['error'] == t('settings.password.wrong_current')
+    assert AuthStore(auth_path).verify(PASSWORD)
+    assert client.get('/').status_code == 200
+
+
+def test_password_change_rejects_a_short_password(authenticated_app):
+    app, auth_path = authenticated_app
+    client = app.test_client()
+    _login(client)
+
+    response = _change_password(client, PASSWORD, 'short', csrf=_api_csrf(client))
+
+    assert response.status_code == 400
+    assert str(MIN_PASSWORD_LENGTH) in response.get_json()['error']
+    assert AuthStore(auth_path).verify(PASSWORD)
+
+
+def test_password_change_requires_a_csrf_token(authenticated_app):
+    app, auth_path = authenticated_app
+    client = app.test_client()
+    _login(client)
+
+    response = _change_password(client, PASSWORD, NEW_PASSWORD)
+
+    assert response.status_code == 403
+    assert AuthStore(auth_path).verify(PASSWORD)
+
+
+def test_password_change_is_unavailable_when_auth_is_off(tmp_path):
+    media_root = tmp_path / 'media'
+    media_root.mkdir()
+    (media_root / 'clip.mp4').write_bytes(b'private-video')
+    app = create_app({
+        'TESTING': True,
+        'MEDIA_ROOT': media_root,
+        'AUTH_ENABLED': False,
+        'AUTH_PATH': tmp_path / 'auth.json',
+    })
+    client = app.test_client()
+
+    response = client.post('/api/auth/password', json={
+        'current_password': PASSWORD,
+        'new_password': NEW_PASSWORD,
+    })
+
+    assert response.status_code == 400
+    assert response.get_json()['error'] == t('settings.password.disabled')
+    # The settings page must not advertise a control it cannot honour.
+    assert 'id="change-password"' not in client.get('/settings/').get_data(as_text=True)
+
+
+def test_password_change_shares_the_login_attempt_budget(authenticated_app):
+    # Both endpoints check the same secret, so a wrong current password in the
+    # dialog must not hand an attacker a second, separate five-attempt budget.
+    app, auth_path = authenticated_app
+    client = app.test_client()
+    _login(client)
+    csrf = _api_csrf(client)
+
+    for _ in range(5):
+        assert _change_password(client, 'not-my-password', NEW_PASSWORD, csrf=csrf).status_code == 400
+
+    blocked = _change_password(client, 'not-my-password', NEW_PASSWORD, csrf=csrf)
+    assert blocked.status_code == 429
+    assert 0 < int(blocked.headers['Retry-After']) <= 300
+    # Even the right password waits out the window, and the login page is blocked too.
+    assert _change_password(client, PASSWORD, NEW_PASSWORD, csrf=csrf).status_code == 429
+    assert _login(app.test_client(), PASSWORD).status_code == 429
+    assert AuthStore(auth_path).verify(PASSWORD)
+
+

@@ -288,6 +288,9 @@ body[data-nav-context="settings"] {
 .pairing-field { display: grid; gap: 7px; margin-top: 18px; }
 .pairing-label { color: var(--settings-muted); font-size: 10px; font-weight: 650; }
 .pairing-input, .pairing-link { width: 100%; border: 1px solid var(--settings-line); border-radius: 11px; padding: 11px 12px; color: var(--settings-ink); background: var(--settings-card); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+/* A password is typed, not pasted like a pairing link: keep it in the UI font. */
+.password-input { font: inherit; font-size: 14px; letter-spacing: 0.02em; }
+.password-input:focus-visible { outline: 2px solid var(--settings-ink); outline-offset: 1px; }
 .pairing-link { min-height: 92px; resize: none; word-break: break-all; }
 .pairing-warning { min-height: 18px; margin: 6px 0 0; color: #a2654d; font-size: 10px; line-height: 1.45; }
 .pairing-result[hidden] { display: none; }

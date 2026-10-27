@@ -125,12 +125,25 @@ tiklocal auth set-password    # new password; signs out existing sessions
 TIKLOCAL_AUTH_PASSWORD='a-long-private-password' tiklocal auth set-password
 ```
 
+You can also rotate it in the browser: **Settings → Access password → Change**.
+That dialog asks for the current password, keeps the browser you are using signed
+in, and signs out every other session and paired device.
+
 To start a *new* instance with your own password instead of the default, set
 `TIKLOCAL_AUTH_PASSWORD` before its first start; it is ignored once
 `auth.json` exists.
 
 The password is stored as a scrypt hash in `~/.tiklocal/auth.json`. Keep TikLocal
 on a trusted network.
+
+### Thumbnail cache
+
+Thumbnails are cached on the machine that runs TikLocal, never in the media
+folder and never on a NAS share: `TIKLOCAL_INSTANCE/thumbnails`, which is
+`~/.tiklocal/thumbnails` unless you set `TIKLOCAL_INSTANCE`. Each file is named
+from a hash of the media root and the file URI, so several libraries can share
+one cache directory. Settings → Media library clears it (it regenerates on the
+next visit).
 
 ### HTTPS
 

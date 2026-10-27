@@ -17,7 +17,7 @@ docker run -d --name tiklocal --restart unless-stopped --init \
   --user "$(id -u):$(id -g)" -p 8000:8000 -e TZ=Asia/Shanghai \
   -v ~/Videos:/media -v "$PWD/tiklocal-data:/data" \
   tiklocal:latest
-docker logs tiklocal                      # shows the initial access password
+docker logs tiklocal                      # sign in with the default password admin666
 ```
 
 Or use [`compose.yaml`](../compose.yaml) from the checkout: edit the media path
@@ -46,6 +46,9 @@ exposing the container. To start with your own password instead, set
 ```bash
 docker exec -it tiklocal tiklocal auth set-password
 ```
+
+Or use **Settings → Access password → Change** in the web UI; that signs out the
+other sessions but keeps the browser you are using.
 
 ## Configuration
 

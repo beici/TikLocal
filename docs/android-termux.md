@@ -30,7 +30,8 @@ tiklocal ~/storage/shared/Movies --name Pixel
 Add more folders with `--media-source`, for example
 `--media-source camera=~/storage/shared/DCIM/Camera`. The first start uses the
 default access password `admin666`; change it with
-`tiklocal auth set-password`.
+`tiklocal auth set-password` or from **Settings → Access password → Change** in
+the web UI.
 
 Open `http://<phone-address>:8000` on another device on the same Wi-Fi. The
 phone's address is under **Settings → Network & internet → Internet → (your

@@ -142,6 +142,22 @@
       </div>
     </section>
 
+    {% if auth_enabled %}
+    <section aria-labelledby="security-title">
+      <h2 id="security-title" class="settings-section-title">{{ t('settings.section.security') }}</h2>
+      <div class="settings-card">
+        <div class="settings-row">
+          <span class="setting-icon"><i data-feather="lock"></i></span>
+          <div class="settings-row-main">
+            <div class="settings-row-title">{{ t('settings.password.title') }}</div>
+            <div class="settings-row-copy">{{ t('settings.password.copy') }}</div>
+          </div>
+          <button id="change-password" class="settings-action" type="button">{{ t('settings.password.action') }}</button>
+        </div>
+      </div>
+    </section>
+    {% endif %}
+
     <section id="download" aria-labelledby="download-title">
       <h2 id="download-title" class="settings-section-title">{{ t('settings.section.downloads') }}</h2>
       <div class="settings-card">
@@ -234,6 +250,36 @@
     </section>
   </div>
 </main>
+{% if auth_enabled %}
+<div id="password-mask" class="pairing-mask" hidden>
+  <form id="password-form" class="pairing-dialog" role="dialog" aria-modal="true" aria-labelledby="password-title" novalidate>
+    <div class="credential-head">
+      <div>
+        <h2 id="password-title" class="credential-title">{{ t('settings.password.title') }}</h2>
+        <p class="credential-copy">{{ t('settings.password.dialog_copy', n=min_password_length) }}</p>
+      </div>
+      <button id="close-password" class="credential-close" type="button" aria-label="{{ t('common.close') }}"><i data-feather="x"></i></button>
+    </div>
+    <label class="pairing-field">
+      <span class="pairing-label">{{ t('settings.password.current_label') }}</span>
+      <input id="password-current" class="pairing-input password-input" type="password" autocomplete="current-password">
+    </label>
+    <label class="pairing-field">
+      <span class="pairing-label">{{ t('settings.password.new_label') }}</span>
+      <input id="password-new" class="pairing-input password-input" type="password" autocomplete="new-password" minlength="{{ min_password_length }}">
+    </label>
+    <label class="pairing-field">
+      <span class="pairing-label">{{ t('settings.password.confirm_label') }}</span>
+      <input id="password-confirm" class="pairing-input password-input" type="password" autocomplete="new-password">
+    </label>
+    <p id="password-hint" class="pairing-warning" aria-live="polite"></p>
+    <div class="pairing-actions">
+      <button id="cancel-password" class="settings-action" type="button">{{ t('common.cancel') }}</button>
+      <button id="save-password" class="settings-action is-primary" type="submit">{{ t('common.save') }}</button>
+    </div>
+  </form>
+</div>
+{% endif %}
 <div id="credential-mask" class="credential-mask" hidden>
   <section class="credential-dialog" role="dialog" aria-modal="true" aria-labelledby="credential-title">
     <div class="credential-head">

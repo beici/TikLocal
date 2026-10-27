@@ -300,6 +300,71 @@
     document.getElementById('manage-credentials').focus();
   }
 
+  // ---- access password ----
+  // The dialog is the only place a password is typed, so the checks live here and
+  // the server repeats them: a busy minlength attribute alone is not a guarantee.
+  const passwordMask = document.getElementById('password-mask');
+  const changePasswordButton = document.getElementById('change-password');
+  const savePasswordButton = document.getElementById('save-password');
+
+  function passwordInput(id) {
+    return document.getElementById(id);
+  }
+
+  function setPasswordHint(message = '') {
+    const hint = document.getElementById('password-hint');
+    if (hint) hint.textContent = message;
+  }
+
+  function resetPasswordFields() {
+    ['password-current', 'password-new', 'password-confirm'].forEach((id) => {
+      const field = passwordInput(id);
+      if (field) field.value = '';
+    });
+    setPasswordHint('');
+  }
+
+  function openPasswordDialog() {
+    if (!passwordMask) return;
+    resetPasswordFields();
+    passwordMask.hidden = false;
+    document.body.style.overflow = 'hidden';
+    passwordInput('password-current')?.focus();
+  }
+
+  function closePasswordDialog() {
+    if (!passwordMask) return;
+    passwordMask.hidden = true;
+    document.body.style.overflow = '';
+    resetPasswordFields();
+    changePasswordButton?.focus();
+  }
+
+  async function submitPasswordChange() {
+    const current = passwordInput('password-current')?.value || '';
+    const next = passwordInput('password-new')?.value || '';
+    const confirmation = passwordInput('password-confirm')?.value || '';
+    const minimum = Number(passwordInput('password-new')?.minLength || 8);
+    if (!current || !next) { setPasswordHint(T('settings.password.required')); return; }
+    if (next.length < minimum) { setPasswordHint(T('settings.password.too_short', { n: minimum })); return; }
+    if (next === current) { setPasswordHint(T('settings.password.same')); return; }
+    if (next !== confirmation) { setPasswordHint(T('settings.password.mismatch')); return; }
+    setPasswordHint('');
+    await runButton(savePasswordButton, T('settings.password.saving'), async () => {
+      try {
+        await requestJson('/api/auth/password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ current_password: current, new_password: next }),
+        });
+        closePasswordDialog();
+        TikLocalUI.toast(T('settings.password.done'));
+      } catch (error) {
+        setPasswordHint(error.message || T('settings.password.failed'));
+      }
+    });
+  }
+
   function updatePairingWarning() {
     let warning = '';
     try {
@@ -500,6 +565,17 @@
     }).catch((error) => {
       document.getElementById('tiktok-downloader-hint').textContent = error.message || T('settings.tiktok.save_failed');
     });
+  });
+  changePasswordButton?.addEventListener('click', openPasswordDialog);
+  document.getElementById('close-password')?.addEventListener('click', closePasswordDialog);
+  document.getElementById('cancel-password')?.addEventListener('click', closePasswordDialog);
+  passwordMask?.addEventListener('click', (event) => { if (event.target === passwordMask) closePasswordDialog(); });
+  passwordMask?.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { event.preventDefault(); closePasswordDialog(); }
+  });
+  document.getElementById('password-form')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!savePasswordButton?.disabled) void submitPasswordChange();
   });
   document.getElementById('open-radio-pairing').addEventListener('click', openRadioPairing);
   document.getElementById('close-radio-pairing').addEventListener('click', closeRadioPairing);
