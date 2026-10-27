@@ -222,12 +222,32 @@
       }
     });
     document.addEventListener('keydown', function (event) {
-      if (event.key !== 'Escape') return;
-      // Escape anywhere on the page used to yank focus to the room button; only act
-      // when the picker is actually open.
-      if (!els.roomMenu || els.roomMenu.hidden) return;
-      closeRoomMenu();
-      els.btnRoom.focus();
+      if (event.key === 'Escape') {
+        // Escape anywhere on the page used to yank focus to the room button; only act
+        // when the picker is actually open.
+        if (!els.roomMenu || els.roomMenu.hidden) return;
+        closeRoomMenu();
+        els.btnRoom.focus();
+        return;
+      }
+      // Keyboard parity with the transport buttons: Space toggles, arrows seek.
+      var target = event.target;
+      if (target && typeof target.closest === 'function'
+        && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) {
+        return;
+      }
+      if (event.key === ' ') {
+        event.preventDefault();
+        togglePlay();
+        return;
+      }
+      if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+        if (!audio || !isFinite(audio.duration) || !audio.duration) return;
+        event.preventDefault();
+        var delta = event.key === 'ArrowRight' ? 5 : -5;
+        audio.currentTime = Math.min(audio.duration, Math.max(0, audio.currentTime + delta));
+        updateMediaPosition();
+      }
     });
     els.progressBar.addEventListener('input', function (event) {
       var duration = playableDuration();

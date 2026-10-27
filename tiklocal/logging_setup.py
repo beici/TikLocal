@@ -12,6 +12,7 @@ its default handler (``has_level_handler`` sees ours) and makes waitress' late
 """
 
 import logging
+import re
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -20,6 +21,34 @@ _CONFIGURED_FLAG = '_tiklocal_logging_configured'
 LOG_FILE_NAME = 'tiklocal.log'
 MAX_LOG_BYTES = 2 * 1024 * 1024
 BACKUP_COUNT = 3
+
+# Credentials reach the log through exception messages and request dumps far too
+# easily (e.g. a failing provider call echoes the URL with its key in the query).
+# Masking happens on the formatted text so both handlers get it for free.
+_SENSITIVE_PATTERN = re.compile(
+    r'(?i)\b(token|password|passwd|secret|api[_-]?key|cookie|authorization)'
+    r'(\s*[=:]\s*)'
+    r'([^\s,;&"\')]{4,})'
+)
+_BEARER_PATTERN = re.compile(r'(?i)\b(bearer)\s+([A-Za-z0-9._\-]{8,})')
+
+
+class RedactFilter(logging.Filter):
+    """Replace credential-looking values in log messages with ``***``."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+        redacted = _BEARER_PATTERN.sub(r'\1 ***', message)
+        redacted = _SENSITIVE_PATTERN.sub(lambda match: f'{match.group(1)}{match.group(2)}***', redacted)
+        if redacted != message:
+            # The arguments were already interpolated, so drop them: keeping them
+            # would make ``getMessage()`` raise on the next handler.
+            record.msg = redacted
+            record.args = ()
+        return True
 
 
 def configure_logging(instance_path, level: int = logging.INFO) -> logging.Logger:
@@ -30,9 +59,11 @@ def configure_logging(instance_path, level: int = logging.INFO) -> logging.Logge
 
     root.setLevel(level)
     formatter = logging.Formatter(_LOG_FORMAT)
+    redact = RedactFilter()
 
     stream = logging.StreamHandler()
     stream.setFormatter(formatter)
+    stream.addFilter(redact)
     root.addHandler(stream)
 
     try:
@@ -45,6 +76,7 @@ def configure_logging(instance_path, level: int = logging.INFO) -> logging.Logge
             encoding='utf-8',
         )
         file_handler.setFormatter(formatter)
+        file_handler.addFilter(redact)
         root.addHandler(file_handler)
     except OSError:
         # A read-only instance directory must not stop the server from starting.

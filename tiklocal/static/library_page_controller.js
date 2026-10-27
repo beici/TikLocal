@@ -817,6 +817,9 @@
       quickVideo.removeAttribute('poster');
       quickVideo.load();
       quickImage.src = item.media_url;
+      // The grid tile's thumbnail is decorative (the card carries the title), but the
+      // quick viewer is the full-size view: screen readers need the file name here.
+      quickImage.alt = String(item.name || '');
       quickImage.classList.add('active');
       mediaActions.loadCaption(item.name);
     }

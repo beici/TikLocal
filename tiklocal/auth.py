@@ -204,4 +204,8 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
     @app.post('/logout')
     def logout_view():
         session.clear()
-        return redirect(url_for('login_view'))
+        response = redirect(url_for('login_view'))
+        # session.clear() drops the server-side payload but leaves the cookie in the
+        # browser; clearing it keeps a stale session id from being replayed.
+        response.delete_cookie(app.config.get('SESSION_COOKIE_NAME') or 'session')
+        return response
