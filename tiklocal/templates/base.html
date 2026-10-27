@@ -2,7 +2,7 @@
 <html lang="{{ locale or 'zh' }}">
   <head>
     <meta charset="utf-8" />
-    <title>TikLocal · {{ instance_name }}</title>
+    <title>{% block title %}TikLocal · {{ instance_name }}{% endblock %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#171815" media="(prefers-color-scheme: dark)" />
@@ -35,13 +35,14 @@
     <script src="{{ static_asset('playback_resume.js') }}"></script>
     <script src="{{ static_asset('douyin_mode.js') }}"></script>
     <script src="{{ static_asset('page_transitions.js') }}"></script>
-    <script src="{{ url_for('static', filename='retire_pwa.js') }}"></script>
+    <script src="{{ static_asset('retire_pwa.js') }}"></script>
     {% if auth_enabled %}<script src="{{ static_asset('csrf_fetch.js') }}"></script>{% endif %}
     <link rel="stylesheet" href="{{ static_asset('base.css') }}">
     {% block extra_head %}{% endblock %}
     <link rel="stylesheet" type="text/css" href="{{ static_asset('app_navigation.css') }}">
   </head>
   <body data-nav-context="{{ menu or 'default' }}" class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white min-h-screen transition-colors duration-300">
+    <a class="skip-link" href="#main">{{ t('nav.skip_to_content') }}</a>
     <header class="mobile-app-header {% if menu not in ['flow', 'radio'] %}is-utility-page{% endif %}" aria-label="{{ t('nav.app_navigation') }}">
       {% if menu in ['flow', 'radio'] %}
       <nav class="mobile-mode-switch" aria-label="{{ t('nav.experience_mode') }}">

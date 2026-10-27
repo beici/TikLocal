@@ -153,6 +153,35 @@ class UrlListStore:
                 raise ValueError(f'Too many URLs: the list holds at most {MAX_LINES} entries.')
             return self._write(merged)
 
+    def add_reporting(self, lines: list[str]) -> tuple[list[str], int, int, int]:
+        """Add URLs and report what actually happened.
+
+        The API used to answer with the whole list only, so the page announced
+        "imported 8" for five new URLs: ``ftp://`` lines and junk were dropped in
+        silence and everything past MAX_LINES was cut without a word.
+        """
+        with _LIST_LOCK:
+            merged = list(self.lines())
+            seen = set(merged)
+            added = 0
+            rejected = 0
+            truncated = 0
+            for raw in lines:
+                url = normalize_url(raw) if isinstance(raw, str) else ''
+                if not url:
+                    rejected += 1
+                    continue
+                if url in seen:
+                    continue
+                if len(merged) >= MAX_LINES:
+                    truncated += 1
+                    continue
+                seen.add(url)
+                merged.append(url)
+                added += 1
+            written = self._write(merged)
+        return written, added, rejected, truncated
+
     def remove(self, url: str) -> list[str]:
         with _LIST_LOCK:
             target = normalize_url(url)

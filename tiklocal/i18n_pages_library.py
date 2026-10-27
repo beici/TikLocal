@@ -79,6 +79,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'library.empty.all': '这里还没有可展示的媒体。',
         'library.empty.favorite': '你还没有收藏媒体。',
         'library.empty.collection': '这个合集还没有可展示的媒体。',
+        'library.empty.big_files': '没有超过 {n} MB 的文件。',
+        'library.empty.video_latest': '还没有视频。',
+        'library.empty.image_random': '还没有图片。',
         # ---- library: quick viewer (library.html, library_page_controller.js) ----
         'library.quick.speed': '播放速度',
         'library.quick.caption': '生成标题',
@@ -279,6 +282,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'library.empty.all': 'There is no media to display yet.',
         'library.empty.favorite': 'You have no favorite media yet.',
         'library.empty.collection': 'This collection has no media to display yet.',
+        'library.empty.big_files': 'No files larger than {n} MB.',
+        'library.empty.video_latest': 'No videos yet.',
+        'library.empty.image_random': 'No images yet.',
         # ---- library: quick viewer (library.html, library_page_controller.js) ----
         'library.quick.speed': 'Playback speed',
         'library.quick.caption': 'Generate Title',

@@ -886,8 +886,12 @@
     if (idx < 0 || idx >= items.length) return;
     const item = items[idx];
     if (!item?.name) return;
+    // Send the target state instead of a blind toggle: with a second tab open
+    // the server value may have moved on, and a toggle would invert it.
+    const desired = quickFavorite.getAttribute('aria-pressed') !== 'true';
     try {
-      await mediaActions.toggleFavorite(item.name);
+      const favorited = await mediaActions.toggleFavorite(item.name, desired);
+      if (currentItem()?.name === item.name) updateFavoriteButton(!!favorited);
     } catch (error) {
       await syncFavoriteState(item);
       if (currentItem()?.name === item.name) {
@@ -978,6 +982,11 @@
 
   function currentEmptyMessage() {
     if (scope === 'favorite' && activeCollectionId) return T('library.empty.collection');
+    // The generic copy claims the library has nothing to show; after a filter
+    // that is simply false, so name the filter that emptied the grid.
+    if (mode === 'big_files') return T('library.empty.big_files', { n: minMb });
+    if (mode === 'video_latest') return T('library.empty.video_latest');
+    if (mode === 'image_random') return T('library.empty.image_random');
     return emptyMessage;
   }
 
@@ -1269,9 +1278,14 @@
 
   // Keyboard users must not tab into the grid hidden behind the viewer; pull focus
   // back whenever it escapes the layer.
+  const collectionModal = document.getElementById('quick-collection-modal');
   document.addEventListener('focusin', (event) => {
     if (!quickView.classList.contains('active')) return;
     if (event.target === quickView || quickView.contains(event.target)) return;
+    // The collection picker lives beside the viewer, not inside it: without this
+    // exception the trap pulled focus out of its name field, so the field stayed
+    // empty and creating a collection from the viewer never worked.
+    if (collectionModal && collectionModal.contains(event.target)) return;
     quickView.focus({ preventScroll: true });
   });
 

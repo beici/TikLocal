@@ -21,6 +21,8 @@
   let hasMore = boot.has_more === true;
   let nextBefore = String(boot.next_before || '');
   let loadingMore = false;
+let inFlight = null;
+let pendingYear = '';
   let lastRenderedYear = '';
   const renderedMonthKeys = new Set();
   const restoreKey = 'tiklocal:timeline-position';
@@ -207,44 +209,59 @@
   }
 
   async function loadMore() {
-    if (loadingMore || !hasMore || !nextBefore) return false;
+    // A second caller joins the running request instead of being told "no
+    // progress": the year buttons need to know whether the page that is already
+    // in flight succeeded, otherwise a click during a load silently did nothing.
+    if (inFlight) return inFlight;
+    if (!hasMore || !nextBefore) return false;
     loadingMore = true;
     statusText.textContent = T('library.timeline.opening');
     loading.hidden = false;
-    try {
-      const params = new URLSearchParams({ before: nextBefore, limit: '8', preview_limit: '18' });
-      const response = await fetch(`/api/library/timeline?${params.toString()}`);
-      const payload = await response.json();
-      if (!response.ok || payload?.success !== true) throw new Error('request failed');
-      const data = payload.data || {};
-      const incoming = Array.isArray(data.months) ? data.months : [];
-      months.push(...incoming);
-      if (Array.isArray(data.years) && data.years.length) years = data.years;
-      hasMore = data.has_more === true;
-      nextBefore = String(data.next_before || '');
-      renderMonths(incoming);
-      statusText.textContent = hasMore ? T('library.timeline.keep_scrolling') : T('library.timeline.beginning');
-      if (statusActions) statusActions.hidden = true;
-      renderYears();
-      return true;
-    } catch (error) {
-      // Report the failure but keep hasMore so the next scroll can retry; the
-      // caller only needs to know that this call made no progress.
-      // 底部 sentinel 一直在相交状态，Observer 不会再回调，光靠文案让用户
-      //「向下滚动」是走不通的（他已经在页面最底部），必须给一个可点的重试。
-      statusText.textContent = T('library.timeline.load_failed');
-      if (statusActions) statusActions.hidden = false;
-      if (retryButton) {
-        retryButton.hidden = false;
-        if (!retryButton.dataset.timelineBound) {
-          retryButton.dataset.timelineBound = '1';
-          retryButton.addEventListener('click', () => { loadMore(); });
+    inFlight = (async () => {
+      try {
+        const params = new URLSearchParams({ before: nextBefore, limit: '8', preview_limit: '18' });
+        const response = await fetch(`/api/library/timeline?${params.toString()}`);
+        const payload = await response.json();
+        if (!response.ok || payload?.success !== true) throw new Error('request failed');
+        const data = payload.data || {};
+        const incoming = Array.isArray(data.months) ? data.months : [];
+        months.push(...incoming);
+        if (Array.isArray(data.years) && data.years.length) years = data.years;
+        hasMore = data.has_more === true;
+        nextBefore = String(data.next_before || '');
+        renderMonths(incoming);
+        statusText.textContent = hasMore ? T('library.timeline.keep_scrolling') : T('library.timeline.beginning');
+        if (statusActions) statusActions.hidden = true;
+        renderYears();
+        return true;
+      } catch (error) {
+        // Report the failure but keep hasMore so the next scroll can retry; the
+        // caller only needs to know that this call made no progress.
+        // 底部 sentinel 一直在相交状态，Observer 不会再回调，光靠文案让用户
+        //「向下滚动」是走不通的（他已经在页面最底部），必须给一个可点的重试。
+        statusText.textContent = T('library.timeline.load_failed');
+        if (statusActions) statusActions.hidden = false;
+        if (retryButton) {
+          retryButton.hidden = false;
+          if (!retryButton.dataset.timelineBound) {
+            retryButton.dataset.timelineBound = '1';
+            retryButton.addEventListener('click', () => {
+              // Retry must replay the year jump the user asked for, not just the
+              // page load: the copy promises that retrying continues the jump.
+              const year = pendingYear;
+              pendingYear = '';
+              if (year) revealYear(year);
+              else loadMore();
+            });
+          }
         }
+        return false;
+      } finally {
+        loadingMore = false;
+        inFlight = null;
       }
-      return false;
-    } finally {
-      loadingMore = false;
-    }
+    })();
+    return inFlight;
   }
 
   async function loadUntilVisible(id) {
@@ -259,8 +276,11 @@
   }
 
   async function revealYear(year) {
+    pendingYear = year;
     const target = await loadUntilVisible(`year-${year}`);
-    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (!target) return;
+    pendingYear = '';
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   async function restorePosition() {

@@ -15,6 +15,24 @@
   const openRadioLink = document.getElementById('open-radio-link');
   const radioDeviceList = document.getElementById('radio-device-list');
   let pairingTimer = 0;
+  let concurrencyBusy = false;
+
+  // One place decides how the concurrency levels look, so a click and a reload
+  // cannot disagree with each other or with the server value.
+  function applyConcurrency(configured) {
+    const known = [1, 2, 4];
+    const shown = known.includes(configured) ? configured : 2;
+    document.querySelectorAll('[data-concurrency]').forEach((button) => {
+      const active = Number(button.dataset.concurrency) === shown;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    const copy = document.getElementById('download-levels-copy');
+    if (!copy) return;
+    copy.textContent = known.includes(configured)
+      ? T('settings.download.concurrent_copy')
+      : T('settings.download.concurrent_custom', { n: configured });
+  }
 
   function formatDateTime(date) {
     const locale = document.documentElement.lang === 'en' ? 'en' : 'zh-CN';
@@ -220,8 +238,7 @@
         ? T('settings.dl.not_ready', { parts: missing.join(', ') })
         : T('settings.dl.ready');
       const configured = Number(configPayload.data?.effective?.max_concurrent ?? 2);
-      const shown = [1, 2, 4].includes(configured) ? configured : 2;
-      document.querySelectorAll('[data-concurrency]').forEach((button) => button.classList.toggle('is-active', Number(button.dataset.concurrency) === shown));
+      applyConcurrency(configured);
       renderCredentials(cookiePayload.data?.files || []);
     } catch (_) {
       document.getElementById('download-dependency-copy').textContent = T('settings.dl.status_unavailable');
@@ -413,17 +430,25 @@
 
   document.getElementById('download-levels').addEventListener('click', async (event) => {
     const button = event.target.closest('[data-concurrency]');
-    if (!button) return;
+    if (!button || concurrencyBusy) return;
     const maxConcurrent = Number(button.dataset.concurrency);
+    concurrencyBusy = true;
+    document.querySelectorAll('[data-concurrency]').forEach((item) => { item.disabled = true; });
     try {
-      await requestJson('/api/download/config', {
+      const payload = await requestJson('/api/download/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ max_concurrent: maxConcurrent }),
       });
-      document.querySelectorAll('[data-concurrency]').forEach((item) => item.classList.toggle('is-active', item === button));
-      TikLocalUI.toast(T('settings.conc.set', { n: maxConcurrent }));
+      // Trust the server value, not the last response that happened to arrive.
+      const effective = Number(payload?.data?.effective?.max_concurrent ?? maxConcurrent);
+      applyConcurrency(effective);
+      TikLocalUI.toast(T('settings.conc.set', { n: effective }));
     } catch (_) { TikLocalUI.toast(T('settings.conc.failed'), 'error'); }
+    finally {
+      concurrencyBusy = false;
+      document.querySelectorAll('[data-concurrency]').forEach((item) => { item.disabled = false; });
+    }
   });
 
   document.getElementById('manage-credentials').addEventListener('click', openCredentials);

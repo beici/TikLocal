@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 
+{% block title %}{{ t('nav.home') }} · TikLocal{% endblock %}
+
 {% block extra_head %}
 <link rel="stylesheet" type="text/css" href="{{ static_asset('home.css') }}">
 {% endblock %}
 
 {% block content %}
-<main class="home-page" aria-labelledby="home-title">
+<main id="main" class="home-page" aria-labelledby="home-title">
   <div class="home-atmosphere" aria-hidden="true">
     <span class="home-glow home-glow-one"></span>
     <span class="home-glow home-glow-two"></span>

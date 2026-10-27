@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 
+{% block title %}{{ t('nav.saved') }} · TikLocal{% endblock %}
+
 {% block extra_head %}
 <link rel="stylesheet" href="{{ static_asset('collections.css') }}">
 {% endblock %}
 
 {% block content %}
-<main class="saved-page collections-shell">
+<main id="main" class="saved-page collections-shell">
   {% set saved_active = 'collections' %}
   {% include '_saved_header.html' %}
   <section id="collections-grid" class="saved-content collection-grid"></section>

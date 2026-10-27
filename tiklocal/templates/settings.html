@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 
+{% block title %}{{ t('nav.settings') }} · TikLocal{% endblock %}
+
 {% block extra_head %}
 <link rel="stylesheet" href="{{ static_asset('settings.css') }}">
 {% endblock %}
 
 {% block content %}
-<main class="settings-page tool-page">
+<main id="main" class="settings-page tool-page">
   <header class="settings-header tool-page-header">
     <p class="tool-page-overline"><i data-feather="sliders"></i><span>{{ t('settings.overline') }}</span></p>
     <h1 class="settings-title">{{ t('title.settings') }}</h1>
@@ -154,7 +156,7 @@
           <span class="setting-icon"><i data-feather="layers"></i></span>
           <div class="settings-row-main">
             <div class="settings-row-title">{{ t('settings.download.concurrent_title') }}</div>
-            <div class="settings-row-copy">{{ t('settings.download.concurrent_copy') }}</div>
+            <div id="download-levels-copy" class="settings-row-copy">{{ t('settings.download.concurrent_copy') }}</div>
           </div>
           <div id="download-levels" class="download-levels" role="group" aria-label="{{ t('settings.download.concurrency_aria') }}">
             <button class="download-level" type="button" data-concurrency="1">1</button>

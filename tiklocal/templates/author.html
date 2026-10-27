@@ -3,7 +3,7 @@
 {% block extra_head %}<link rel="stylesheet" href="{{ static_asset('author.css') }}">{% endblock %}
 
 {% block content %}
-<main class="author-page" data-author-page data-source-id="{{ source_id }}"
+<main id="main" class="author-page" data-author-page data-source-id="{{ source_id }}"
       data-author-name="{{ search_default }}" data-author-bound-url="{{ profile_url }}">
   <header class="author-topbar">
     <button type="button" class="author-back" data-author-back aria-label="{{ t('author.back') }}">

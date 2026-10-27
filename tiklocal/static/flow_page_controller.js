@@ -75,6 +75,10 @@
     });
     const feedItems = flowSession.items;
     let seed = '';
+    // The server freezes one cutoff per session and echoes it back; sending it on
+    // every page is what keeps page 2 from repeating cards that page 1 already
+    // showed (the duplicates were silently dropped by appendUnique).
+    let feedSince = '';
     // /flow?mode=forgotten plays only old media that has not been shown for a long time.
     const feedMode = new URLSearchParams(window.location.search).get('mode') === 'forgotten' ? 'forgotten' : '';
     document.getElementById('flow-mode').hidden = !feedMode;
@@ -1329,6 +1333,7 @@
             size: '24',
           });
           if (seed) query.set('seed', seed);
+          if (feedSince) query.set('since', feedSince);
           if (feedMode) query.set('mode', feedMode);
           const blogFilter = new URLSearchParams(window.location.search).get('blog');
           if (blogFilter) query.set('blog', blogFilter);
@@ -1346,6 +1351,7 @@
           const data = await res.json();
 
           if (!seed && data.seed) seed = String(data.seed);
+          if (!feedSince && data.since) feedSince = String(data.since);
           const incoming = Array.isArray(data.items) ? data.items : [];
           const normalized = incoming.map((item) => {
             if (!item || !item.type || !item.name) return null;

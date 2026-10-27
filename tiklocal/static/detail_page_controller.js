@@ -49,11 +49,16 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Initialize favorite state.
+  // A read that was issued before the user clicked must not overwrite the
+  // result of that click, so every read carries the token it started with.
+  let favoriteStatusToken = 0;
   async function initFavoriteStatus() {
+    const token = ++favoriteStatusToken;
     try {
       const response = await fetch(`/api/favorite/${encodeURIComponent(fileName)}`);
       const data = await response.json();
       if (!response.ok || typeof data.favorite !== 'boolean') throw new Error('Failed to load favorite state');
+      if (token !== favoriteStatusToken) return;
       isFavorited = data.favorite;
       updateFavoriteUI();
     } catch (error) {
@@ -87,6 +92,8 @@ document.addEventListener('DOMContentLoaded', () => {
     e.preventDefault();
     if (favoriteBtn.disabled) return;
     favoriteBtn.disabled = true;
+    // Invalidate any in-flight state read so it cannot land after this write.
+    favoriteStatusToken += 1;
     try {
       const response = await fetch(`/api/favorite/${encodeURIComponent(fileName)}?favorited=${isFavorited ? 'false' : 'true'}`, {
         method: 'POST'

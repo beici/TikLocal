@@ -3,10 +3,10 @@
 {% block title %}{{ status }} · {{ message }}{% endblock %}
 
 {% block content %}
-<main class="app-main">
+<main id="main" class="app-main">
   <section class="mx-auto flex max-w-xl flex-col items-center gap-4 px-6 py-24 text-center">
     <p class="text-5xl font-semibold tracking-tight">{{ status }}</p>
-    <p class="text-base text-[color:var(--dock-ink)]">{{ message }}</p>
+    <p class="text-base text-gray-600 dark:text-gray-300">{{ message }}</p>
     <div class="flex flex-wrap items-center justify-center gap-3">
       <a href="/" class="app-button app-button-primary">{{ t('nav.home') }}</a>
       <a href="/library" class="app-button">{{ t('nav.library') }}</a>

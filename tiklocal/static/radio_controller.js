@@ -133,6 +133,8 @@
     ].forEach(function (id) {
       els[toCamel(id)] = document.getElementById(id);
     });
+    // The main landmark carries id="main" so the skip link can reach it.
+    if (!els.radioPage) els.radioPage = document.querySelector('.radio-page');
     els.roomOptions = Array.from(document.querySelectorAll('[data-room]'));
   }
 

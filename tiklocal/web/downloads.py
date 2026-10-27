@@ -143,11 +143,18 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         if action == 'replace' and not text and not isinstance(raw_lines, list):
             return {'success': False, 'error': t('download.urls.error')}, 400
         lines = [str(item) for item in raw_lines] if isinstance(raw_lines, list) else parse_text(text)
+        counts: dict[str, int] | None = None
         try:
             if action == 'replace':
                 store.replace(lines)
             elif action == 'add':
-                store.add(lines)
+                # Count on the raw lines: parse_text already dropped the invalid
+                # ones, which made "imported N" report the list length instead of
+                # what this import really added.
+                raw_add = ([str(item) for item in raw_lines] if isinstance(raw_lines, list)
+                           else text.splitlines())
+                _, added, rejected, truncated = store.add_reporting(raw_add)
+                counts = {'added': added, 'rejected': rejected, 'truncated': truncated}
             elif action == 'remove':
                 store.remove(str(payload.get('url') or ''))
             elif action == 'clear':
@@ -163,7 +170,10 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             app.logger.warning('Could not write the download URL list', exc_info=exc)
             return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
 
-        return {'success': True, 'data': store.snapshot()}
+        data = store.snapshot()
+        if counts:
+            data.update(counts)
+        return {'success': True, 'data': data}
 
     @app.route('/api/download/urls/export')
     def api_download_urls_export():

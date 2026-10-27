@@ -1,9 +1,12 @@
 {% extends "base.html" %}
+
+{% block title %}{{ t('nav.flow') }} · TikLocal{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="{{ static_asset('flow.css') }}">
 {% endblock %}
 
 {% block content %}
+<span id="main" tabindex="-1" aria-hidden="true"></span>
 <div id="container">
   <div id="feed-container">
     <div id="video-start-cover" class="video-start-cover" aria-hidden="true">

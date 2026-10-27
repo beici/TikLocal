@@ -293,18 +293,37 @@
         </div>
       </div>` : '';
 
+    const retryButton = `<button class="download-action is-retry" type="button" data-action="retry" data-job-id="${escapeHtml(job.id)}"><i data-feather="rotate-ccw"></i><span>${escapeHtml(job.failure_stage === 'index' ? T('download.retry_register') : T('download.retry_download'))}</span></button>`;
     let actions = '';
     if (isActive) {
       actions = `${sourceAction}<button class="download-action" type="button" data-action="cancel" data-job-id="${escapeHtml(job.id)}">${escapeHtml(T('common.cancel'))}</button>`;
-    } else if (job.status === 'success' && firstFile) {
+    } else if (firstFile) {
+      // A failed playlist may still have saved files (partial=True): those files
+      // are already in the library, so the card must keep a way to open them
+      // instead of only offering a retry that would download them again.
+      const retry = (job.status === 'failed' || job.status === 'canceled') ? retryButton : '';
       actions = `
         <a class="download-action" href="${buildMediaHref(firstFile)}"><i data-feather="eye"></i><span>${escapeHtml(T('download.view_media'))}</span></a>
-        ${sourceAction}${menu}`;
+        ${retry}${sourceAction}${menu}`;
     } else {
       actions = `
-        ${(job.status === 'failed' || job.status === 'canceled') ? `<button class="download-action is-retry" type="button" data-action="retry" data-job-id="${escapeHtml(job.id)}"><i data-feather="rotate-ccw"></i><span>${escapeHtml(job.failure_stage === 'index' ? T('download.retry_register') : T('download.retry_download'))}</span></button>` : ''}
+        ${(job.status === 'failed' || job.status === 'canceled') ? retryButton : ''}
         ${sourceAction}${menu}`;
     }
+
+    // yt-dlp's own failure text runs to hundreds of characters (issue template and
+    // all); collapsed behind a summary it no longer pushes the retry button off a
+    // phone screen.
+    const errorText = job.error_message ? String(job.error_message) : '';
+    const errorBlock = errorText
+      ? (errorText.length > 120
+        ? `<details class="download-error-details"><summary>${escapeHtml(T('download.error_details'))}</summary><p class="download-error">${escapeHtml(errorText)}</p></details>`
+        : `<p class="download-error">${escapeHtml(errorText)}</p>`)
+      : '';
+    const savedFiles = Number(job.file_count) || 0;
+    const fileMeta = files.length > 1
+      ? T('download.items_count', { n: files.length })
+      : (savedFiles > 0 ? T('download.job.saved_files', { n: savedFiles }) : '');
 
     return `
       <article class="download-job ${className}${selected ? ' is-selected' : ''}${selectable ? ' is-selectable' : ''}" data-job-id="${escapeHtml(job.id)}">
@@ -317,8 +336,8 @@
           </div>
           <p class="download-job-copy">${escapeHtml(statusCopy(job))}</p>
           ${progress !== null && isActive ? `<div class="download-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.toFixed(0)}"><div class="download-progress-bar" style="width:${progress.toFixed(1)}%"></div></div>` : ''}
-          ${files.length > 1 ? `<div class="download-job-meta"><span>${escapeHtml(T('download.items_count', { n: files.length }))}</span></div>` : ''}
-          ${job.error_message ? `<p class="download-error">${escapeHtml(job.error_message)}</p>` : ''}
+          ${fileMeta ? `<div class="download-job-meta"><span>${escapeHtml(fileMeta)}</span></div>` : ''}
+          ${errorBlock}
           <div class="download-job-actions">${actions}</div>
         </div>
       </article>`;
@@ -829,8 +848,20 @@
         });
         renderUrlList(data);
         if (els.importText) els.importText.value = '';
-        const added = Array.isArray(data.lines) ? data.lines.length : 0;
-        TikLocalUI.toast(added ? T('download.urls.imported', { count: added }) : T('download.urls.imported_none'));
+        // Report what this import actually added: the snapshot's line count is the
+        // whole list, so it said "imported 8" for 5 new lines plus 3 dropped ones.
+        const added = Number(data.added);
+        const rejected = Number(data.rejected);
+        const truncated = Number(data.truncated);
+        if (Number.isFinite(added) && added >= 0) {
+          const parts = [T('download.urls.imported', { count: added })];
+          if (rejected > 0) parts.push(T('download.urls.import_rejected', { count: rejected }));
+          if (truncated > 0) parts.push(T('download.urls.import_truncated', { count: truncated }));
+          TikLocalUI.toast(parts.join(' '), rejected || truncated ? 'warning' : 'success');
+        } else {
+          const count = Array.isArray(data.lines) ? data.lines.length : 0;
+          TikLocalUI.toast(count ? T('download.urls.imported', { count }) : T('download.urls.imported_none'));
+        }
       } catch (error) {
         TikLocalUI.toast(error.message, 'error');
       }
@@ -872,9 +903,28 @@
           body: JSON.stringify({ engine: selectedEngine, save_mode: 'root' }),
         });
         const failed = Array.isArray(data.failed) ? data.failed.length : 0;
+        const queued = Number(data.queued) || 0;
+        if (!queued && !failed) {
+          // An empty list answered with success ("queued 0 jobs"), which reads as
+          // if the action worked.
+          TikLocalUI.toast(T('download.urls.queue_empty'), 'error');
+          return;
+        }
         TikLocalUI.toast(failed
-          ? T('download.urls.queued_partial', { count: data.queued || 0, failed })
-          : T('download.urls.queued', { count: data.queued || 0 }));
+          ? T('download.urls.queued_partial', { count: queued, failed })
+          : T('download.urls.queued', { count: queued }));
+        if (queued && !failed) {
+          // The list became jobs; keeping it around let a second click queue every
+          // URL again (six jobs for three links).
+          try {
+            renderUrlList(await api('/api/download/urls', {
+              method: 'POST',
+              body: JSON.stringify({ action: 'clear' }),
+            }));
+          } catch (error) {
+            renderUrlList({ lines: [] });
+          }
+        }
         lastJobsSignature = '';
         await refreshJobs({ force: true });
       } catch (error) {

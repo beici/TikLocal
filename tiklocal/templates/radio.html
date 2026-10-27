@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 
+{% block title %}{{ t('nav.radio') }} · TikLocal{% endblock %}
+
 {% block extra_head %}
 <link rel="stylesheet" href="{{ static_asset('radio.css') }}">
 {% endblock %}
 
 {% block content %}
-<main id="radio-page" class="radio-page" data-radio-root>
+<main id="main" class="radio-page" data-radio-root>
   <div class="radio-atmosphere" aria-hidden="true">
     <video
       id="radio-atmosphere-video"

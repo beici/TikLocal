@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 
+{% block title %}{{ t('nav.download') }} · TikLocal{% endblock %}
+
 {% block extra_head %}
 <link rel="stylesheet" href="{{ static_asset('download.css') }}">
 {% endblock %}
 
 {% block content %}
-<main class="download-page tool-page">
+<main id="main" class="download-page tool-page">
   <header class="download-header tool-page-header">
     <p class="tool-page-overline"><i data-feather="arrow-down-circle"></i><span>{{ t('title.download') }}</span></p>
     <h1 class="download-title">{{ t('download.heading') }}</h1>
