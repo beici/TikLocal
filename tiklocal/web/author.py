@@ -219,7 +219,7 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         """
         source = _source_or_404(source_id)
         if not _sidecar_base_url():
-            return jsonify({'ok': False, 'error': t('author.refresh.unconfigured')}), 400
+            return jsonify({'success': False, 'ok': False, 'error': t('author.refresh.unconfigured')}), 400
         payload = _json_body()
         folder_name = folder_name_for(source)
         profile_url = str(payload.get('profile_url') or '').strip()
@@ -233,13 +233,13 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
                     folder_uid=author_profiles.douyin_id_from_folder(folder_name),
                 )
             except ValueError as exc:
-                return jsonify({'ok': False, 'error': str(exc)}), 400
+                return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
             except TikTokDownloaderError as exc:
-                return jsonify({'ok': False, 'error': str(exc)}), 502
+                return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 502
             except Exception as exc:  # a sidecar hiccup must never become a 500 page
-                return jsonify({'ok': False, 'error': str(exc) or t('author.refresh.error')}), 502
+                return jsonify({'success': False, 'ok': False, 'error': str(exc) or t('author.refresh.error')}), 502
             profile = author_profiles.resolve_profile(source_id, folder_name=folder_name)
-            return jsonify({'ok': True, 'profile': profile})
+            return jsonify({'success': True, 'ok': True, 'profile': profile})
 
         keyword = str(payload.get('keyword') or '').strip()
         keyword = keyword or blogger_display_name(folder_name)
@@ -251,14 +251,14 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             )
         except AuthorAmbiguousError as exc:
             # Several accounts share the nickname: hand the picker back to the page.
-            return jsonify({'ok': False, 'error': str(exc), 'candidates': exc.candidates}), 409
+            return jsonify({'success': False, 'ok': False, 'error': str(exc), 'candidates': exc.candidates}), 409
         except ValueError as exc:
-            return jsonify({'ok': False, 'error': str(exc)}), 400
+            return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
         except TikTokDownloaderError as exc:
-            return jsonify({'ok': False, 'error': str(exc)}), 502
+            return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 502
         except Exception as exc:  # a sidecar hiccup must never become a 500 page
-            return jsonify({'ok': False, 'error': str(exc) or t('author.refresh.error')}), 502
-        return jsonify({'ok': True, 'profile': profile})
+            return jsonify({'success': False, 'ok': False, 'error': str(exc) or t('author.refresh.error')}), 502
+        return jsonify({'success': True, 'ok': True, 'profile': profile})
 
     @app.post('/api/author/<source_id>/refresh')
     def author_refresh(source_id):
@@ -275,26 +275,26 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         _source_or_404(source_id)
         url = str(_json_body().get('profile_url') or '').strip()
         if not url:
-            return jsonify({'ok': False, 'error': t('author.sync.error.profile_url')}), 400
+            return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.profile_url')}), 400
         try:
             sec_uid = parse_profile_sec_uid(url)
         except ValueError as exc:
-            return jsonify({'ok': False, 'error': str(exc)}), 400
+            return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
         author_profiles.set_profile_url(source_id, url)
-        return jsonify({'ok': True, 'profile_url': url, 'sec_uid': sec_uid})
+        return jsonify({'success': True, 'ok': True, 'profile_url': url, 'sec_uid': sec_uid})
 
     @app.post('/api/author/<source_id>/update-videos')
     def author_update_videos(source_id):
         """Queue downloads for the author's works that the library does not hold yet."""
         _source_or_404(source_id)
         if not _sidecar_base_url():
-            return jsonify({'ok': False, 'error': t('author.sync.error.unconfigured')}), 400
+            return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.unconfigured')}), 400
         payload = _json_body()
         profile_url = str(payload.get('profile_url') or '').strip()
         if profile_url:
             bound = normalize_profile_url(profile_url)
             if not bound:
-                return jsonify({'ok': False, 'error': t('author.sync.error.profile_url')}), 400
+                return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.profile_url')}), 400
             author_profiles.set_profile_url(source_id, bound)
         try:
             result = tiktok_service.enqueue_latest_videos(
@@ -303,28 +303,28 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
                 local_names=local_work_names(media_index, source_id),
             )
         except ValueError as exc:
-            return jsonify({'ok': False, 'error': str(exc)}), 400
+            return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
         except TikTokDownloaderError as exc:
-            return jsonify({'ok': False, 'error': str(exc)}), 502
+            return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 502
         except Exception as exc:  # a sidecar hiccup must never become a 500 page
-            return jsonify({'ok': False, 'error': str(exc) or t('author.sync.error.unknown')}), 502
-        return jsonify({'ok': True, **result})
+            return jsonify({'success': False, 'ok': False, 'error': str(exc) or t('author.sync.error.unknown')}), 502
+        return jsonify({'success': True, 'ok': True, **result})
 
     @app.post('/api/author/<source_id>/search')
     def author_search(source_id):
         _source_or_404(source_id)
         if tiktok_service is None or not _sidecar_base_url():
-            return jsonify({'ok': False, 'error': t('author.refresh.unconfigured')}), 503
+            return jsonify({'success': False, 'ok': False, 'error': t('author.refresh.unconfigured')}), 503
         keyword = str(_json_body().get('keyword') or '').strip()
         try:
             candidates = tiktok_service.list_author_candidates(keyword)
         except ValueError as exc:
-            return jsonify({'ok': False, 'error': str(exc)}), 400
+            return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
         except TikTokDownloaderError as exc:
-            return jsonify({'ok': False, 'error': str(exc)}), 502
+            return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 502
         except Exception as exc:
-            return jsonify({'ok': False, 'error': str(exc) or t('author.refresh.error')}), 502
-        return jsonify({'ok': True, 'candidates': candidates})
+            return jsonify({'success': False, 'ok': False, 'error': str(exc) or t('author.refresh.error')}), 502
+        return jsonify({'success': True, 'ok': True, 'candidates': candidates})
 
     def _uid_index() -> dict:
         """Export-folder UID → source id, so a bare profile link can be matched."""
@@ -354,7 +354,7 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
                 'avatar_url': f'/author/{quote(str(source_id))}/avatar',
             })
         items.sort(key=lambda item: (item['display_name'].lower(), item['source_id']))
-        return jsonify({'ok': True, 'items': items})
+        return jsonify({'success': True, 'ok': True, 'items': items})
 
     @app.post('/api/author/sync')
     def author_sync():
@@ -366,7 +366,7 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         is the only identity proof a bare link carries.
         """
         if not _sidecar_base_url():
-            return jsonify({'ok': False, 'error': t('author.sync.error.unconfigured')}), 400
+            return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.unconfigured')}), 400
         payload = _json_body()
         entries = []
         raw_items = payload.get('items')
@@ -382,7 +382,7 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         else:
             entries = parse_sync_text(payload.get('text'))
         if not entries:
-            return jsonify({'ok': False, 'error': t('settings.sync.author_need_url')}), 400
+            return jsonify({'success': False, 'ok': False, 'error': t('settings.sync.author_need_url')}), 400
         if len(entries) > MAX_SYNC_AUTHORS_PER_REQUEST:
             # 单次请求里串行调 N 次外部 sidecar（每次最长 150 s）会让一个 HTTP
             # 请求跑几十分钟、无进度且不可取消；超限直接拒绝，让前端分批。
@@ -411,12 +411,16 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         except TikTokDownloaderError as exc:
             # The batch stopped early: keep the authors that already synced.
             synced = len([item for item in results if item.get('ok')])
-            return jsonify({'ok': False, 'error': str(exc), 'items': results, 'synced': synced}), 502
-        except Exception as exc:  # a sidecar hiccup must never become a 500 page
+            return jsonify({'success': False, 'ok': False, 'error': str(exc), 'items': results, 'synced': synced}), 502
+        except Exception:  # a sidecar hiccup must never become a 500 page
+            # str(exc) leaked KeyError/TypeError text into the UI and gave the user
+            # nothing actionable, so the detail goes to the log instead.
+            app.logger.exception('Author sync failed')
             synced = len([item for item in results if item.get('ok')])
             return jsonify({
+                'success': False,
                 'ok': False,
-                'error': str(exc) or t('author.sync.error.unknown'),
+                'error': t('author.sync.error.unknown'),
                 'items': results,
                 'synced': synced,
             }), 502
@@ -429,5 +433,5 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
                 'items': results,
                 'synced': 0,
             }), 502
-        return jsonify({'ok': True, 'items': results, 'synced': len(synced)})
+        return jsonify({'success': True, 'ok': True, 'items': results, 'synced': len(synced)})
 

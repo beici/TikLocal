@@ -126,7 +126,7 @@ body[data-nav-context="download"] {
 .download-action:disabled, .download-icon-btn:disabled { cursor: wait; opacity: .45; }
 .download-icon-btn { width: 34px; padding: 0; margin-left: auto; border-color: transparent; }
 @media (pointer: coarse) {
-  .download-action, .download-icon-btn { min-height: 44px; }
+  .download-action, .download-icon-btn, .download-submit, .media-switch-option { min-height: 44px; }
   .download-icon-btn { width: 44px; }
 }
 .download-job-menu { position: relative; margin-left: auto; }

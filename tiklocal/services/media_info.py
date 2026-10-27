@@ -44,7 +44,7 @@ def probe_media_dims(library_service, name: str, media_type: str) -> tuple[int |
                 *probe,
                 '-v', 'error',
                 '-select_streams', 'v:0',
-                '-show_entries', 'stream=width,height',
+                '-show_entries', 'stream=width,height:stream_side_data=rotation',
                 '-of', 'json',
                 str(target),
             ]
@@ -56,10 +56,33 @@ def probe_media_dims(library_service, name: str, media_type: str) -> tuple[int |
                 width = int(stream.get('width') or 0)
                 height = int(stream.get('height') or 0)
                 if width > 0 and height > 0:
-                    return width, height
+                    rotation = _rotation_degrees(proc.stdout or '')
+                    return _apply_rotation(width, height, rotation)
         except Exception:
             pass
     return _banner_dims(target)
+
+
+def _rotation_degrees(text: str) -> int:
+    """Return the display rotation ffmpeg/ffprobe reports, normalised to 0/90/180/270."""
+    match = re.search(r'rotation of\s+(-?\d+(?:\.\d+)?)\s+degrees', text)
+    if not match:
+        match = re.search(r'"rotation"\s*:\s*(-?\d+(?:\.\d+)?)', text)
+    if not match:
+        return 0
+    try:
+        value = int(round(float(match.group(1))))
+    except ValueError:
+        return 0
+    return value % 360
+
+
+def _apply_rotation(width: int, height: int, rotation: int) -> tuple[int, int]:
+    # ffmpeg autorotates the poster frame, so a 90/270 degree display matrix means the
+    # stored frame size is the transpose of what the thumbnail looks like.
+    if rotation in (90, 270):
+        return height, width
+    return width, height
 
 
 def _banner_dims(target) -> tuple[int | None, int | None]:
@@ -74,12 +97,14 @@ def _banner_dims(target) -> tuple[int | None, int | None]:
     stderr = completed.stderr or b''
     if isinstance(stderr, bytes):
         stderr = stderr.decode('utf-8', 'ignore')
-    for line in str(stderr).splitlines():
+    text = str(stderr)
+    rotation = _rotation_degrees(text)
+    for line in text.splitlines():
         if 'Video:' not in line:
             continue
         match = re.search(r'(\d{2,5})x(\d{2,5})', line)
         if match:
             width, height = int(match.group(1)), int(match.group(2))
             if width > 0 and height > 0:
-                return width, height
+                return _apply_rotation(width, height, rotation)
     return None, None

@@ -157,7 +157,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             entry = trash_service.move(name)
         except FileNotFoundError:
             media_index.delete(library_service.canonicalize_uri(name))
-            return ({'error': t('detail.error.file_not_found')}, 404) if wants_json else redirect('/library')
+            return ({'success': False, 'error': t('detail.error.file_not_found')}, 404) if wants_json else redirect('/library')
         except OSError as e:
             # A file that is still open (a video being played, on Windows also a
             # locked directory) is a conflict, not a server error, and str(e)
@@ -187,7 +187,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         try:
             uri = trash_service.restore(entry_id)
         except KeyError:
-            return {'error': t('detail.error.not_in_trash')}, 404
+            return {'success': False, 'error': t('detail.error.not_in_trash')}, 404
         except FileExistsError:
             return {'error': t('detail.error.trash_conflict')}, 409
         try:
@@ -205,7 +205,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         try:
             purge(entry_id)
         except KeyError:
-            return {'error': t('detail.error.not_in_trash')}, 404
+            return {'success': False, 'error': t('detail.error.not_in_trash')}, 404
         except OSError:
             # A trashed file still open elsewhere (Windows) is a conflict, not a 500.
             return {'error': t('detail.error.trash_purge_failed')}, 409
@@ -334,4 +334,4 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         if success:
              return {'success': True, 'url': f"{media_urls(name)['thumb_url']}&v={time.time_ns()}"}
         # A cover that cannot be generated is a per-file failure, not a server bug.
-        return {'success': False, 'error': t('detail.error.thumbnail_generate')}, 502
+        return {'success': False, 'error': t('detail.error.thumbnail_generate')}, 422

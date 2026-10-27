@@ -35,7 +35,7 @@
 
   function formatCount(value) {
     const count = Number(value || 0);
-    const formatted = new Intl.NumberFormat('en', { notation: count > 9999 ? 'compact' : 'standard' }).format(count);
+    const formatted = new Intl.NumberFormat(uiLocale(), { notation: count > 9999 ? 'compact' : 'standard' }).format(count);
     return T('library.timeline.items', { n: formatted });
   }
 

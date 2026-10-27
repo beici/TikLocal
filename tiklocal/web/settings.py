@@ -1,5 +1,7 @@
 """Home, settings and shared library/cache statistics."""
 
+import sqlite3
+
 from flask import render_template
 
 from tiklocal.i18n import t
@@ -36,6 +38,10 @@ def register_settings_routes(app, media_index, favorite_service, thumbnail_servi
         def safe(call, fallback):
             try:
                 return call()
+            except sqlite3.DatabaseError:
+                # Reporting "0 media" for a damaged index hides the real failure and
+                # contradicts /library, which surfaces the same error as a 500.
+                raise
             except Exception:
                 app.logger.exception('library stats unavailable')
                 return fallback

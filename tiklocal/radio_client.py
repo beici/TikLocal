@@ -93,7 +93,7 @@ def register_radio_client_routes(
         payload = request.get_json(silent=True) or {}
         if not auth_store.verify(str(payload.get("password") or "")):
             pair_limiter.record_failure(client_key)
-            return error("invalid_password", "The access password is incorrect", 401)
+            return error("invalid_password", t('radio.error.invalid_password'), 401)
 
         pair_limiter.clear(client_key)
         credential = device_auth_store.issue(
@@ -232,7 +232,7 @@ def register_radio_client_routes(
     def api_v1_radio_metadata():
         uri = existing_audio_uri(request.args.get("uri") or "")
         if not uri:
-            return error("audio_not_found", "Audio not found", 404)
+            return error("audio_not_found", t('radio.error.audio_not_found'), 404)
         metadata = radio_service.metadata_for_uri(uri)
         path = library_service.resolve_path(uri)
         return ok({
@@ -247,14 +247,14 @@ def register_radio_client_routes(
     def api_v1_radio_media():
         uri = existing_audio_uri(request.args.get("uri") or "")
         if not uri:
-            return error("audio_not_found", "Audio not found", 404)
+            return error("audio_not_found", t('radio.error.audio_not_found'), 404)
         return send_file(library_service.resolve_path(uri), conditional=True)
 
     @app.get("/api/v1/radio/artwork")
     def api_v1_radio_artwork():
         uri = existing_audio_uri(request.args.get("uri") or "")
         if not uri:
-            return error("audio_not_found", "Audio not found", 404)
+            return error("audio_not_found", t('radio.error.audio_not_found'), 404)
         path, mimetype = thumbnail_service.get_radio_artwork(uri)
         return send_file(io.BytesIO(path) if isinstance(path, bytes) else path, mimetype=mimetype)
 
@@ -263,13 +263,13 @@ def register_radio_client_routes(
         payload = request.get_json(silent=True) or {}
         uri = existing_audio_uri(payload.get("uri") or "")
         if not uri:
-            return error("audio_not_found", "Audio not found", 404)
+            return error("audio_not_found", t('radio.error.audio_not_found'), 404)
         if not isinstance(payload.get("favorite"), bool):
-            return error("invalid_favorite", "favorite must be a boolean", 400)
+            return error("invalid_favorite", t('radio.error.invalid_favorite'), 400)
         try:
             favorite = favorite_service.set_favorite(uri, payload["favorite"])
         except (OSError, ValueError):
-            return error("favorite_unavailable", "Favorite storage is unavailable", 503)
+            return error("favorite_unavailable", t('radio.error.favorite_unavailable'), 503)
         return ok({"uri": uri, "is_favorite": favorite})
 
     @app.post("/api/v1/radio/feedback")
@@ -278,9 +278,9 @@ def register_radio_client_routes(
         uri = existing_audio_uri(payload.get("uri") or "")
         event = str(payload.get("event") or "").strip()
         if not uri:
-            return error("audio_not_found", "Audio not found", 404)
+            return error("audio_not_found", t('radio.error.audio_not_found'), 404)
         if event not in {"play", "complete", "replay", "skip", "favorite", "error"}:
-            return error("invalid_event", "Invalid feedback event", 400)
+            return error("invalid_event", t('radio.error.invalid_event'), 400)
         ratio = _ratio(payload.get("ratio"))
         profile = radio_service.record_feedback(uri, event, ratio=ratio)
         return ok({"profile": profile})

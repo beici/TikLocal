@@ -20,11 +20,12 @@ def client(tmp_path):
 
 def test_non_object_json_body_is_a_client_error_not_a_crash(client):
     # A JSON array parses fine, so `get_json() or {}` returns a list and the
-    # next payload.get() raised AttributeError (HTTP 500) on 20+ routes.
+    # next payload.get() raised AttributeError (HTTP 500) on 20+ routes. Such a
+    # body is now rejected as a client error: an array silently meant "replace
+    # the list with nothing" and wiped the user's queue.
     response = client.post('/api/download/urls', json=['a', 'b'])
-    assert response.status_code == 200
-    assert response.get_json()['success'] is True
-    assert 'error' not in response.get_json()
+    assert response.status_code == 400
+    assert response.get_json()['success'] is False
     for path in ('/api/download/urls/sync', '/api/collections'):
         assert client.post(path, json=[]).status_code < 500
 

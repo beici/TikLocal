@@ -29,6 +29,7 @@
 | 11 | 2026-10-27 | 432P/6S/0F | 0/0/12/8（报告 20，修复 4，复核无问题 3，转下轮 13） | `26d8bc0`，6 文件 | [round-11](round-11.md) |
 | 12 | 2026-10-27 | 432P/6S/0F | 0/2/16/6（确认 24：新审 11 + 第 11 轮遗留 13） | `34822e8`，31 文件 `+552/-47` | [round-12](round-12.md) |
 | 13 | 2026-10-27 | 439P→448P/6S/0F | 0/2/5/20（确认 27，修复 14，backlog 13） | `13bcd04`，18 文件 `+564/-45` | [round-13](round-13.md) |
+| 14 | 2026-10-27 | 448P→450P/6S/0F | 0/0/3/10（确认 13，修复 13） | 见本轮提交，17 文件 `+212/-91` | [round-14](round-14.md) |
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
 
@@ -37,6 +38,8 @@
 第 03 轮结束后：`pytest -q` = **2 failed / 381 passed / 6 skipped**（新增 16 个用例），失败项不变。
 
 第 04 轮结束后：`pytest -q` = **2 failed / 383 passed / 6 skipped**，失败项不变（本轮修复集中在前端状态机，另新增 2 个认证用例）。
+
+第 14 轮结束后：`pytest -q` = **450 passed / 6 skipped / 0 failed**（182.03s）。
 
 第 05 轮结束后：`pytest -q` = **2 failed / 394 passed / 6 skipped**，失败项不变（新增 13 个回归用例：`tests/test_round05_regressions.py`）。
 

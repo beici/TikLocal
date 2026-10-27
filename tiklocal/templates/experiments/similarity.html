@@ -5,17 +5,17 @@
 {% block content %}
 <main class="max-w-6xl mx-auto px-4 py-8 pb-28 space-y-7">
   <header class="space-y-2">
-    <a href="{{ url_for('library_view') }}" class="text-sm underline">Return to Library</a>
+    <a href="{{ url_for('library_view') }}" class="text-sm underline">{{ t('similarity.back') }}</a>
     <div class="flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 class="text-2xl font-semibold">Similar Images</h1>
-        <p class="text-sm opacity-70 mt-1">Related photos from your library. Browsing saved results does not call the model.</p>
+        <h1 class="text-2xl font-semibold">{{ t('similarity.title') }}</h1>
+        <p class="text-sm opacity-70 mt-1">{{ t('similarity.subtitle') }}</p>
       </div>
-      {% if status.prepared %}<a class="text-sm underline" href="{{ url_for('library_view', view='explore') }}#semantic-search-panel">Search by description</a>{% endif %}
+      {% if status.prepared %}<a class="text-sm underline" href="{{ url_for('library_view', view='explore') }}#semantic-search-panel">{{ t('similarity.search_by_description') }}</a>{% endif %}
     </div>
   </header>
 
-  <section aria-label="Similarity groups" class="space-y-3">
+  <section aria-label="{{ t('similarity.groups_label') }}" class="space-y-3">
     <div class="similar-groups-grid">
       {% for group in page['items'] %}
       {% set visible = group['items'][:6] %}
@@ -32,30 +32,35 @@
       </article>
       {% endfor %}
     </div>
-    {% if not page['items'] %}<p class="py-8 opacity-70">Related photo groups appear here after preparation finishes.</p>{% endif %}
-    <nav aria-label="Group pagination" class="flex gap-6 text-sm">
-      {% if page.offset > 0 %}<a class="underline" href="{{ url_for('similarity_view', offset=[0, page.offset-page.limit]|max) }}">Previous</a>{% endif %}
-      {% if page.has_more %}<a class="underline" href="{{ url_for('similarity_view', offset=page.next_offset) }}">Next</a>{% endif %}
+    {% if not page['items'] %}<p class="py-8 opacity-70">{{ t('similarity.empty') }}</p>{% endif %}
+    <nav aria-label="{{ t('similarity.pagination_label') }}" class="flex gap-6 text-sm">
+      {% if page.offset > 0 %}<a class="underline" href="{{ url_for('similarity_view', offset=[0, page.offset-page.limit]|max) }}">{{ t('similarity.previous') }}</a>{% endif %}
+      {% if page.has_more %}<a class="underline" href="{{ url_for('similarity_view', offset=page.next_offset) }}">{{ t('similarity.next') }}</a>{% endif %}
     </nav>
   </section>
 
-  <section aria-label="Preparation" class="embedding-settings space-y-3 border-t border-base-300 pt-5" data-theme-sync>
-    <h2 class="text-lg font-semibold">Prepare media</h2>
-    <p class="text-sm">{{ status.prepared }} of {{ status.total }} files prepared
-      ({{ status.images }} photos{% if status.videos_supported %}, {{ status.videos }} videos{% endif %}).
-      {% if not status.videos_supported %}<span class="opacity-70">Install ffmpeg to include videos.</span>{% endif %}</p>
+  <section aria-label="{{ t('similarity.prepare_section') }}" class="embedding-settings space-y-3 border-t border-base-300 pt-5" data-theme-sync>
+    <h2 class="text-lg font-semibold">{{ t('similarity.prepare_title') }}</h2>
+    <p class="text-sm">
+      {% if status.videos_supported %}
+      {{ t('similarity.prepare_progress_videos', prepared=status.prepared, total=status.total, images=status.images, videos=status.videos) }}
+      {% else %}
+      {{ t('similarity.prepare_progress', prepared=status.prepared, total=status.total, images=status.images) }}
+      <span class="opacity-70">{{ t('similarity.install_ffmpeg') }}</span>
+      {% endif %}
+    </p>
     <div class="flex flex-wrap items-center gap-3">
-      <button id="media-index-start" class="dui-btn dui-btn-sm" type="button" {% if not status.total %}disabled{% endif %}>{{ 'Prepare ' ~ status.pending ~ ' files' if status.pending else 'Refresh photo groups' }}</button>
-      <button id="media-index-pause" class="dui-btn dui-btn-sm dui-btn-ghost" type="button" hidden>Pause</button>
+      <button id="media-index-start" class="dui-btn dui-btn-sm" type="button" {% if not status.total %}disabled{% endif %}>{% if status.pending %}{{ t('similarity.prepare_button', count=status.pending) }}{% else %}{{ t('similarity.refresh_groups') }}{% endif %}</button>
+      <button id="media-index-pause" class="dui-btn dui-btn-sm dui-btn-ghost" type="button" hidden>{{ t('similarity.pause') }}</button>
       <span id="media-index-progress" class="text-sm opacity-70" role="status" aria-live="polite">{% if job.state == 'failed' %}{{ job.error }}{% endif %}</span>
     </div>
-    <p class="text-sm opacity-70">Preparing sends each pending photo, or up to three frames per video, to the service below as small JPEGs without location or other metadata. Related videos appear on video details after preparation.</p>
+    <p class="text-sm opacity-70">{{ t('similarity.explainer') }}</p>
     <dl class="text-sm grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 break-words">
-      <dt class="opacity-60">Service</dt><dd>{{ connection.base_url }}</dd>
-      <dt class="opacity-60">Model</dt><dd>{{ connection.model }}</dd>
-      <dt class="opacity-60">API key</dt><dd>{{ {'config': 'From config.yaml', 'environment': 'From the server environment', 'none': 'None'}[connection.key_source] }}</dd>
+      <dt class="opacity-60">{{ t('similarity.service') }}</dt><dd>{{ connection.base_url }}</dd>
+      <dt class="opacity-60">{{ t('similarity.model') }}</dt><dd>{{ connection.model }}</dd>
+      <dt class="opacity-60">{{ t('similarity.api_key') }}</dt><dd>{{ {'config': t('similarity.key_config'), 'environment': t('similarity.key_environment'), 'none': t('similarity.key_none')}[connection.key_source] }}</dd>
     </dl>
-    <p class="text-sm opacity-70">Change the <code>embedding</code> section of <code>config.yaml</code> and restart TikLocal to use another service. A new model prepares its own vectors; files it has not reached yet are left out of search. For a local model, see the <a class="underline" href="https://github.com/oddloafhq/spooly/blob/main/deployment/embedding/README.md" target="_blank" rel="noopener">Docker guide</a>.</p>
+    <p class="text-sm opacity-70">{{ t('similarity.change_note') }}</p>
   </section>
 </main>
 {% endblock %}

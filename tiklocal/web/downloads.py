@@ -132,9 +132,16 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             return {'success': True, 'data': store.snapshot()}
 
         payload = json_body()
-        action = str(payload.get('action') or 'replace')
+        action = str(payload.get('action') or '')
         text = str(payload.get('text') or '')
         raw_lines = payload.get('lines')
+        if not action:
+            # A body without an explicit action used to default to "replace", so
+            # any caller that forgot the field wiped the whole list and still got
+            # a success envelope back. Require the caller to say what it wants.
+            return {'success': False, 'error': t('download.urls.error_missing_action')}, 400
+        if action == 'replace' and not text and not isinstance(raw_lines, list):
+            return {'success': False, 'error': t('download.urls.error')}, 400
         lines = [str(item) for item in raw_lines] if isinstance(raw_lines, list) else parse_text(text)
         try:
             if action == 'replace':
@@ -218,6 +225,12 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
                 failed.append({'url': url, 'error': str(exc)})
                 continue
             queued.append({'url': url, 'job_id': job.get('id', '')})
+
+        if not queued and failed:
+            # Reporting success with queued=0 made a fully rejected batch look
+            # like it started; the caller has no way to notice.
+            return {'success': False, 'error': t('download.urls.queue_rejected', count=len(failed)),
+                    'data': {'queued': 0, 'failed': failed, 'items': queued}}, 400
 
         return {'success': True, 'data': {'queued': len(queued), 'failed': failed, 'items': queued}}
 

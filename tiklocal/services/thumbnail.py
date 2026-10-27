@@ -18,8 +18,16 @@ from tiklocal.services.library import LibraryService, AUDIO_EXTENSIONS, IMAGE_EX
 #: How long a video frame extraction may take before the request gives up.
 FFMPEG_TIMEOUT_SEC = 30
 
-#: Bounds concurrent decode/encode work so a cold /library grid cannot balloon RSS.
-_GENERATE_SLOTS = threading.BoundedSemaphore(2)
+#: How long a second request waits for the in-flight decode of the same file.
+GENERATE_WAIT_SEC = 20
+
+#: Bumped whenever the rendered size or quality changes: the cache key carries it so
+#: an upgrade cannot keep serving previews produced by the previous settings.
+THUMB_VERSION = 2
+
+#: Bounds concurrent decode/encode work so a cold /library grid cannot balloon RSS,
+#: while still letting a multi-core box fill the grid faster than two at a time.
+_GENERATE_SLOTS = threading.BoundedSemaphore(max(2, min(4, (os.cpu_count() or 4) // 2)))
 
 
 def ffmpeg_argv() -> list[str]:
@@ -79,6 +87,8 @@ class ThumbnailService:
         self.library = library_service or LibraryService(media_root)
         self.thumb_dir = get_thumbnails_dir()
         self._locks = [threading.Lock() for _ in range(self._LOCK_POOL_SIZE)]
+        self._inflight: dict[str, threading.Event] = {}
+        self._inflight_lock = threading.Lock()
         # The same relative path in a different library is a different picture, and
         # the mtime freshness check cannot tell them apart (a copied file keeps its
         # old mtime). Keying the cache by root prevents cross-library thumbnails.
@@ -92,7 +102,7 @@ class ThumbnailService:
         return self._path_for_key(canonical)
 
     def _path_for_key(self, key: str) -> Path:
-        digest = hashlib.sha1(f'{self._root_key}|{key}'.encode('utf-8')).hexdigest()
+        digest = hashlib.sha1(f'{self._root_key}|v{THUMB_VERSION}|{key}'.encode('utf-8')).hexdigest()
         return self.thumb_dir / (digest + '.jpg')
 
     def _legacy_path_for_key(self, key: str) -> Path:
@@ -149,16 +159,36 @@ class ThumbnailService:
             # grid refresh; remember the failure and serve the placeholder instead.
             stale = self._stale_thumbnail(uri)
             return (stale, 'image/jpeg') if stale else (self.placeholder, 'image/png')
-        generated = self.generate_thumbnail(uri)
-        if generated:
-            return generated, 'image/jpeg'
-        self._mark_failure(uri)
-        stale = self._stale_thumbnail(uri)
-        if stale:
-            # A locked cache file means the previous preview is still valid enough;
-            # degrading the whole grid to a 1x1 placeholder is worse.
-            return stale, 'image/jpeg'
-        return self.placeholder, 'image/png'
+        key = self.library.canonicalize_uri(uri)
+        with self._inflight_lock:
+            event = self._inflight.get(key)
+            leader = event is None
+            if leader:
+                event = threading.Event()
+                self._inflight[key] = event
+        if not leader:
+            # The grid asks for the same picture from several tiles at once; waiting
+            # for the first decode beats running ffmpeg twice for one frame.
+            event.wait(timeout=GENERATE_WAIT_SEC)
+            cached = self.cached_thumbnail(uri)
+            if cached:
+                return cached, 'image/jpeg'
+        try:
+            generated = self.generate_thumbnail(uri)
+            if generated:
+                return generated, 'image/jpeg'
+            self._mark_failure(uri)
+            stale = self._stale_thumbnail(uri)
+            if stale:
+                # A locked cache file means the previous preview is still valid enough;
+                # degrading the whole grid to a 1x1 placeholder is worse.
+                return stale, 'image/jpeg'
+            return self.placeholder, 'image/png'
+        finally:
+            if leader:
+                with self._inflight_lock:
+                    self._inflight.pop(key, None)
+                event.set()
 
     def _failure_path(self, uri: str) -> Path:
         cache_path = self.cache_path(uri)

@@ -105,6 +105,20 @@ _DAMAGED_DATABASE_MARKERS = (
 )
 
 
+def _quick_check(database: AppDatabase) -> None:
+    """Raise DatabaseError when SQLite reports a malformed image.
+
+    ``PRAGMA quick_check`` returns a row per problem (and a single ``ok`` row when
+    the file is sound), so anything else means the btree is broken even though the
+    schema pages still open.
+    """
+    with database.connect() as connection:
+        rows = connection.execute('PRAGMA quick_check').fetchall()
+    problems = [str(row[0]) for row in rows if str(row[0]).lower() != 'ok']
+    if problems:
+        raise sqlite3.DatabaseError('database disk image is malformed: ' + '; '.join(problems[:3]))
+
+
 def _is_damaged_database(error: sqlite3.DatabaseError) -> bool:
     message = str(error).lower()
     return any(marker in message for marker in _DAMAGED_DATABASE_MARKERS)
@@ -146,6 +160,11 @@ def _open_database(db_path: Path) -> AppDatabase:
     database = AppDatabase(db_path)
     try:
         database.migrate()
+        # migrate() only reads schema_migrations (pages 1-2), so a file whose data
+        # pages are destroyed still migrates cleanly and then blows up in the first
+        # index sync -- after the app has started serving. quick_check walks the
+        # btree pages and costs milliseconds on a local index.
+        _quick_check(database)
         return database
     except sqlite3.DatabaseError as error:
         if not _is_damaged_database(error):
@@ -467,6 +486,14 @@ def create_app(test_config=None):
         if methods:
             response.headers['Allow'] = ', '.join(methods)
         return response
+
+    @app.errorhandler(413)
+    def handle_request_too_large(error):
+        # Werkzeug answers an oversized body with an English HTML page; the upload
+        # fetch then failed on response.json() and the UI only said "upload failed".
+        limit = app.config.get('MAX_CONTENT_LENGTH') or 0
+        message = t('common.error.too_large', limit=f'{limit / (1024 * 1024):.0f} MB')
+        return _api_error(413, message, error)
 
     @app.errorhandler(500)
     def handle_server_error(error):

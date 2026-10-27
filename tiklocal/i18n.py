@@ -32,6 +32,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'common.error.method_not_allowed': '该请求方式不被支持。',
         'common.error.internal': '服务器处理请求时出错，请稍后重试。',
     'common.error.storage_unavailable': '无法写入存储，请检查磁盘空间或权限后重试。',
+    'common.error.too_large': '上传内容超过 {limit} 上限，请压缩后再试。',
     'download.error.file_move_failed': '文件没能移入回收站，可能正被其他程序占用。',
         'common.all': '全部',
         'common.search': '搜索',
@@ -242,6 +243,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'common.error.method_not_allowed': 'This request method is not supported.',
         'common.error.internal': 'The server failed to handle the request. Please try again.',
     'common.error.storage_unavailable': 'Storage is not writable. Check free space and permissions, then retry.',
+    'common.error.too_large': 'The upload exceeds the {limit} limit. Shrink it and retry.',
     'download.error.file_move_failed': 'The file could not be moved to the trash; another program may be using it.',
         'common.all': 'All',
         'common.search': 'Search',
@@ -455,6 +457,7 @@ def _merge_page_catalogs() -> None:
         i18n_pages_library,
         i18n_pages_media,
         i18n_pages_radio,
+        i18n_pages_similarity,
         i18n_pages_sync,
         i18n_pages_ui,
     )
@@ -465,6 +468,7 @@ def _merge_page_catalogs() -> None:
         i18n_pages_library,
         i18n_pages_media,
         i18n_pages_radio,
+        i18n_pages_similarity,
         i18n_pages_sync,
         i18n_pages_ui,
     ):

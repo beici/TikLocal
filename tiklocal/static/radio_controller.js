@@ -157,7 +157,7 @@
       consecutivePlayErrors += 1;
       resetEncore();
       if (consecutivePlayErrors >= PLAY_ERROR_LIMIT) {
-        showLoadError(new Error('连续 ' + consecutivePlayErrors + ' 首无法播放'));
+        showLoadError(new Error(T('radio.error.consecutive_failed', { count: consecutivePlayErrors })));
         return;
       }
       playNext(true);

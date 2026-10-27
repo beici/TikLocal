@@ -226,7 +226,7 @@ def test_refresh_without_a_sidecar_is_rejected(tmp_path):
     response = client.post('/api/author/blogger/refresh', json={})
 
     assert response.status_code == 400
-    assert response.get_json() == {'ok': False, 'error': 'TikTokDownloader 未配置'}
+    assert response.get_json() == {'success': False, 'ok': False, 'error': 'TikTokDownloader 未配置'}
 
 
 def test_refresh_uses_the_folder_derived_keyword(tmp_path, monkeypatch):
@@ -274,7 +274,7 @@ def test_refresh_maps_sidecar_failures_to_4xx_5xx(tmp_path, monkeypatch):
     response = client.post('/api/author/blogger/refresh', json={})
 
     assert response.status_code == 502
-    assert response.get_json() == {'ok': False, 'error': 'sidecar unreachable'}
+    assert response.get_json() == {'success': False, 'ok': False, 'error': 'sidecar unreachable'}
 
     def bad_keyword(self, source_id, *, keyword='', sec_user_id='', unique_id='', uid=''):
         raise ValueError('keyword required')
@@ -283,7 +283,9 @@ def test_refresh_maps_sidecar_failures_to_4xx_5xx(tmp_path, monkeypatch):
     response = client.post('/api/author/blogger/refresh', json={'keyword': '  '})
 
     assert response.status_code == 400
-    assert response.get_json() == {'ok': False, 'error': 'keyword required'}
+    body = response.get_json()
+    assert body['ok'] is False
+    assert body['error'] == 'keyword required'
 
 
 def test_page_follows_the_english_locale(tmp_path):
