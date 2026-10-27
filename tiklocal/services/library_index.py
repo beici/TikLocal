@@ -787,16 +787,47 @@ def _filename_capture_time(path: Path) -> dict | None:
     return None
 
 
+_MAX_PLAUSIBLE_FUTURE_SEC = 86400.0
+
+
+def _safe_mtime_datetime(mtime: float) -> datetime.datetime:
+    """A naive local datetime for ``mtime`` that never raises.
+
+    ``datetime.fromtimestamp`` raises ``OSError``/``OverflowError`` on Windows for
+    timestamps before 1970 or past year 9999. One such file (unzipped archive with
+    mtime 0, camera with a zeroed clock, COPY keeping 1601 timestamps) used to abort
+    the whole source scan, so the source was reported unavailable and nothing new
+    ever entered the index.
+    """
+    try:
+        return datetime.datetime.fromtimestamp(mtime)
+    except (OSError, OverflowError, ValueError):
+        return datetime.datetime(1970, 1, 1, 0, 0, 0)
+
+
+def _clamp_future(payload: dict) -> dict:
+    """Drop a capture time that lies in the future.
+
+    A filename or EXIF tag claiming 2031 used to pin a phantom year to the top of
+    the timeline, and the stored month never self-heals. Anything beyond tomorrow is
+    treated as untrusted and falls back to the filesystem time.
+    """
+    captured_at = float(payload.get("captured_at") or 0.0)
+    if captured_at <= time.time() + _MAX_PLAUSIBLE_FUTURE_SEC:
+        return payload
+    return {}
+
+
 def discover_capture_time(path: Path, media_type: str, mtime: float) -> dict:
     if media_type == "image":
-        embedded = _image_capture_time(path)
+        embedded = _clamp_future(_image_capture_time(path) or {})
         if embedded:
             return embedded
-    filename_value = _filename_capture_time(path)
+    filename_value = _clamp_future(_filename_capture_time(path) or {})
     if filename_value:
         return filename_value
     return _capture_payload(
-        datetime.datetime.fromtimestamp(mtime),
+        _safe_mtime_datetime(mtime),
         "filesystem_mtime",
         "fallback",
     )

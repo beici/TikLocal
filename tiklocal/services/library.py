@@ -1,4 +1,5 @@
 import errno
+import logging
 import os
 import stat
 from dataclasses import dataclass
@@ -7,6 +8,8 @@ from typing import Any
 
 from tiklocal.paths import DOWNLOAD_TMP_DIR
 from tiklocal.services.trash import TRASH_DIR
+
+logger = logging.getLogger(__name__)
 
 VIDEO_EXTENSIONS = {'.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v'}
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
@@ -115,6 +118,34 @@ class LibraryService:
         # Resolving a source root costs a syscall (two on Windows) and the indexer
         # calls ref_for_path() once per file: resolve each root exactly once.
         self._resolved_roots = [(source, source.path.resolve()) for source in self.sources]
+        self._warn_overlapping_sources()
+
+    def _warn_overlapping_sources(self) -> None:
+        """Name sources that another source's root swallows.
+
+        ref_for_path() returns the first root that contains the file, so a source
+        configured on a subdirectory of another source (or on the same directory)
+        never owns a single record: its chip disappears from the UI, `?blog=<id>`
+        is always empty, and nothing anywhere says why. Warn once at startup.
+        """
+        accepted: list[tuple[Any, Path]] = []
+        for source, root in self._resolved_roots:
+            shadowed_by = None
+            for other_source, other_root in accepted:
+                try:
+                    root.relative_to(other_root)
+                except ValueError:
+                    continue
+                shadowed_by = other_source
+                break
+            if shadowed_by is None:
+                accepted.append((source, root))
+                continue
+            logger.warning(
+                'Media source %r is inside media source %r; its files are indexed under %r. '
+                'Configure non-overlapping directories if it should appear separately.',
+                source.id, shadowed_by.id, shadowed_by.id,
+            )
 
     def scan_source(
         self, source: MediaSource, extensions: set[str] | None = None, *, recursive: bool = True,

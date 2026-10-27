@@ -4,11 +4,12 @@ import datetime
 import errno
 import io
 import math
+import mimetypes
 import time
 from pathlib import Path
 from urllib.parse import quote
 
-from flask import redirect, render_template, request, send_file
+from flask import Response, redirect, render_template, request, send_file
 
 from tiklocal.i18n import t
 from tiklocal.services.embedded_metadata import read_embedded_generation
@@ -19,6 +20,79 @@ from tiklocal.web.media_payloads import media_urls
 # Inline delivery is limited to formats the app itself renders; anything else in
 # the media library (svg, html, js) is downloaded as an opaque attachment.
 INLINE_MEDIA_SUFFIXES = frozenset(VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS)
+
+
+def _byte_range(header: str | None, size: int):
+    """Classify a ``Range`` header against a file of ``size`` bytes.
+
+    Returns ``(start, end)`` for a satisfiable single range, ``'ignore'`` when the
+    header is unsupported (multi-range, bad syntax) and ``'unsatisfiable'`` when it
+    parses but points past the end. Werkzeug answers every non-single-range request
+    with 416, which makes a legal multi-range request look like a missing file.
+    """
+    if not header or not header.startswith('bytes=') or size <= 0:
+        return 'ignore'
+    spec = header[len('bytes='):].strip()
+    if ',' in spec or '-' not in spec:
+        return 'ignore'
+    first, _, last = spec.partition('-')
+    try:
+        if not first:
+            length = int(last)
+            if length <= 0:
+                return 'ignore'
+            return max(size - length, 0), size - 1
+        start = int(first)
+        end = int(last) if last else size - 1
+    except ValueError:
+        return 'ignore'
+    if start >= size:
+        return 'unsatisfiable'
+    if start > end:
+        return 'ignore'
+    return start, min(end, size - 1)
+
+
+class _BoundedReader:
+    """A file slice that stops after ``length`` bytes.
+
+    Both ``wsgi.file_wrapper`` (waitress) and Werkzeug's ``FileWrapper`` pull from a
+    file-like object until EOF, so handing them the raw file object would ship the
+    rest of the file as the body of a 206 response.
+    """
+
+    def __init__(self, handle, start: int, length: int):
+        self._handle = handle
+        self._remaining = max(0, int(length))
+        handle.seek(start)
+
+    def read(self, size: int = -1) -> bytes:
+        if self._remaining <= 0:
+            return b''
+        if size is None or size < 0:
+            size = self._remaining
+        chunk = self._handle.read(min(size, self._remaining))
+        self._remaining -= len(chunk)
+        return chunk
+
+    def close(self) -> None:
+        try:
+            self._handle.close()
+        except OSError:
+            pass
+
+
+def _iter_reader(reader, block_size: int = 64 * 1024):
+    """Drive a bounded reader as a WSGI app_iter (used without file_wrapper)."""
+    try:
+        while True:
+            chunk = reader.read(block_size)
+            if not chunk:
+                return
+            yield chunk
+    finally:
+        reader.close()
+
 
 
 def register_media_routes(app, library_service, media_index, thumbnail_service, download_manager, trash_service, library_indexer,
@@ -237,14 +311,61 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         if not uri: return redirect('/library')
         return redirect(f"/delete/{quote(uri)}")
 
+    def _ranged_media(target):
+        """Serve a single byte range through ``wsgi.file_wrapper``.
+
+        Werkzeug's ``RangeWrapper`` is a plain generator, so waitress copies it in
+        the request thread. A client that stops reading (a paused video tab, a phone
+        that lost signal) then pins a worker until ``channel_timeout``; eight of them
+        starve the pool and the whole UI stops answering. Handing the file object to
+        the server's file wrapper lets waitress move the bytes off-thread.
+        """
+        if request.method != 'GET':
+            return None
+        if (request.headers.get('If-None-Match') or request.headers.get('If-Modified-Since')
+                or request.headers.get('If-Range')):
+            return None  # send_file owns 304 / If-Range semantics
+        size = target.stat().st_size
+        span = _byte_range(request.headers.get('Range'), size)
+        if span == 'unsatisfiable':
+            # RFC 9110 wants 416 here; silently sending the whole file made a broken
+            # seek look like a successful read to the player.
+            response = Response(status=416)
+            response.headers['Content-Range'] = f'bytes */{size}'
+            response.headers['Accept-Ranges'] = 'bytes'
+            return response
+        if span == 'ignore':
+            # An unsupported Range (multi-range, bad syntax) must not look like a
+            # missing file: RFC 9110 lets the server ignore it and send everything.
+            return send_file(target, conditional=False)
+        start, end = span
+        length = end - start + 1
+        reader = _BoundedReader(open(target, 'rb'), start, length)
+        wrapper = request.environ.get('wsgi.file_wrapper')
+        # ``wsgi.file_wrapper`` is what makes waitress move the bytes off-thread; the
+        # reader must be bounded in both branches, a bare file object is read to EOF
+        # by whoever consumes the response (that shipped the whole file as a 206).
+        body = wrapper(reader, 64 * 1024) if wrapper is not None else _iter_reader(reader)
+        response = Response(body, status=206, direct_passthrough=True)
+        response.headers['Content-Range'] = f'bytes {start}-{end}/{size}'
+        response.headers['Content-Length'] = str(length)
+        response.headers['Accept-Ranges'] = 'bytes'
+        response.headers['Cache-Control'] = 'private, no-cache'
+        response.mimetype = mimetypes.guess_type(target.name)[0] or 'application/octet-stream'
+        return response
+
     @app.route("/media/<path:filename>")
     def serve_media(filename):
         target = library_service.resolve_path(filename)
         if not target or not target.exists() or not target.is_file():
-            return "File not found", 404
+            return t('image.error.file_not_found'), 404
         # 只对已知音视频/图片内联下发：媒体库是用户可写目录，一个 .svg/.html 落进来
         # 再给个链接，脚本就会在本应用源内执行（可带 cookie 调 /api/*）。
         if target.suffix.lower() in INLINE_MEDIA_SUFFIXES:
+            if request.headers.get('Range'):
+                ranged = _ranged_media(target)
+                if ranged is not None:
+                    return ranged
             return send_file(target)
         return send_file(target, mimetype='application/octet-stream', as_attachment=True,
                          download_name=target.name)

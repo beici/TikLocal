@@ -35,6 +35,9 @@
 | 索引扫描的 `skipped_prefixes` 没有回给前端 | `tiklocal/services/library_index.py:738`（`result['skipped_prefixes']`） | 后端已能收集权限不足的前缀并保留索引行，但 `/api/library/sync` 的响应还没带出来，用户不知道有目录被跳过；补一个字段即可，留到下一轮做 UI 提示时一起改 |
 | 注销不吊销服务端会话（旧 cookie 在有效期内仍可用） | `tiklocal/auth.py`（签名 cookie，无会话表） | 吊销需要 token family / session 存储 + 迁移，覆盖登录、配对、CSRF 三处；前端已清 cookie 并跳登录，风险限于有效期内。第 08 轮记录，需单独一轮设计 |
 | 登录限流按 IP 单桶，不区分用户 | `tiklocal/auth.py`（失败计数） | 单机部署按 IP 桶足够；按用户 + 指数退避需先引入失败计数存储。当前已有 429 + `Retry-After` |
+| 搜索只折叠 ASCII 大小写，非 ASCII 文件名搜不到（`q=ärger` 无结果） | `tiklocal/services/library_index.py:673` 的 `LIKE` 查询 | 根治需要 `media_items.search_key` 列（NFC + casefold + 空白折叠）+ 迁移回填 + 查询改写，影响 `_filters()`/`page()`/`q` 截断，单独一轮做；CJK 文件名不受影响 |
+| 搜索不做 Unicode 归一化（NFC/NFD 互不匹配）与空白折叠 | 同上 | 与上一条同一修法，合并进 search_key 方案 |
+| Pillow 12.3.0 仍命中 41 条公告 | `pyproject.toml:21`（已放宽为 `>=12.3.0,<14`） | 本机 Python 3.14 尚无 13.0.0 轮子，装 13 会退化为源码编译；等 cp314 轮子发布后 `poetry update pillow` 并复跑缩略图相关测试 |
 
 ## P3
 

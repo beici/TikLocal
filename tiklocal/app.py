@@ -322,6 +322,15 @@ def create_app(test_config=None):
     media_sources = build_media_sources(app.config['MEDIA_ROOT'], app.config.get('MEDIA_SOURCES'))
     library_service = LibraryService(app.config['MEDIA_ROOT'], media_sources=media_sources)
     default_media_root = library_service.media_root
+    # `tiklocal D:\media\2026\hits` used to start happily on a missing nested
+    # directory and serve an empty library with no explanation. The path came from
+    # the user, so create it (parents included) and only warn when that fails.
+    if not default_media_root.is_dir():
+        try:
+            default_media_root.mkdir(parents=True, exist_ok=True)
+            app.logger.info('Created media directory: %s', default_media_root)
+        except OSError as error:
+            app.logger.warning('Media directory is not usable: %s (%s)', default_media_root, error)
     media_root_str = str(default_media_root)
     app.config['MEDIA_ROOT'] = default_media_root
     favorite_service = FavoriteService(get_favorites_path(), library_service)

@@ -15,7 +15,8 @@ _OLD_TEMPLATE_ID_RE = re.compile(r"\[(?P<id>[^\]]+)\]")
 
 
 def utc_now_iso() -> str:
-    return datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    # utcnow() is deprecated and scheduled for removal; keep the same wire format.
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def normalize_file_rel(value: str) -> str:
