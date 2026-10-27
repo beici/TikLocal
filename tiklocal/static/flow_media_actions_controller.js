@@ -29,6 +29,13 @@
     var confirmCaptionReplace = typeof opts.confirmCaptionReplace === 'function' ? opts.confirmCaptionReplace : null;
 
     var favoriteState = new Map();
+    // The detail page toggles the same favourite through its own controller and the
+    // endpoint is a toggle, not a set: a cached value made the next tap undo the
+    // change made elsewhere instead of repeating it.
+    global.addEventListener('pageshow', function () { favoriteState.clear(); });
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') favoriteState.clear();
+    });
     var favoriteRequests = new Map();
     var sourceState = new Map();
     var captionCache = new Map();

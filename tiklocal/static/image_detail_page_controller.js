@@ -408,6 +408,13 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Delete moves the file to the trash and continues to a neighbour, where Undo is offered.
-function confirmDelete() {
+async function confirmDelete() {
+  const confirmed = await TikLocalUI.confirm({
+    title: T('detail.delete_confirm_title', { file: String(imageDetailBoot.uri || '').split('/').pop() }),
+    message: T('detail.delete_confirm_copy'),
+    confirmLabel: T('common.delete'),
+    tone: 'danger'
+  });
+  if (!confirmed) return;
   TikLocalUI.trash(imageDetailBoot.deleteUrl, imageDetailBoot.nextUrl || imageDetailBoot.previousUrl);
 }

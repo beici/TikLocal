@@ -5,6 +5,7 @@ import segno
 from flask import request, send_file
 
 from tiklocal.auth import LoginAttemptLimiter
+from tiklocal.i18n import t
 from tiklocal.services.library import AUDIO_EXTENSIONS
 from tiklocal.services.radio import RadioCandidate
 
@@ -85,7 +86,7 @@ def register_radio_client_routes(
         if retry_after:
             response, status = error(
                 "too_many_attempts",
-                "Too many pairing attempts. Try again later.",
+                t('radio.pairing.too_many'),
                 429,
             )
             return response, status, {"Retry-After": str(retry_after)}
@@ -106,7 +107,7 @@ def register_radio_client_routes(
         if not app.extensions.get("auth_enabled"):
             return error(
                 "pairing_not_required",
-                "This TikLocal Server does not require pairing",
+                t('radio.pairing.not_required'),
                 409,
             )
         payload = request.get_json(silent=True) or {}
@@ -116,7 +117,7 @@ def register_radio_client_routes(
         if not server_url:
             return error(
                 "invalid_server_url",
-                "Enter an HTTP or HTTPS Server address without a path",
+                t('radio.pairing.invalid_server_url'),
                 400,
             )
         grant = pairing_grant_store.issue(auth_revision=auth_store.revision)
@@ -146,7 +147,7 @@ def register_radio_client_routes(
         if not app.extensions.get("auth_enabled"):
             return error(
                 "pairing_not_required",
-                "This TikLocal Server does not require pairing",
+                t('radio.pairing.not_required'),
                 409,
             )
         client_key = request.remote_addr or "unknown"
@@ -154,7 +155,7 @@ def register_radio_client_routes(
         if retry_after:
             response, status = error(
                 "too_many_attempts",
-                "Too many pairing attempts. Try again later.",
+                t('radio.pairing.too_many'),
                 429,
             )
             return response, status, {"Retry-After": str(retry_after)}
@@ -166,7 +167,7 @@ def register_radio_client_routes(
             grant_limiter.record_failure(client_key)
             return error(
                 "invalid_pairing_grant",
-                "This pairing link has expired or was already used",
+                t('radio.pairing.invalid_grant'),
                 401,
             )
         grant_limiter.clear(client_key)

@@ -25,8 +25,9 @@
 | 07 | 2026-10-27 | 412P/6S/0F | 0/0/9/7（确认 16，修复 15，转 backlog 1） | `34e53e3`，26 文件 `+759/-38` | [round-07](round-07.md) |
 | 08 | 2026-10-27 | 414P/6S/0F | 0/0/14/5（确认 19，修复 17，转 backlog 2） | `db91d71`，18 文件 `+681/-30` | [round-08](round-08.md) |
 | 09 | 2026-10-27 | 419P/6S/0F | 0/1/15/6（确认 22，修复 20，转 backlog 1，驳回 1） | `0201d36`，19 文件 `+262/-58` | [round-09](round-09.md) |
-| 10 | 2026-10-27 | 427P/6S/0F | 2/10/6（确认 18，修复 18，转 backlog 2） | `fix: harden concurrency…`，22 文件 | [round-10](round-10.md) |
-| 11 | 2026-10-27 | 432P/6S/0F | 0/0/12/8（报告 20，修复 4，复核无问题 3，转下轮 13） | `fix: redact log secrets…` | [round-11](round-11.md) |
+| 10 | 2026-10-27 | 427P/6S/0F | 2/10/6（确认 18，修复 18，转 backlog 2） | `02bc700`，22 文件 | [round-10](round-10.md) |
+| 11 | 2026-10-27 | 432P/6S/0F | 0/0/12/8（报告 20，修复 4，复核无问题 3，转下轮 13） | `26d8bc0`，6 文件 | [round-11](round-11.md) |
+| 12 | 2026-10-27 | 432P/6S/0F | 0/2/13/7（确认 22：新审 10 + 第 11 轮遗留 12） | `fix: harden logging, focus traps…` | [round-12](round-12.md) |
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
 
@@ -47,6 +48,8 @@
 第 08 轮结束后：`pytest -q` = **419 passed / 6 skipped / 0 failed**（145.76s，新增 7 个用例：`tests/test_round08_regressions.py`）。
 
 第 09 轮结束后：`pytest -q` = **427 passed / 6 skipped / 0 failed**（162.72s，新增 8 个用例：`tests/test_round09_regressions.py`）。性能修复同时让套件从 203s 降到 163s。
+
+第 12 轮结束后：`pytest -q` = **439 passed / 6 skipped / 0 failed**（183.41s，新增 7 个用例：`tests/test_round12_regressions.py`）。
 
 ## 目录
 

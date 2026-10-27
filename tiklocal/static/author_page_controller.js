@@ -84,7 +84,12 @@
     const count = Number(value);
     if (!Number.isFinite(count) || count <= 0) return '0';
     if (count < 10000) return String(Math.round(count));
-    return `${(count / 10000).toFixed(1)}${T('author.unit.ten_thousand')}`;
+    if ((document.documentElement.lang || '').startsWith('zh')) {
+      return `${(count / 10000).toFixed(1)}${T('author.unit.ten_thousand')}`;
+    }
+    if (count >= 1000000000) return `${(count / 1000000000).toFixed(1)}B`;
+    if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`;
+    return `${(count / 1000).toFixed(1)}K`;
   }
 
   async function postJSON(action, body) {

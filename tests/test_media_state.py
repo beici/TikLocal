@@ -99,8 +99,11 @@ def test_dimensions_are_probed_in_background_and_refreshed_after_change(tmp_path
         return {item['name']: (item['width'], item['height']) for item in items}
 
     assert sizes()['@default/photo.jpg'] == (None, None)
-    assert probe.run_once() == 2
+    # A file whose dimensions cannot be read is left unprobed so a later pass retries
+    # it; only the readable photo counts as done.
+    assert probe.run_once() == 1
     assert sizes() == {'@default/photo.jpg': (120, 80), '@default/broken.jpg': (None, None)}
+    assert any(row['uri'] == '@default/broken.jpg' for row in probe.store.unprobed(10))
     assert probe.run_once() == 0
 
     Image.new('RGB', (60, 90)).save(photo)

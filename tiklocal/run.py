@@ -6,6 +6,7 @@ import getpass
 from pathlib import Path
 from waitress.server import create_server as create_waitress_server
 from tiklocal.app import create_app
+from tiklocal import __version__
 from tiklocal.thumbs import generate_thumbnails
 from tiklocal.paths import get_data_dir
 from tiklocal.paths import get_auth_path
@@ -396,6 +397,19 @@ Examples:
         parser.error(str(exc))
     bootstrap = app.extensions.get('auth_bootstrap')
     download_manager = app.extensions['download_manager']
+    # The banner only reaches the terminal, and a service manager restarts the
+    # process: without this line the log never says which media root, port or
+    # version a given run actually used.
+    app.logger.info(
+        'TikLocal %s on %s:%s; media_root=%s sources=%s data_dir=%s auth=%s',
+        __version__,
+        host,
+        port,
+        media_path.absolute(),
+        ','.join(sorted(str(source.get('id')) for source in media_sources)) or '-',
+        resolve_data_dir(parser),
+        'enabled' if app.extensions.get('auth_enabled') else 'disabled',
+    )
     previous_sigterm = signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         if not args.dev or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':

@@ -465,6 +465,7 @@
     });
     sheet.hidden = false;
     document.body.style.overflow = 'hidden';
+    const previousFocus = document.activeElement;
     const cancel = sheet.querySelector('[data-sheet-cancel]');
     cancel?.focus();
     return new Promise((resolve) => {
@@ -475,6 +476,8 @@
         cancel?.removeEventListener('click', onCancel);
         sheet.removeEventListener('click', onMaskClick);
         sheet.removeEventListener('keydown', onKeydown);
+        // aria-modal="true" means focus must come back to the trigger, not to body.
+        if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
         resolve(result);
       };
       const onMode = (event) => finish(event.currentTarget.dataset.deleteMode);
@@ -483,10 +486,27 @@
         if (event.target === sheet) finish(null);
       };
       const onKeydown = (event) => {
-        if (event.key !== 'Escape') return;
-        // Keep the document-level Esc handler from also clearing the selection.
-        event.stopPropagation();
-        finish(null);
+        if (event.key === 'Escape') {
+          // Keep the document-level Esc handler from also clearing the selection.
+          event.stopPropagation();
+          finish(null);
+          return;
+        }
+        if (event.key !== 'Tab') return;
+        // The sheet is modal: Tab has to cycle inside it instead of walking into
+        // the grid behind the mask.
+        const focusable = [...sheet.querySelectorAll('button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+          .filter((element) => element.offsetParent !== null);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       };
       modes.forEach((button) => button.addEventListener('click', onMode));
       cancel?.addEventListener('click', onCancel);

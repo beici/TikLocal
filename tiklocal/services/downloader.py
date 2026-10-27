@@ -1282,6 +1282,10 @@ class DownloadManager:
             try:
                 for raw_line in process.stdout:
                     lines.put(raw_line.strip())
+            except Exception:  # noqa: BLE001 - the pump thread must never die silently
+                # A decode error here used to kill the thread while the tool kept
+                # running, so a "successful" job reported zero outputs.
+                LOGGER.exception("Download output pump failed for job %s", job_id)
             finally:
                 lines.put(None)
 
@@ -1359,6 +1363,7 @@ class DownloadManager:
             if self._closed or self._cancel_events[job_id].is_set():
                 raise RuntimeError('Download canceled.')
             process = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT, text=True,
+                               encoding='utf-8', errors='replace',
                                bufsize=1, start_new_session=os.name == 'posix')
             self._processes[job_id] = process
             return process

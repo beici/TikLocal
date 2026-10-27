@@ -31,6 +31,10 @@ class ThemeManager {
   }
   apply() {
     const resolved = this.resolvedTheme();
+    // The first-paint script in base.html writes the attribute on <html>; writing it
+    // on <body> here left the page shell (and every var() resolved from html) on the
+    // old theme while only the dock followed, so a switch looked half-applied.
+    document.documentElement.dataset.theme = resolved;
     document.body.setAttribute('data-theme', resolved);
     document.querySelectorAll('[data-theme-sync]').forEach((element) => {
       element.setAttribute('data-theme', resolved);

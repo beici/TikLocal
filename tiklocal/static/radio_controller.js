@@ -231,9 +231,11 @@
         return;
       }
       // Keyboard parity with the transport buttons: Space toggles, arrows seek.
+      // Space must not be swallowed when a real control has focus -- otherwise
+      // Tab + Space on the dock or #btn-fav silently toggles playback instead.
       var target = event.target;
       if (target && typeof target.closest === 'function'
-        && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) {
+        && target.closest('input, textarea, select, button, a[href], summary, [role="button"], [contenteditable]:not([contenteditable="false"])')) {
         return;
       }
       if (event.key === ' ') {
@@ -426,17 +428,20 @@
     fetch('/api/favorite/' + encodeURIComponent(track.name), { method: 'POST' })
       .then(async function (response) {
         var data = await response.json();
-        if (!response.ok || typeof data.favorite !== 'boolean') throw new Error('Failed to update favorite');
+        if (!response.ok || typeof data.favorite !== 'boolean') {
+          throw new Error((data && data.error) || 'Failed to update favorite');
+        }
         track.is_favorite = data.favorite;
         if (currentTrack === track) updateFavorite();
         if (track.is_favorite) reportFeedback('favorite', track, ratio);
         settleControl(els.btnFav);
       })
-      .catch(function () {
+      .catch(function (error) {
         if (currentTrack === track) {
           els.btnFav.title = T('radio.favorite_save_failed');
           els.btnFav.setAttribute('aria-label', els.btnFav.title);
         }
+        TikLocalUI.toast(error.message || T('radio.favorite_save_failed'), 'error');
       })
       .finally(function () { els.btnFav.disabled = false; });
   }

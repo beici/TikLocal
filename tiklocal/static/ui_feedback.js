@@ -41,7 +41,15 @@
       });
       el.append(button);
     }
-    wrap.replaceChildren(el);
+    // replaceChildren() dropped a pending Undo toast whenever a later
+    // informational toast (e.g. "resumed at 0:30") arrived, taking the only way
+    // back after a delete with it. Informational toasts now stack instead.
+    if (!action) {
+      Array.prototype.slice.call(wrap.children).forEach(function (child) {
+        if (!child.querySelector('.ui-toast-action')) child.remove();
+      });
+    }
+    wrap.appendChild(el);
     if (window.feather) feather.replace();
     setTimeout(leave, action ? 6000 : 3000);
   }

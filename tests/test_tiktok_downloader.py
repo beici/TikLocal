@@ -7,6 +7,7 @@ import urllib.error
 import pytest
 
 from tiklocal.app import create_app
+from tiklocal.i18n import t
 from tiklocal.services import author_profiles
 from tiklocal.services.downloader import (
     MASKED_SECRET, DownloadConfigStore, DownloadManager, validate_download_config,
@@ -321,8 +322,9 @@ def test_service_expands_share_links_and_truncates(monkeypatch, tmp_path):
 
 def test_service_requires_configuration(tmp_path):
     service = TikTokDownloadService(_config_store(tmp_path), FakeManager())
-    with pytest.raises(TikTokDownloaderError, match="not configured"):
+    with pytest.raises(TikTokDownloaderError) as error:
         service.enqueue_from_url("https://www.douyin.com/user/MS4wLjABAAAAxi")
+    assert str(error.value) == t('download.alert.tiktok_unconfigured')
 
 
 def test_service_rejects_unsupported_links(monkeypatch, tmp_path):
@@ -501,7 +503,7 @@ def test_tiktok_service_absent_when_unconfigured(tmp_path, monkeypatch):
         client = app.test_client()
         res = client.post("/api/download/tiktok", json={"url": "https://www.douyin.com/user/MS4wLjABAAAAxi"})
         assert res.status_code == 502
-        assert "not configured" in res.get_json()["error"]
+        assert res.get_json()["error"] == t('download.alert.tiktok_unconfigured')
         status = client.get("/api/download/tiktok/status").get_json()["data"]
         assert status["configured"] is False
     finally:

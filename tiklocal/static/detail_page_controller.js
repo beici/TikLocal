@@ -92,13 +92,17 @@ document.addEventListener('DOMContentLoaded', () => {
         method: 'POST'
       });
       const data = await response.json();
-      if (!response.ok || typeof data.favorite !== 'boolean') throw new Error('Failed to save favorite');
+      if (!response.ok || typeof data.favorite !== 'boolean') {
+        // The 403 body explains that the CSRF token expired; a fixed toast hid the
+        // only actionable hint.
+        throw new Error((data && data.error) || 'Failed to save favorite');
+      }
       isFavorited = data.favorite;
       updateFavoriteUI();
       TikLocalUI.toast(isFavorited ? T('detail.favorite_added') : T('detail.favorite_removed'), 'success');
     } catch (error) {
       console.error('Failed to update favorite:', error);
-      TikLocalUI.toast(T('common.action_failed'), 'error');
+      TikLocalUI.toast(error.message || T('common.action_failed'), 'error');
     } finally {
       favoriteBtn.disabled = false;
     }
@@ -256,6 +260,15 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Delete moves the file to the trash and continues to a neighbour, where Undo is offered.
-function confirmDelete() {
+// It used to fire on the first tap of the red menu item, so a mis-tap on a phone
+// deleted the file; every other destructive action asks first.
+async function confirmDelete() {
+  const confirmed = await TikLocalUI.confirm({
+    title: T('detail.delete_confirm_title', { file: fileName }),
+    message: T('detail.delete_confirm_copy'),
+    confirmLabel: T('common.delete'),
+    tone: 'danger'
+  });
+  if (!confirmed) return;
   TikLocalUI.trash(detailBoot.deleteUrl, detailBoot.afterDeleteUrl);
 }

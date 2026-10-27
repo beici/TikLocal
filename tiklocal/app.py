@@ -42,6 +42,7 @@ from tiklocal.auth import configure_auth
 from tiklocal.i18n import current_locale, js_catalog, t, translate
 from tiklocal.radio_client import register_radio_client_routes
 from tiklocal.paths import (
+    get_data_dir,
     get_metadata_path,
     get_favorites_path,
     get_prompt_config_path,
@@ -172,8 +173,11 @@ def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)
     # Configure logging before anything can touch app.logger: Flask then skips its
     # default stderr handler and waitress' late basicConfig() becomes a no-op, so a
-    # record is written once -- to stderr and to the rotating file under instance/.
-    configure_logging(app.instance_path)
+    # record is written once -- to stderr and to the rotating file. The file lives
+    # with the data (TIKLOCAL_INSTANCE / ~/.tiklocal): Flask's instance_path sits
+    # next to the package, which is read-only for a wheel install, and the log then
+    # silently vanished.
+    configure_logging(get_data_dir())
     app.config.from_mapping(
         SECRET_KEY = None,
         # Unauthenticated endpoints such as /api/v1/pair must not be able to make
@@ -455,7 +459,14 @@ def create_app(test_config=None):
 
     @app.errorhandler(500)
     def handle_server_error(error):
-        app.logger.exception('Unhandled error on %s', request.path)
+        # A bare path could not tell GET from POST or a retry from the original
+        # request, so the entry was impossible to reproduce from the log alone.
+        app.logger.exception(
+            'Unhandled error on %s %s from %s',
+            request.method,
+            request.full_path if request.query_string else request.path,
+            request.remote_addr,
+        )
         return _api_error(500, t('common.error.internal'), error)
 
     return app

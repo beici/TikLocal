@@ -18,7 +18,7 @@ def register_caption_routes(app, library, metadata, settings):
                 store.set(value)
             return {'success': True, 'data': settings.resolve()[kind]}
         except OSError:
-            return {'success': False, 'error': 'The configuration could not be saved. Please try again later.'}, 503
+            return {'success': False, 'error': t('image.error.config_save_failed')}, 503
 
     @app.route('/api/ai/prompt-config', methods=['GET', 'POST'])
     def api_prompt_config():
@@ -52,7 +52,7 @@ def register_caption_routes(app, library, metadata, settings):
             saved = metadata.get_many(keys)
             existing = next((saved[key] for key in keys if saved.get(key) is not None), None)
         except (OSError, ValueError):
-            return {'success': False, 'error': 'Image information could not be read. Please try again later.'}, 503
+            return {'success': False, 'error': t('image.error.metadata_read_failed')}, 503
         if request.method == 'GET':
             return {'success': True, 'data': existing}
 

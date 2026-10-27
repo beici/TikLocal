@@ -123,6 +123,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'image.error.base_url_scheme': 'base_url 必须以 http:// 或 https:// 开头。',
         'image.error.base_url_private': 'base_url 不能指向本机或局域网地址（该地址会收到 API 密钥与图片）。',
         'image.error.model_too_long': 'model_name 不能超过 {limit} 个字符。',
+    'image.error.config_save_failed': '配置保存失败，请稍后重试。',
+    'image.error.metadata_read_failed': '图片信息读取失败，请稍后重试。',
 
         'download.heading': '下载',
         'download.intro': '粘贴链接，把网上的图片或视频保存到本地媒体库。',
@@ -368,6 +370,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'image.error.base_url_scheme': 'base_url must start with http:// or https://.',
         'image.error.base_url_private': 'base_url cannot point at this machine or the local network (it receives the API key and images).',
         'image.error.model_too_long': 'model_name cannot exceed {limit} characters.',
+    'image.error.config_save_failed': 'The configuration could not be saved. Please try again later.',
+    'image.error.metadata_read_failed': 'Image information could not be read. Please try again later.',
 
         'download.heading': 'Download',
         'download.intro': 'Paste a link to save an online image or video to your local library.',

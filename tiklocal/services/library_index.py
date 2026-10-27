@@ -3,6 +3,7 @@ import logging
 import re
 import random
 import threading
+import time
 from pathlib import Path
 
 from PIL import Image
@@ -1004,6 +1005,7 @@ class MediaProbeWorker:
         self.library = library_service
         self.store = store
         self._wake = threading.Event()
+        self._warned: set[str] = set()
         self.failures = 0
 
     def start(self) -> None:
@@ -1028,10 +1030,26 @@ class MediaProbeWorker:
                     break
                 # A live entry is probed through its jpeg cover.
                 media_type = 'image' if row["media_type"] == 'live' else row["media_type"]
+                if media_type == 'audio':
+                    # Audio has no dimensions to read; record the pass so the row
+                    # stops showing up in every batch.
+                    results.append((None, None, row["mtime"], row["uri"]))
+                    continue
                 if media_type != 'image' and not can_probe_video:
                     deferred.add(row["uri"])
                     continue
                 width, height = probe_media_dims(self.library, row["uri"], media_type)
+                if width is None or height is None:
+                    # Writing probed_mtime for a failed read made the failure
+                    # permanent: a corrupt JPEG or a timed-out ffprobe never got a
+                    # second chance and nothing explained the missing tile size.
+                    deferred.add(row["uri"])
+                    if row["uri"] not in self._warned:
+                        if len(self._warned) > 500:
+                            self._warned.clear()
+                        self._warned.add(row["uri"])
+                        LOGGER.warning('Could not read media dimensions for %s; will retry', row["uri"])
+                    continue
                 results.append((width, height, row["mtime"], row["uri"]))
             if not results:
                 break

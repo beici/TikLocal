@@ -28,9 +28,27 @@ BACKUP_COUNT = 3
 _SENSITIVE_PATTERN = re.compile(
     r'(?i)\b(token|password|passwd|secret|api[_-]?key|cookie|authorization)'
     r'(\s*[=:]\s*)'
-    r'([^\s,;&"\')]{4,})'
+    r'([^\s,;&"\')]+)'
 )
 _BEARER_PATTERN = re.compile(r'(?i)\b(bearer)\s+([A-Za-z0-9._\-]{8,})')
+
+
+def redact_text(text: str) -> str:
+    """Mask credential-looking fragments in an already rendered string."""
+    text = _BEARER_PATTERN.sub(r'\1 ***', text)
+    return _SENSITIVE_PATTERN.sub(lambda match: f'{match.group(1)}{match.group(2)}***', text)
+
+
+class RedactingFormatter(logging.Formatter):
+    """Formatter that redacts the final line, traceback included.
+
+    Filtering ``record.getMessage()`` alone left every ``logger.exception()``
+    traceback and every dict/JSON argument untouched, which is exactly how a
+    provider URL with its key ends up in the log file.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_text(super().format(record))
 
 
 class RedactFilter(logging.Filter):
@@ -41,8 +59,7 @@ class RedactFilter(logging.Filter):
             message = record.getMessage()
         except Exception:
             return True
-        redacted = _BEARER_PATTERN.sub(r'\1 ***', message)
-        redacted = _SENSITIVE_PATTERN.sub(lambda match: f'{match.group(1)}{match.group(2)}***', redacted)
+        redacted = redact_text(message)
         if redacted != message:
             # The arguments were already interpolated, so drop them: keeping them
             # would make ``getMessage()`` raise on the next handler.
@@ -51,14 +68,14 @@ class RedactFilter(logging.Filter):
         return True
 
 
-def configure_logging(instance_path, level: int = logging.INFO) -> logging.Logger:
+def configure_logging(log_dir, level: int = logging.INFO) -> logging.Logger:
     """Attach a console handler and a rotating file handler exactly once."""
     root = logging.getLogger()
     if getattr(root, _CONFIGURED_FLAG, False):
         return root
 
     root.setLevel(level)
-    formatter = logging.Formatter(_LOG_FORMAT)
+    formatter = RedactingFormatter(_LOG_FORMAT)
     redact = RedactFilter()
 
     stream = logging.StreamHandler()
@@ -67,7 +84,7 @@ def configure_logging(instance_path, level: int = logging.INFO) -> logging.Logge
     root.addHandler(stream)
 
     try:
-        log_dir = Path(instance_path)
+        log_dir = Path(log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
         file_handler = RotatingFileHandler(
             log_dir / LOG_FILE_NAME,
@@ -79,8 +96,9 @@ def configure_logging(instance_path, level: int = logging.INFO) -> logging.Logge
         file_handler.addFilter(redact)
         root.addHandler(file_handler)
     except OSError:
-        # A read-only instance directory must not stop the server from starting.
-        root.warning('Could not open the log file under %s; logging to stderr only.', instance_path)
+        # A read-only data directory must not stop the server from starting, but the
+        # warning has to reach stderr *and* be obvious: the file log is gone for good.
+        root.warning('Could not open the log file under %s; logging to stderr only.', log_dir)
 
     setattr(root, _CONFIGURED_FLAG, True)
     return root

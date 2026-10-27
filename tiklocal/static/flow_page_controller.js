@@ -1986,6 +1986,11 @@
         closeDouyinCaptionFull();
         return;
       }
+      // While an overlay owns the screen, arrows and Space must not reach the card
+      // underneath: the panel is what the user is looking at.
+      if (collections.isOpen() || douyinCaptionFull?.classList.contains('is-open')) {
+        return;
+      }
       const target = event.target;
       if (target && typeof target.closest === 'function') {
         if (target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) {

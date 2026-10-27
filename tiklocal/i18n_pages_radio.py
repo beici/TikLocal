@@ -44,6 +44,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'radio.no_audio': '暂无音频',
         'radio.untitled_audio': '未命名音频',
         'radio.load_failed': '加载失败',
+    'radio.pairing.invalid_server_url': '请输入不含路径的 HTTP 或 HTTPS 服务器地址。',
+    'radio.pairing.not_required': '此 TikLocal 服务器不需要配对。',
+    'radio.pairing.invalid_grant': '配对链接已过期或已被使用。',
+    'radio.pairing.too_many': '配对尝试过于频繁，请稍后再试。',
         'radio.request_failed': '请求失败',
         # ---- ambience rooms ----
         'radio.room_menu_aria': '选择氛围',
@@ -118,6 +122,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'radio.no_audio': 'No audio available',
         'radio.untitled_audio': 'Untitled audio',
         'radio.load_failed': 'Failed to load',
+    'radio.pairing.invalid_server_url': 'Enter an HTTP or HTTPS Server address without a path.',
+    'radio.pairing.not_required': 'This TikLocal Server does not require pairing.',
+    'radio.pairing.invalid_grant': 'This pairing link has expired or was already used.',
+    'radio.pairing.too_many': 'Too many pairing attempts. Try again later.',
         'radio.request_failed': 'Request failed',
         # ---- ambience rooms ----
         'radio.room_menu_aria': 'Choose ambience',

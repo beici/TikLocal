@@ -284,7 +284,7 @@ class TikTokDownloaderClient:
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any]:
         if not self.base_url:
-            raise TikTokDownloaderError("TikTokDownloader service is not configured.")
+            raise TikTokDownloaderError(t('download.alert.tiktok_unconfigured'))
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["token"] = self.token
@@ -647,7 +647,7 @@ class TikTokDownloadService:
         """Search Douyin accounts so the author page can offer a picker."""
         config = self.get_config()
         if not config["base_url"]:
-            raise TikTokDownloaderError("TikTokDownloader service is not configured.")
+            raise TikTokDownloaderError(t('download.alert.tiktok_unconfigured'))
         keyword = str(keyword or "").strip()
         if not keyword:
             raise ValueError(t('download.error.author_keyword'))
@@ -676,7 +676,7 @@ class TikTokDownloadService:
         """
         config = self.get_config()
         if not config["base_url"]:
-            raise TikTokDownloaderError("TikTokDownloader service is not configured.")
+            raise TikTokDownloaderError(t('download.alert.tiktok_unconfigured'))
         client = self._client()
         if sec_user_id:
             author = client.fetch_account_author(str(sec_user_id))
@@ -994,7 +994,7 @@ class TikTokDownloadService:
             raise ValueError(t('download.error.tiktok_tab'))
         config = self.get_config()
         if not config["base_url"]:
-            raise TikTokDownloaderError("TikTokDownloader service is not configured.")
+            raise TikTokDownloaderError(t('download.alert.tiktok_unconfigured'))
         client = self._client()
         target = self.resolve_target(url)
         count = max(1, min(int(count or 18), 100))

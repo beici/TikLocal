@@ -226,7 +226,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
     @app.route('/api/download/tiktok', methods=['POST'])
     def api_download_tiktok():
         if tiktok_service is None:
-            return {'success': False, 'error': 'TikTokDownloader service is not configured.'}, 400
+            return {'success': False, 'error': t('download.alert.tiktok_unconfigured')}, 400
 
         payload = json_body()
         url = str(payload.get('url') or '').strip()

@@ -9,7 +9,7 @@
 <div class="detail-shell">
   <div class="detail-container">
     <header class="detail-header">
-      <button onclick="history.back()" class="material-icon-btn" aria-label="{{ t('detail.back') }}" type="button">
+      <button onclick="history.length &gt; 1 ? history.back() : (location.href = '/library')" class="material-icon-btn" aria-label="{{ t('detail.back') }}" type="button">
         <i data-feather="arrow-left" class="w-5 h-5"></i>
       </button>
 

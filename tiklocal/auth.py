@@ -108,7 +108,10 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
     def csrf_error_response():
         if request.path.startswith('/api/'):
             return {'success': False, 'error': t('auth.error.csrf')}, 403
-        return t('auth.error.csrf'), 403
+        # A bare string rendered as an unstyled <html lang="en"> page: after a second
+        # tab logged in (which rotates the token) the visible "log out" button landed
+        # here with no way back, while the cookie stayed valid for 30 more days.
+        return render_template('error.html', status=403, message=t('auth.error.csrf')), 403
 
     def native_token_is_valid() -> bool:
         authorization = str(request.headers.get('Authorization') or '')
@@ -132,7 +135,11 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
             if request.method in UNSAFE_METHODS and not csrf_is_valid():
                 return csrf_error_response()
             return None
-        if request.path in {'/api/v1/pair', '/api/v1/pair/claim'}:
+        if request.path in {'/api/v1/pair', '/api/v1/pair/claim', '/api/v1/server'}:
+            # /api/v1/server only reports the name, version and whether auth is
+            # required; a client has to read it before it can pair, so requiring a
+            # device token made the endpoint unreachable and `auth_required` a dead
+            # field.
             return None
         if request.path.startswith('/api/v1/'):
             if native_token_is_valid():

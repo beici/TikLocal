@@ -26,7 +26,7 @@ from urllib.parse import quote
 
 from flask import abort, current_app, jsonify, render_template, request, send_file
 
-from tiklocal.i18n import t
+from tiklocal.i18n import current_locale, t
 from tiklocal.services import author_profiles
 from tiklocal.services.media_naming import blogger_display_name
 from tiklocal.services.tiktok_downloader import (
@@ -71,7 +71,14 @@ def format_count(value) -> str:
         return ''
     if count < COMPACT_COUNT_THRESHOLD:
         return str(count)
-    return f'{count / TEN_THOUSAND:.1f}{t("author.unit.ten_thousand")}'
+    if current_locale() == 'zh':
+        return f'{count / TEN_THOUSAND:.1f}{t("author.unit.ten_thousand")}'
+    # The English unit used to be 'K' while the divisor stayed 10000, so 12345
+    # rendered as "1.2K" -- ten times too small.
+    for limit, suffix in ((1_000_000_000, 'B'), (1_000_000, 'M'), (1_000, 'K')):
+        if count >= limit:
+            return f'{count / limit:.1f}{suffix}'
+    return str(count)
 
 
 def parse_sync_text(text) -> list[dict]:

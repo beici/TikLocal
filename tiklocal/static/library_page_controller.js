@@ -83,6 +83,7 @@
   let wasPlayingBeforeDrag = false;
   let bodyOverflowBackup = '';
   let bodyScrollLocked = false;
+  let viewerPreviousFocus = null;
   let focusHandled = false;
   let focusLoading = false;
   const speedOptions = [0.75, 1, 1.25, 1.5, 2];
@@ -777,6 +778,11 @@
       bodyOverflowBackup = '';
       bodyScrollLocked = false;
     }
+    if (viewerPreviousFocus && viewerPreviousFocus.isConnected
+      && typeof viewerPreviousFocus.focus === 'function') {
+      viewerPreviousFocus.focus({ preventScroll: true });
+    }
+    viewerPreviousFocus = null;
   }
 
   function showItem(index) {
@@ -841,10 +847,15 @@
       bodyOverflowBackup = document.body.style.overflow || '';
       document.body.style.overflow = 'hidden';
       bodyScrollLocked = true;
+      // The viewer is a modal layer: remember where focus came from so closing it
+      // returns the user to the card they opened, not to the top of the grid.
+      viewerPreviousFocus = document.activeElement;
     }
     quickView.classList.add('active');
     quickView.setAttribute('aria-hidden', 'false');
+    quickView.setAttribute('tabindex', '-1');
     showItem(index);
+    if (typeof quickView.focus === 'function') quickView.focus({ preventScroll: true });
   }
 
   async function nextItem() {
@@ -1254,6 +1265,14 @@
       quickVideo.play().catch(() => {});
     }
     isDragging = false;
+  });
+
+  // Keyboard users must not tab into the grid hidden behind the viewer; pull focus
+  // back whenever it escapes the layer.
+  document.addEventListener('focusin', (event) => {
+    if (!quickView.classList.contains('active')) return;
+    if (event.target === quickView || quickView.contains(event.target)) return;
+    quickView.focus({ preventScroll: true });
   });
 
   quickView.addEventListener('wheel', (event) => {
