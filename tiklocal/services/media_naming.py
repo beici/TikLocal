@@ -52,6 +52,11 @@ def album_member(filename: str) -> tuple[str, int] | None:
     return stem[:match.start()], int(match.group(1))
 
 
+def is_blogger_folder(folder_name: str) -> bool:
+    """True when ``folder_name`` is a Douyin export folder and so names its author."""
+    return bool(_BLOGGER_FOLDER.match(str(folder_name or '')))
+
+
 def blogger_display_name(folder_name: str) -> str:
     """``UID123_示例博主_发布作品`` → ``示例博主``; anything else is returned unchanged."""
     match = _BLOGGER_FOLDER.match(str(folder_name or ''))

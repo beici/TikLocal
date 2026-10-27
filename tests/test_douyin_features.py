@@ -163,10 +163,41 @@ def test_blog_filter_and_chips(tmp_path):
     assert 'image_group' in types  # 乙博主's album reaches the filtered feed
 
 
+def test_default_root_that_is_a_blogger_folder_keeps_its_author(tmp_path):
+    """A Douyin export folder served as the default source still names its author.
+
+    ``tiklocal <UID…_博主名_发布作品>`` is the most common setup, and its files sit
+    directly in the root. Dropping the author there also dropped the avatar and the
+    @handle from Douyin mode.
+    """
+    media = tmp_path / 'UID100000000000003_示例博主_发布作品'
+    _touch(media / '2024-05-04 12.00.00-视频-示例博主-海边晚风.mp4')
+    app = create_app({'TESTING': True, 'MEDIA_ROOT': media})
+    client = app.test_client()
+
+    feed = client.get('/api/feed/mix?size=8&seed=s').get_json()
+    videos = [item for item in feed['items'] if item['type'] == 'video']
+    assert len(videos) == 1
+    assert videos[0]['author_name'] == '示例博主'
+    assert videos[0]['author_url'] == '/flow?blog=default'
+    assert videos[0]['caption_text'] == '海边晚风'
+    assert client.get('/author/default/avatar').status_code == 200
+
+    # A plain media root still has no author: its loose files belong to nobody.
+    plain = tmp_path / 'plain'
+    _touch(plain / 'holiday.jpg')
+    app = create_app({'TESTING': True, 'MEDIA_ROOT': plain})
+    entry = app.test_client().get('/api/feed/mix?size=8&seed=s').get_json()['items'][0]
+    assert 'author_name' not in entry
+
+
 def test_blogger_display_name():
-    from tiklocal.services.media_naming import blogger_display_name, album_member, is_live_stem, post_title
+    from tiklocal.services.media_naming import blogger_display_name, is_blogger_folder, album_member, is_live_stem, post_title
     assert blogger_display_name('UID123456789_示例博主_发布作品') == '示例博主'
     assert blogger_display_name('普通文件夹') == '普通文件夹'
+    assert is_blogger_folder('UID123456789_示例博主_发布作品')
+    assert not is_blogger_folder('普通文件夹')
+    assert not is_blogger_folder('UID123456789_示例博主')
     assert is_live_stem('2024-05-04 12.00.00-实况-示例博主-标题_1')
     assert not is_live_stem('2024-05-04 12.00.00-图集-示例博主-标题_1')
     assert album_member('2024-06-01 09.00.00-图集-示例博主-风景_10.jpeg') == (

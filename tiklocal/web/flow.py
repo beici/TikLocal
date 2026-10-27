@@ -141,8 +141,10 @@ def build_author_caption(name: str, sources_by_id: dict | None = None) -> dict:
             folder = Path(path).name if path not in {'', '.', '/'} else str(getattr(source, 'name', '') or '')
         else:
             folder = source_id
-        if source_id == 'default' and len(segments) <= 1:
-            # Loose files directly under the media root have no author of their own.
+        if source_id == 'default' and len(segments) <= 1 and not media_naming.is_blogger_folder(folder):
+            # Loose files under a generic media root carry no author of their own.
+            # A default root that is itself a Douyin export folder does name one, so
+            # keep it: that is the common ``tiklocal <UID…_博主名_发布作品>`` setup.
             folder = ''
     elif len(segments) >= 2:
         folder = segments[0]
