@@ -1006,6 +1006,13 @@ body.douyin .douyin-rail { display: flex; }
 body.douyin .douyin-info { display: block; }
 body.douyin .douyin-nav { display: flex; }
 
+/* An empty feed paints .flow-state (fixed, z-index 230) over the whole screen.
+   The Douyin chrome has to stay clickable above it: the back arrow, the search
+   button and the bottom tabs are exactly what a visitor needs at that moment. */
+body.douyin .douyin-topbar,
+body.tag-feed .douyin-topbar,
+body.douyin .douyin-nav { z-index: 240; }
+
 /* Top bar: 推荐 / 下载 tabs, replaced by the topic header on /flow?tag=. */
 .douyin-topbar {
   position: absolute;
@@ -1075,6 +1082,35 @@ body.douyin .douyin-nav { display: flex; }
 
 .douyin-top-back[hidden] { display: none; }
 .douyin-top-back:active { transform: scale(0.92); }
+
+/* Search entry: Douyin puts its magnifier in the top-right corner. Kept off
+   outside Douyin mode, where this bar only surfaces the topic back button. */
+.douyin-search {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 8px);
+  right: 8px;
+  width: 36px;
+  height: 36px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  text-decoration: none;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.douyin .douyin-search { display: flex; }
+
+.douyin-search svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2.2;
+  filter: drop-shadow(0 1px 4px rgba(0, 0, 0, 0.55));
+}
+
+.douyin-search:active { opacity: 0.72; }
 
 /* Topic header shown when the feed is filtered by a hashtag. */
 .douyin-topic {
@@ -1308,17 +1344,46 @@ body.tag-feed .douyin-tabs { display: none; }
 
 .douyin-nav-item.is-active { color: #fff; }
 
-/* Live badge for live children inside an album group, matching the standalone one. */
-.image-group-live-badge {
+/* Gallery / live-post badge: the quiet corner label live posts always had, now
+   carrying the position too, because Douyin's bottom bar covers the quiet
+   overlay the position used to live in. Plain text on a shadow rather than a
+   pill, so it reads as part of the picture like Douyin's own labels. */
+.image-group-badge {
   position: absolute;
   top: 16px;
   left: 16px;
   z-index: 3;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
+  display: none;
+  align-items: baseline;
+  gap: 6px;
   color: #fff;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(6px);
+  font: 600 13px/1.4 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
+
+/* A live post marked itself in every mode before Douyin mode existed; keep that. */
+.image-group-badge[data-kind='live'] { display: inline-flex; }
+
+/* Douyin's top bar owns the first 52px, and its nav bar covers the overlay. */
+body.douyin .image-group-badge {
+  top: calc(60px + env(safe-area-inset-top));
+  display: inline-flex;
+}
+
+.image-group-badge[hidden],
+body.douyin .image-group-badge[hidden] { display: none; }
+
+.image-group-badge-counter { display: none; }
+body.douyin .image-group-badge-counter {
+  display: inline;
+  opacity: 0.72;
+}
+
+/* A topic header puts its back button in the corner this label uses. */
+body.tag-feed .image-group-badge { left: 56px; }
+
+/* The caption is repeated by the Douyin chrome, and its own bottom bar covers
+   this strip, so the quiet caption overlay is not drawn in that mode. */
+body.douyin .image-group-overlay { display: none; }

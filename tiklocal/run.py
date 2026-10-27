@@ -272,8 +272,8 @@ Examples:
                 parser.error(str(exc))
             print("Authentication: enabled")
             print(f"Authentication file: {auth_store.path}")
-            if bootstrap.generated_password:
-                print(f"Initial access password: {bootstrap.generated_password}")
+            if bootstrap.default_password:
+                print(f"Access password: {bootstrap.default_password} (default; change it with tiklocal auth set-password)")
             return
 
         env_password = str(os.environ.get('TIKLOCAL_AUTH_PASSWORD') or '')
@@ -381,14 +381,14 @@ Examples:
     def print_banner():
         print(f"Open: http://{display_host}:{port}")
         print("Access authentication: enabled")
-        if bootstrap and bootstrap.generated_password:
+        if bootstrap and bootstrap.default_password:
             # Plain ASCII: a redirected stdout uses the locale encoding (cp1252 has no
             # box-drawing characters), and an UnicodeEncodeError here would abort the
-            # first start right after the password was generated but before it printed.
+            # first start right after the password was chosen but before it printed.
             print("+--------------------------------------------+")
-            print("| Initial access password                    |")
-            print(f"| {bootstrap.generated_password:<42} |")
-            print("| Save it; change it with tiklocal auth set-password |")
+            print("| Access password (default)                  |")
+            print(f"| {bootstrap.default_password:<42} |")
+            print("| Change it: tiklocal auth set-password      |")
             print("+--------------------------------------------+")
 
     # Two servers on one instance directory corrupt each other's download history
@@ -442,7 +442,7 @@ Examples:
             app.run(host=host, port=port, debug=True, use_reloader=True)
         else:
             # Production mode uses Waitress. Bind before printing the banner: a port
-            # clash used to print the URL and the freshly generated password first and
+            # clash used to print the URL and the freshly chosen password first and
             # then die inside waitress with a bare "PermissionError: WinError 10013",
             # which reads like a firewall problem instead of "the port is taken".
             try:

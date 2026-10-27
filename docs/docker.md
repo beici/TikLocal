@@ -38,9 +38,10 @@ host folder, it belongs to root and TikLocal cannot write to it.
 
 ## Password
 
-The first start prints a generated password in `docker logs tiklocal`. To choose
-it instead, set `TIKLOCAL_AUTH_PASSWORD` before the first start; it is ignored
-once `/data/auth.json` exists. Change it later with:
+A fresh `/data` starts with the access password `admin666`; change it before
+exposing the container. To start with your own password instead, set
+`TIKLOCAL_AUTH_PASSWORD` before the first start; it is ignored once
+`/data/auth.json` exists. Change it later with:
 
 ```bash
 docker exec -it tiklocal tiklocal auth set-password

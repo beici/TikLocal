@@ -32,7 +32,8 @@ tiklocal ~/Videos
 ```
 
 Open `http://<your-computer>:8000` on any phone, tablet, or browser on the same
-network. The first start prints an access password in the terminal.
+network and sign in with the default access password `admin666`. Change it
+before you expose the server to anyone else.
 
 ## What it does
 
@@ -114,11 +115,19 @@ tiklocal --help
 
 Sign-in is on by default. Every page, API and media file requires it.
 
+A new instance starts with the access password `admin666`, so the first sign-in
+needs no lookup. It is public knowledge: set your own before anyone else can
+reach the server.
+
 ```bash
 tiklocal auth status          # status and storage path
 tiklocal auth set-password    # new password; signs out existing sessions
 TIKLOCAL_AUTH_PASSWORD='a-long-private-password' tiklocal auth set-password
 ```
+
+To start a *new* instance with your own password instead of the default, set
+`TIKLOCAL_AUTH_PASSWORD` before its first start; it is ignored once
+`auth.json` exists.
 
 The password is stored as a scrypt hash in `~/.tiklocal/auth.json`. Keep TikLocal
 on a trusted network.
@@ -307,12 +316,17 @@ embedding:
    （松开停止；有声播放被浏览器拒绝时自动降级为静音）。
 2. **图集接入**——`-图集-` 同时间戳前缀的 jpeg 归为一组（`album_key`），
    Flow 中作为一张可**左右滑动**的组卡呈现；实况多图帖同样整帖成组，
-   组内可混合 image/live/video 成员。
+   组内可混合 image/live/video 成员。抖音模式下左上角常驻"图集 1/5"角标
+   （纯文字样式，同"实况"标识），滑动换图时实时更新当前浏览进度。
 3. **按博主浏览**——每个博主文件夹注册为一个 media source（`--media-source
    id=路径` 或 config.yaml `media_sources`），Library 探索页出现博主 chips
-   （显示从文件夹名提取的博主名与条数），点击筛选；选中后出现"去刷"入口
+   （显示从文件夹名提取的博主名与条数），点击筛选；选中后出现"刷一刷"入口
    直达该博主的 Flow（`/flow?blog=<source_id>`）。推荐流按博主维度过滤，
    图集/实况组在过滤流中保持完整。
+4. **抖音式搜索**——抖音模式顶栏右上角放大镜进入独立搜索页 `/search`：
+   一次搜索同时命中**博主昵称 / 抖音号**与**作品文案**，结果分「综合 / 视频 /
+   用户」三栏（综合 = 用户快捷区 + 双列瀑布流，视频栏滚动加载更多，用户栏为
+   博主列表）；API 为 `GET /api/search?q=&tab=general|video|user&limit=&offset=`。
 
 媒体库维表：`media_items` 新增 `live_video_uri` 与 `album_key/album_index/
 album_size`（数据库迁移 13）；推荐候选只取各组第 0 位封面，避免组员重复

@@ -12,7 +12,7 @@ services:
       - "8000:8000"
     environment:
       TZ: Etc/UTC                      # your time zone, used by Timeline and On This Day
-      # TIKLOCAL_AUTH_PASSWORD: ""       # first start only; otherwise see `docker logs tiklocal`
+      # TIKLOCAL_AUTH_PASSWORD: ""       # first start only; the fallback password is admin666
     volumes:
       - ~/Videos:/media                # your library; writable for downloads and trash
       - ./tiklocal-data:/data            # database, password, thumbnails and config.yaml

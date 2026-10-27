@@ -59,6 +59,7 @@ from tiklocal.paths import (
     get_device_auth_path,
 )
 from tiklocal.web.flow import register_flow_routes
+from tiklocal.web.search import register_search_routes
 from tiklocal.web.radio import register_radio_routes
 from tiklocal.web.media import register_media_routes
 from tiklocal.web.settings import register_settings_routes
@@ -246,6 +247,13 @@ def create_app(test_config=None):
     bootstrap = None
     if auth_enabled:
         bootstrap = auth_store.ensure(os.environ.get('TIKLOCAL_AUTH_PASSWORD'))
+        if bootstrap.default_password:
+            # A known default only keeps strangers out until the owner changes it, and
+            # the banner that shows it is missed by anyone running as a service.
+            app.logger.warning(
+                'Access password is the default %s; change it with `tiklocal auth set-password`',
+                bootstrap.default_password,
+            )
     configure_auth(
         app,
         auth_store,
@@ -487,6 +495,7 @@ def create_app(test_config=None):
         related_photo_groups=similarity.photo_groups if similarity else None,
         library_service=library_service,
     )
+    register_search_routes(app, media_index=media_index, library_service=library_service)
     register_author_routes(
         app, library_service=library_service, media_index=media_index,
         tiktok_service=tiktok_service,

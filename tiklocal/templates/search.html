@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% set active_tab = tab if tab in ['general', 'video', 'user'] else 'general' %}
+
+{% block title %}{{ t('search.title') }} · TikLocal{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ static_asset('search.css') }}">
+{% endblock %}
+
+{% block content %}
+<main id="main" class="search-page" data-search-page
+      data-query="{{ query }}" data-tab="{{ active_tab }}"
+      data-api="/api/search"
+      data-default-avatar="{{ static_asset('default-avatar.jpg') }}">
+  <header class="search-topbar">
+    <a class="search-back" href="/flow" aria-label="{{ t('search.back') }}">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
+           aria-hidden="true" focusable="false"><polyline points="15 18 9 12 15 6"></polyline></svg>
+    </a>
+
+    <form class="search-form" role="search" action="/search" method="get">
+      <div class="search-field">
+        <input id="search-input" class="search-input" type="search" name="q"
+               value="{{ query }}" placeholder="{{ t('search.placeholder') }}"
+               aria-label="{{ t('search.input.label') }}" maxlength="200"
+               autocomplete="off" autocapitalize="off" spellcheck="false"
+               enterkeyhint="search">
+        <button id="search-clear" class="search-clear" type="button"
+                aria-label="{{ t('search.clear') }}"{% if not query %} hidden{% endif %}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.6" stroke-linecap="round"
+               aria-hidden="true" focusable="false"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>
+        </button>
+      </div>
+      <input type="hidden" name="tab" value="{{ active_tab }}">
+      <button type="submit" class="search-submit">{{ t('search.submit') }}</button>
+    </form>
+  </header>
+
+  <div class="search-tabs" role="tablist" aria-label="{{ t('search.title') }}">
+    <button type="button" class="search-tab{% if active_tab == 'general' %} is-active{% endif %}"
+            role="tab" data-tab="general" aria-controls="search-body"
+            tabindex="{{ '0' if active_tab == 'general' else '-1' }}"
+            aria-selected="{{ 'true' if active_tab == 'general' else 'false' }}">{{ t('search.tab.general') }}</button>
+    <button type="button" class="search-tab{% if active_tab == 'video' %} is-active{% endif %}"
+            role="tab" data-tab="video" aria-controls="search-body"
+            tabindex="{{ '0' if active_tab == 'video' else '-1' }}"
+            aria-selected="{{ 'true' if active_tab == 'video' else 'false' }}">{{ t('search.tab.video') }}</button>
+    <button type="button" class="search-tab{% if active_tab == 'user' %} is-active{% endif %}"
+            role="tab" data-tab="user" aria-controls="search-body"
+            tabindex="{{ '0' if active_tab == 'user' else '-1' }}"
+            aria-selected="{{ 'true' if active_tab == 'user' else 'false' }}">{{ t('search.tab.user') }}</button>
+  </div>
+
+  <div id="search-body" class="search-body" role="tabpanel" tabindex="-1" aria-live="polite">
+    <p class="search-hint">{{ t('search.hint') }}</p>
+  </div>
+</main>
+{% endblock %}
+
+{% block extra_body %}
+<script src="{{ static_asset('search_page_controller.js') }}"></script>
+{% endblock %}

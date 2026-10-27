@@ -658,7 +658,6 @@
       groupDrag = {
         panel,
         stage: dragStage,
-        counterEl: panel.querySelector('.image-group-counter'),
         active,
         neighbor,
         dir,
@@ -705,7 +704,7 @@
     function commitGroupDrag() {
       const drag = groupDrag;
       if (!drag) return;
-      const { panel, neighbor, counterEl, target } = drag;
+      const { panel, neighbor, target } = drag;
       const item = currentItem();
       const members = Array.isArray(item?.items) ? item.items : [];
       panel._groupGeneration = (Number(panel._groupGeneration) || 0) + 1;
@@ -716,7 +715,8 @@
       drag.active._liveVideo?.pause();
       panel._activeChildIndex = target;
       panel._activeLiveVideo = neighbor._liveVideo || null;
-      if (counterEl) counterEl.textContent = `${target + 1} / ${members.length}`;
+      // A commit swaps the child in place instead of re-rendering the group.
+      panel._syncGroupCounter?.(target, members.length);
       const previousActivity = finishActivity();
       if (item) {
         item.activeChildIndex = target;
@@ -1017,16 +1017,36 @@
         const panel = document.createElement('section');
         panel.className = 'feed-media feed-image-group';
         panel.dataset.name = item.name;
+        const children = Array.isArray(item.items) ? item.items : [];
+        // A live post is a group whose members may pair with a video; the pill
+        // keeps marking it outside Douyin mode, as the per-child badge used to.
+        const badgeKind = children.some((child) => child && child.type === 'live') ? 'live' : 'album';
+        // One pill for the kind and the position: Douyin's nav bar covers the
+        // bottom overlay, so the counter rides along in the badge there.
         panel.innerHTML = `
           <div class="image-group-stage"></div>
           <div class="image-group-overlay">
             ${item.caption ? `<span>${escapeHtml(item.caption)}</span>` : ''}
             <span class="image-group-counter"></span>
           </div>
+          <div class="image-group-badge" data-kind="${badgeKind}">
+            <span class="image-group-badge-label">${escapeHtml(item.title || T('flow.group.album_title'))}</span>
+            <span class="image-group-badge-counter"></span>
+          </div>
         `;
         const stage = panel.querySelector('.image-group-stage');
         const counterEl = panel.querySelector('.image-group-counter');
-        const children = Array.isArray(item.items) ? item.items : [];
+        const badgeEl = panel.querySelector('.image-group-badge');
+        const badgeCounterEl = panel.querySelector('.image-group-badge-counter');
+
+        // One source of truth for "current/total": a drag commit, a re-render and
+        // a deep link into child N must never leave the badge and the overlay
+        // showing different positions.
+        function syncGroupCounter(index, total) {
+          if (counterEl) counterEl.textContent = `${index + 1} / ${total}`;
+          if (badgeCounterEl) badgeCounterEl.textContent = `${index + 1}/${total}`;
+          if (badgeEl) badgeEl.hidden = total < 2;
+        }
 
         function createGroupChild(entry, force = false) {
           const media = document.createElement(entry.type === 'live' && entry.live_video_url ? 'div' : (entry.type === 'video' ? 'video' : 'img'));
@@ -1047,10 +1067,6 @@
             video.playsInline = true;
             media.appendChild(cover);
             media.appendChild(video);
-            const badge = document.createElement('div');
-            badge.className = 'image-group-live-badge';
-            badge.textContent = T('flow.badge.live');
-            media.appendChild(badge);
             media._liveVideo = video;
             media._loadImage = cover;
           } else if (media instanceof HTMLVideoElement) {
@@ -1190,7 +1206,7 @@
             });
           }, 500);
           panel._activeChildIndex = safeIndex;
-          counterEl.textContent = `${safeIndex + 1} / ${children.length}`;
+          syncGroupCounter(safeIndex, children.length);
           if (currentItem()?.el === panel) {
             currentItem().activeChildIndex = safeIndex;
             updateControls(currentItem());
@@ -1199,6 +1215,7 @@
 
         panel._renderImageGroup = renderImageGroup;
         panel._createGroupChild = createGroupChild;
+        panel._syncGroupCounter = syncGroupCounter;
         panel._activeChildIndex = 0;
         renderImageGroup(0);
         return panel;

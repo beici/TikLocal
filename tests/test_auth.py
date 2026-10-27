@@ -7,7 +7,7 @@ import pytest
 
 from tiklocal.app import create_app
 from tiklocal.i18n import t
-from tiklocal.services.auth import AuthStore
+from tiklocal.services.auth import DEFAULT_PASSWORD, MIN_PASSWORD_LENGTH, AuthStore
 
 
 PASSWORD = 'private-screening-room'
@@ -54,7 +54,7 @@ def test_auth_store_hashes_password_and_increments_revision(tmp_path):
     data = json.loads(auth_path.read_text(encoding='utf-8'))
 
     assert bootstrap.created is True
-    assert bootstrap.generated_password is None
+    assert bootstrap.default_password is None
     assert PASSWORD not in auth_path.read_text(encoding='utf-8')
     assert data['password_hash'].startswith('scrypt:')
     assert data['created_at'].endswith('+00:00')
@@ -72,14 +72,43 @@ def test_auth_store_hashes_password_and_increments_revision(tmp_path):
     assert store.verify('another-private-password')
 
 
-def test_first_start_generates_a_recoverable_password(tmp_path):
+def test_first_start_uses_the_default_password(tmp_path):
     store = AuthStore(tmp_path / 'auth.json')
     bootstrap = store.ensure()
 
     assert bootstrap.created is True
-    assert bootstrap.generated_password
-    assert len(bootstrap.generated_password.split('-')) == 4
-    assert store.verify(bootstrap.generated_password)
+    assert bootstrap.default_password == DEFAULT_PASSWORD
+    assert len(DEFAULT_PASSWORD) >= MIN_PASSWORD_LENGTH
+    assert store.verify(DEFAULT_PASSWORD)
+    assert not store.verify(PASSWORD)
+
+
+def test_supplied_first_start_password_wins_over_the_default(tmp_path):
+    store = AuthStore(tmp_path / 'auth.json')
+    bootstrap = store.ensure(PASSWORD)
+
+    assert bootstrap.created is True
+    assert bootstrap.default_password is None
+    assert store.verify(PASSWORD)
+    assert not store.verify(DEFAULT_PASSWORD)
+
+
+def test_fresh_instance_signs_in_with_the_default_password(tmp_path, monkeypatch):
+    monkeypatch.delenv('TIKLOCAL_AUTH_PASSWORD', raising=False)
+    media_root = tmp_path / 'media'
+    media_root.mkdir()
+    (media_root / 'clip.mp4').write_bytes(b'private-video')
+    app = create_app({
+        'TESTING': True,
+        'MEDIA_ROOT': media_root,
+        'AUTH_ENABLED': True,
+        'AUTH_PATH': tmp_path / 'auth.json',
+    })
+    client = app.test_client()
+
+    assert _login(client, DEFAULT_PASSWORD).status_code == 302
+    assert client.get('/').status_code == 200
+    assert _login(app.test_client(), PASSWORD).status_code == 401
 
 
 def test_authentication_protects_pages_apis_and_media(authenticated_app):

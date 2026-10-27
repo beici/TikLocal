@@ -2,7 +2,6 @@ import datetime
 import json
 import os
 import secrets
-import string
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,18 +10,17 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 AUTH_FILE_VERSION = 1
 MIN_PASSWORD_LENGTH = 8
+#: Password a fresh instance starts with. It is public knowledge, so it only keeps
+#: strangers out until you set your own: `tiklocal auth set-password`, or
+#: TIKLOCAL_AUTH_PASSWORD before the first start.
+DEFAULT_PASSWORD = 'admin666'
 
 
 @dataclass(frozen=True)
 class AuthBootstrap:
     created: bool
-    generated_password: str | None = None
-
-
-def generate_initial_password() -> str:
-    alphabet = string.ascii_letters.replace('I', '').replace('l', '').replace('O', '').replace('o', '') + '23456789'
-    groups = [''.join(secrets.choice(alphabet) for _ in range(4)) for _ in range(4)]
-    return '-'.join(groups)
+    #: The default password this run installed because none was supplied.
+    default_password: str | None = None
 
 
 class AuthStore:
@@ -76,7 +74,7 @@ class AuthStore:
         if self._load() is not None:
             return AuthBootstrap(created=False)
         supplied = str(initial_password or '').strip()
-        password = supplied or generate_initial_password()
+        password = supplied or DEFAULT_PASSWORD
         self._validate_password(password)
         now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
         self._save({
@@ -87,7 +85,7 @@ class AuthStore:
             'created_at': now,
             'updated_at': now,
         })
-        return AuthBootstrap(created=True, generated_password=None if supplied else password)
+        return AuthBootstrap(created=True, default_password=None if supplied else password)
 
     def set_password(self, password: str) -> None:
         self._validate_password(password)
