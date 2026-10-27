@@ -24,6 +24,7 @@
 | 06 | 2026-10-27 | 398P/6S/0F | 0/4/7/9（确认 20，修复 15，转 backlog 5） | `fix: localize error surfaces…` | [round-06](round-06.md) |
 | 07 | 2026-10-27 | 412P/6S/0F | 0/0/9/7（确认 16，修复 15，转 backlog 1） | `34e53e3`，26 文件 `+759/-38` | [round-07](round-07.md) |
 | 08 | 2026-10-27 | 414P/6S/0F | 0/0/14/5（确认 19，修复 17，转 backlog 2） | `db91d71`，18 文件 `+681/-30` | [round-08](round-08.md) |
+| 09 | 2026-10-27 | 419P/6S/0F | 0/1/15/6（确认 22，修复 20，转 backlog 1，驳回 1） | `0201d36`，19 文件 `+262/-58` | [round-09](round-09.md) |
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
 
@@ -42,6 +43,8 @@
 第 07 轮结束后：`pytest -q` = **412 passed / 6 skipped / 0 failed**（79.59s，新增 13 个用例：`test_download_tools.py` 4、`test_json_storage.py` 4、`test_round07_regressions.py` 3、feed/collection 各 1）。
 
 第 08 轮结束后：`pytest -q` = **419 passed / 6 skipped / 0 failed**（145.76s，新增 7 个用例：`tests/test_round08_regressions.py`）。
+
+第 09 轮结束后：`pytest -q` = **427 passed / 6 skipped / 0 failed**（162.72s，新增 8 个用例：`tests/test_round09_regressions.py`）。性能修复同时让套件从 203s 降到 163s。
 
 ## 目录
 
