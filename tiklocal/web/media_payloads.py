@@ -1,5 +1,6 @@
 """Shared media links and display fields; no IO or browsing policy."""
 
+import datetime
 from urllib.parse import quote
 
 
@@ -8,6 +9,25 @@ def media_urls(uri: str) -> dict[str, str]:
         'media_url': f"/media/{quote(uri, safe='/')}",
         'thumb_url': f"/thumb?uri={quote(uri)}",
     }
+
+
+def post_date_of(record: dict | None) -> str:
+    """The day a work was posted, ``YYYY-MM-DD``, or '' when the index has no idea.
+
+    The export's own timestamp wins; a media library synced from a phone or an
+    unzipped archive only carries a file mtime, and showing that beats showing
+    nothing at all on the author line.
+    """
+    if not record:
+        return ''
+    captured = str(record.get('captured_local_date') or '').strip()[:10]
+    if len(captured) == 10 and captured[4] == '-' and captured[7] == '-':
+        return captured
+    try:
+        moment = datetime.datetime.fromtimestamp(float(record.get('mtime_ts') or 0))
+    except (TypeError, ValueError, OSError, OverflowError):
+        return ''
+    return moment.strftime('%Y-%m-%d') if moment.year >= 1970 else ''
 
 
 def build_feed_media_item(name: str, media_type: str, *, live_video_uri: str = '') -> dict[str, str]:

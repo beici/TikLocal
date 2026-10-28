@@ -203,8 +203,16 @@ def _date_label(record: dict) -> str:
     return moment.strftime('%Y-%m-%d')
 
 
-def _video_items(records, sources_by_id: dict, profiles: dict) -> list[dict]:
-    """One card per work, matching the feed's media links so taps land on /flow."""
+def _video_items(records, sources_by_id: dict, profiles: dict, caption: str = '') -> list[dict]:
+    """One card per work, matching the feed's media links so taps land on /flow.
+
+    A caption search opens the work with its query attached: the feed then keeps
+    scrolling the works that share that caption instead of dropping the user back
+    into the recommended timeline (``caption`` is only attached when the query
+    really is part of this work's caption, so a nickname search does not pretend
+    to be a caption filter).
+    """
+    needle = str(caption or '').strip().casefold()
     items: list[dict] = []
     for record in records or ():
         media_type = str(record.get('media_type') or '')
@@ -213,16 +221,25 @@ def _video_items(records, sources_by_id: dict, profiles: dict) -> list[dict]:
             continue
         source_id = _source_id(record)
         urls = media_urls(uri)
+        title = _title(uri)
+        open_url = f'/flow?start={quote(uri)}'
+        if needle and needle in title.casefold():
+            # A caption search keeps scrolling the works that share the query.
+            open_url = f'{open_url}&caption={quote(str(caption).strip())}'
+        elif source_id:
+            # Otherwise keep scrolling one author's works, which is what tapping a
+            # work after searching a user should do.
+            open_url = f'{open_url}&blog={quote(source_id, safe="")}'
         items.append({
             'name': uri,
             'media_type': media_type,
-            'title': _title(uri),
+            'title': title,
             'thumb_url': urls['thumb_url'],
             'media_url': urls['media_url'],
             'kind_label': _kind_label(record),
             **_work_author_fields(uri, source_id, sources_by_id, profiles),
             'date_label': _date_label(record),
-            'open_url': f'/flow?start={quote(uri)}',
+            'open_url': open_url,
         })
     return items
 
@@ -315,7 +332,7 @@ def build_search_payload(
     users: list[dict] = []
     counts = {'users': 0, 'videos': 0}
     if tab in {'general', 'video'}:
-        videos = _video_items(records, sources_by_id, profiles)
+        videos = _video_items(records, sources_by_id, profiles, caption=query)
         counts['videos'] = _as_int(page.get('total'), len(records))
     if tab in {'general', 'user'}:
         ordered, works_by_source = _user_matches(

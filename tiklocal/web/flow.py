@@ -12,7 +12,7 @@ from tiklocal.i18n import t
 from tiklocal.services import media_naming
 from tiklocal.services.recommendation import FORGOTTEN_DAYS, shown_within
 from tiklocal.web import json_body, read_int_arg
-from tiklocal.web.media_payloads import build_feed_media_item
+from tiklocal.web.media_payloads import build_feed_media_item, post_date_of
 
 
 def legacy_media_key(uri: str) -> str:
@@ -111,7 +111,7 @@ def collect_source_media_groups(
     return results
 
 
-def build_author_caption(name: str, sources_by_id: dict | None = None) -> dict:
+def build_author_caption(name: str, sources_by_id: dict | None = None, record: dict | None = None) -> dict:
     """Derive the Douyin-style author handle and post caption from a media URI.
 
     A media source is normally one blogger export folder, so the source carries
@@ -157,6 +157,9 @@ def build_author_caption(name: str, sources_by_id: dict | None = None) -> dict:
             item['author_url'] = f"/flow?blog={quote(source_id or folder, safe='')}"
     if caption:
         item['caption_text'] = caption
+    post_date = post_date_of(record)
+    if post_date:
+        item['post_date'] = post_date
     return item
 
 
@@ -200,6 +203,33 @@ def tag_matches(name: str, tag: str) -> bool:
     if not tag:
         return False
     return tag.casefold() in media_naming.post_title(name).casefold()
+
+
+def caption_matches(name: str, caption: str) -> bool:
+    """A caption search narrows a timeline the same way a hashtag narrows the feed."""
+    needle = str(caption or '').strip().casefold()
+    if not needle:
+        return False
+    return needle in media_naming.post_title(name).casefold()
+
+
+def post_kind_label(name: str, media_type: str = '', album_size: int = 0) -> str:
+    """Douyin's small tag after the handle: 图文 / 视频 / 实况 / 图集.
+
+    A grouped post is named by its group (a live post and a gallery post look
+    identical on disk), a lone row by its own media type, and a bare photo keeps
+    Douyin's own word for a photo post.
+    """
+    stem = str(name or '').rsplit('/', 1)[-1].rsplit('.', 1)[0]
+    if album_size > 1 or media_naming.album_member(str(name).rsplit('/', 1)[-1]):
+        if media_naming.is_live_stem(stem) or media_type == 'live':
+            return t('flow.kind.live')
+        return t('flow.kind.album')
+    if media_type == 'video':
+        return t('flow.kind.video')
+    if media_type == 'live':
+        return t('flow.kind.live')
+    return t('flow.kind.image')
 
 
 def collapse_media_entries(
@@ -254,10 +284,23 @@ def build_feed_items(
         item_type = str(entry.get('type') or '')
         if item_type == 'image_group':
             group_item = {**entry, 'items': [dict(child) for child in entry['items']]}
-            if str(entry.get('name') or '').startswith('album:'):
+            group_name = str(entry.get('name') or '')
+            if group_name.startswith('album:'):
+                cover_name = group_name[len('album:'):]
                 group_item.update(build_author_caption(
-                    str(entry['name'])[len('album:'):], sources_by_id,
+                    cover_name, sources_by_id, records_by_name.get(cover_name),
                 ))
+            elif group_name.startswith('group:'):
+                # An original-export group card names the work it was downloaded
+                # from, so it dates like the cover rather than like nothing.
+                cover_name = group_name[len('group:'):]
+                group_item.update(build_author_caption(
+                    cover_name, sources_by_id, records_by_name.get(cover_name),
+                ))
+            group_item['kind_label'] = post_kind_label(
+                str(group_item.get('name') or '').split(':', 1)[-1], 'image',
+                len(group_item.get('items') or []),
+            )
             items.append(group_item)
             continue
 
@@ -271,7 +314,8 @@ def build_feed_items(
         )
         if recommendation_reasons is not None:
             item['recommendation_reason'] = recommendation_reasons.get(name, '')
-        item.update(build_author_caption(name, sources_by_id))
+        item.update(build_author_caption(name, sources_by_id, record))
+        item['kind_label'] = post_kind_label(name, item_type, int(record.get('album_size') or 0))
         items.append(item)
     return items
 
@@ -315,32 +359,58 @@ def build_start_feed_page(
     media_index,
     sources_by_id: dict | None = None,
     blog: str = '',
+    caption: str = '',
 ) -> dict:
-    """Open one specific work and keep scrolling down that author's timeline.
+    """Open one specific work and keep scrolling down from there.
 
     A deep link (author page, search, a shared link) must land on the work the
     user asked for even when it is far outside the first recommendation page,
     so the timeline is rebuilt deterministically and sliced from that work.
+
+    ``blog`` keeps scrolling one author's timeline and ``caption`` keeps
+    scrolling the works that share a caption, which is what a search result is
+    expected to continue into. A caption that no longer contains ``uri`` (the
+    work was retitled after the search) falls back to the unfiltered timeline
+    instead of opening an empty feed.
     """
     source_id = str(blog or '').strip()
-    if not source_id:
+    query = str(caption or '').strip()
+    if not source_id and uri:
         match = re.match(r'^@([^/]+)/', uri)
         source_id = match.group(1) if match else ''
-    records = media_index.records(source_id=source_id) if source_id else []
+    if source_id:
+        records = media_index.records(source_id=source_id)
+    elif query:
+        # A caption-only feed is library-wide; a deep link with no source prefix
+        # still only needs the one work, which the offset search below finds.
+        records = media_index.records()
+    else:
+        records = []
     records_by_name = {str(record.get('name') or ''): record for record in records}
     pairs = [
         (str(record.get('media_type') or ''), str(record.get('name') or ''))
         for record in records
     ]
+
+    def entry_offset(candidate_entries: list[dict]) -> int | None:
+        for position, entry in enumerate(candidate_entries):
+            names = [str(entry.get('name') or '')]
+            names.extend(str(child.get('name') or '') for child in entry.get('items') or [])
+            if uri in names:
+                return position
+        return None
+
     entries = collapse_media_entries(pairs, records_by_name, media_index)
-    offset = 0
-    for position, entry in enumerate(entries):
-        names = [str(entry.get('name') or '')]
-        names.extend(str(child.get('name') or '') for child in entry.get('items') or [])
-        if uri in names:
-            offset = position
-            break
-    entries = entries[offset:]
+    offset = entry_offset(entries) if uri else 0
+    if query:
+        narrowed = [pair for pair in pairs if caption_matches(pair[1], query)]
+        narrowed_entries = collapse_media_entries(narrowed, records_by_name, media_index)
+        narrowed_offset = entry_offset(narrowed_entries) if uri else 0
+        # Only adopt the narrowed timeline when the requested work is still in it:
+        # a retitled post should open the unfiltered feed rather than an empty one.
+        if not uri or narrowed_offset is not None:
+            entries, offset = narrowed_entries, narrowed_offset
+    entries = entries[offset or 0:]
     end = page * size
     start = max(0, end - size)
     return {
@@ -349,6 +419,7 @@ def build_start_feed_page(
         'has_more': len(entries) > end,
         'seed': seed,
         'start': uri,
+        'caption': query,
     }
 
 
@@ -367,6 +438,7 @@ def build_mix_feed_page(
     sources_by_id: dict | None = None,
     tag: str = '',
     start: str = '',
+    caption: str = '',
     session_start=None,
 ) -> dict:
     raw_tag = str(tag or '').strip()
@@ -385,6 +457,17 @@ def build_mix_feed_page(
         return build_start_feed_page(
             uri=raw_start, page=page, size=size, seed=seed,
             media_index=media_index, sources_by_id=sources_by_id, blog=blog,
+            caption=caption,
+        )
+
+    if str(caption or '').strip():
+        # A caption filter without a work to start from still means "only these
+        # captions": a shared /flow?caption= link must not fall back to the whole
+        # recommendation pool.
+        return build_start_feed_page(
+            uri='', page=page, size=size, seed=seed,
+            media_index=media_index, sources_by_id=sources_by_id, blog=blog,
+            caption=caption,
         )
 
     video_ratio = 4
@@ -583,6 +666,7 @@ def register_flow_routes(
             'flow.html', menu='flow',
             tag=normalize_tag(request.args.get('tag', '')),
             start=str(request.args.get('start', '')).strip(),
+            caption=str(request.args.get('caption', '')).strip(),
         )
 
     @app.route('/api/feed/mix')
@@ -615,6 +699,7 @@ def register_flow_routes(
             sources_by_id=getattr(library_service, 'sources_by_id', None) or {},
             tag=request.args.get('tag', ''),
             start=request.args.get('start', ''),
+            caption=request.args.get('caption', ''),
             session_start=session_start,
         )
         if request.args.get('snapshot') == '1':

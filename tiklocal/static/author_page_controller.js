@@ -10,6 +10,18 @@
   const sourceId = page.dataset.sourceId || '';
   const endpoint = (action) => `/api/author/${encodeURIComponent(sourceId)}/${action}`;
 
+  // In Douyin mode a tap on a work should start that author's timeline and keep
+  // scrolling it, exactly like tapping a work on a Douyin profile.
+  if (window.localStorage?.getItem('douyin_mode') === '1') {
+    page.querySelectorAll('[data-tile-uri]').forEach((tile) => {
+      const uri = tile.dataset.tileUri || '';
+      if (!uri) return;
+      const query = new URLSearchParams({ start: uri });
+      if (sourceId) query.set('blog', sourceId);
+      tile.href = `/flow?${query.toString()}`;
+    });
+  }
+
   const backButton = page.querySelector('[data-author-back]');
   if (backButton) {
     backButton.addEventListener('click', () => {

@@ -5,7 +5,7 @@ import subprocess as sp
 from PIL import Image, ImageOps
 
 from tiklocal.services.download_tools import resolve_tool
-from tiklocal.services.thumbnail import ffmpeg_argv, ffprobe_argv
+from tiklocal.services.thumbnail import banner_duration, ffmpeg_argv, ffprobe_argv
 
 
 def probe_tool_available() -> bool:
@@ -83,6 +83,33 @@ def _apply_rotation(width: int, height: int, rotation: int) -> tuple[int, int]:
     if rotation in (90, 270):
         return height, width
     return width, height
+
+
+def probe_media_duration(library_service, name: str, media_type: str) -> float | None:
+    """Length in seconds for a video or live post, or None when it is unknowable.
+
+    The info sheet asks for this only when the user opens it, so a slow probe is
+    acceptable; the ffprobe call is still capped so a stalled file cannot pin the
+    request thread, and ffmpeg's banner is the fallback when ffprobe is absent.
+    """
+    if media_type not in {'video', 'live'}:
+        return None
+    target = library_service.resolve_path(name)
+    if not target or not target.exists() or not target.is_file():
+        return None
+    probe = ffprobe_argv()
+    if probe:
+        try:
+            output = sp.check_output([
+                *probe, '-v', 'error', '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1', str(target),
+            ], stderr=sp.DEVNULL, timeout=5)
+            value = float(output.decode().strip())
+            if value > 0 and value != float('inf') and value == value:
+                return value
+        except (OSError, sp.SubprocessError, ValueError):
+            pass
+    return banner_duration(target)
 
 
 def _banner_dims(target) -> tuple[int | None, int | None]:

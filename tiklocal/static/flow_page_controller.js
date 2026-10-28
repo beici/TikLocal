@@ -30,7 +30,20 @@
     const douyinCollectionBtn = document.getElementById('douyin-collection-btn');
     const douyinCollectionCount = document.getElementById('douyin-collection-count');
     const douyinInfoBtn = document.getElementById('douyin-info-btn');
+    const douyinDownloadBtn = document.getElementById('douyin-download-btn');
     const douyinAuthor = document.getElementById('douyin-author');
+    const douyinKind = document.getElementById('douyin-kind');
+    const douyinMetaDot = document.getElementById('douyin-meta-dot');
+    const douyinDate = document.getElementById('douyin-date');
+    const douyinFilter = document.getElementById('douyin-filter');
+    const douyinFilterText = document.getElementById('douyin-filter-text');
+    const douyinFilterClear = document.getElementById('douyin-filter-clear');
+    const mediaSheet = document.getElementById('media-sheet');
+    const mediaSheetTitle = document.getElementById('media-sheet-title');
+    const mediaSheetCopy = document.getElementById('media-sheet-copy');
+    const mediaSheetBody = document.getElementById('media-sheet-body');
+    const mediaSheetActions = document.getElementById('media-sheet-actions');
+    const mediaSheetClose = document.getElementById('media-sheet-close');
     const douyinCaption = document.getElementById('douyin-caption');
     const douyinCaptionText = document.getElementById('douyin-caption-text');
     const douyinCaptionExpand = document.getElementById('douyin-caption-expand');
@@ -40,6 +53,7 @@
 
     // The topic header renders before the feed so /flow?tag= looks right at once.
     syncTopicHeader();
+    syncCaptionFilter();
 
     const playStatusIcon = document.getElementById('play-status-icon');
     const customControls = document.getElementById('custom-controls');
@@ -430,9 +444,30 @@
       douyinCaptionFull.hidden = true;
     }
 
+    // 2025-11-16 -> 2025年11月16日 (zh) / November 16, 2025 (en), via the flow.post.date
+    // template so neither language hard-codes the other's word order.
+    function postDateLabel(value) {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || '').trim());
+      if (!match) return '';
+      const [, year, month, day] = match;
+      return T('flow.post.date', {
+        year, month: String(Number(month)), day: String(Number(day)),
+      });
+    }
+
+    function childKinds(entry) {
+      // A group's own kind comes from the server; a plain work derives it from its type.
+      if (entry && entry.kind_label) return entry.kind_label;
+      const type = String(entry?.type || '');
+      if (type === 'video') return T('flow.kind.video');
+      if (type === 'live') return T('flow.kind.live');
+      return T('flow.kind.image');
+    }
+
     function syncDouyinChrome(item) {
       if (!douyinModeOn || !douyinAuthor) return;
       const entry = item || {};
+      const display = currentDisplayEntry() || entry;
       const author = String(entry.author_name || '');
       const caption = String(entry.caption_text || '');
 
@@ -449,6 +484,20 @@
           douyinAvatarImg.src = avatarUrl;
         }
       }
+
+      // The reference layout is "@handle [图文] · 2025年11月16日": the kind tag only
+      // reads well next to a handle, and the separator only exists between two parts.
+      const kind = author ? childKinds(entry) : '';
+      if (douyinKind) {
+        douyinKind.textContent = kind;
+        douyinKind.hidden = !kind;
+      }
+      const dateLabel = postDateLabel(display.post_date || entry.post_date);
+      if (douyinDate) {
+        douyinDate.textContent = dateLabel;
+        douyinDate.hidden = !dateLabel;
+      }
+      if (douyinMetaDot) douyinMetaDot.hidden = !(kind && dateLabel);
 
       douyinCaption.hidden = !caption;
       if (caption) {
@@ -467,10 +516,208 @@
       mirrorDouyinActions();
     }
 
-    // --- Topic (hashtag) feed header ---
+    // --- Details and download sheets ---
+
+    function mediaSheetIsOpen() {
+      return !!mediaSheet && !mediaSheet.hidden;
+    }
+
+    function setSheetCopy(text) {
+      if (!mediaSheetCopy) return;
+      mediaSheetCopy.textContent = text || '';
+      mediaSheetCopy.hidden = !text;
+    }
+
+    function infoRow(label, value, { mono = false } = {}) {
+      const row = document.createElement('div');
+      row.className = 'media-info-row';
+      const labelEl = document.createElement('span');
+      labelEl.className = 'media-info-label';
+      labelEl.textContent = label;
+      const valueEl = document.createElement('span');
+      valueEl.className = mono ? 'media-info-value is-mono' : 'media-info-value';
+      valueEl.textContent = value;
+      row.append(labelEl, valueEl);
+      return row;
+    }
+
+    function sheetButton(label, hint, onClick, { primary = false } = {}) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = primary ? 'media-sheet-btn is-primary' : 'media-sheet-btn';
+      const text = document.createElement('span');
+      text.textContent = label;
+      button.appendChild(text);
+      if (hint) {
+        const small = document.createElement('small');
+        small.textContent = hint;
+        button.appendChild(small);
+      }
+      button.addEventListener('click', onClick);
+      return button;
+    }
+
+    function openMediaSheet({ title, copy = '', rows = [], actions = [] }) {
+      if (!mediaSheet) return;
+      mediaSheetTitle.textContent = title || '';
+      setSheetCopy(copy);
+      mediaSheetBody.replaceChildren(...rows);
+      mediaSheetActions.replaceChildren(...actions);
+      mediaSheet.hidden = false;
+      document.body.style.overflow = 'hidden';
+      mediaSheetClose?.focus();
+    }
+
+    function closeMediaSheet() {
+      if (!mediaSheet || mediaSheet.hidden) return;
+      mediaSheet.hidden = true;
+      mediaSheetBody.replaceChildren();
+      mediaSheetActions.replaceChildren();
+      document.body.style.overflow = '';
+    }
+
+    function triggerDownload(href) {
+      const link = document.createElement('a');
+      link.href = href;
+      link.rel = 'noopener';
+      link.download = '';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+
+    function downloadHref(name) {
+      return `/media/${encodeURI(String(name || '').replace(/^@/, '@')).replace(/#/g, '%23')}?download=1`;
+    }
+
+    function bundleHref(names) {
+      const query = new URLSearchParams();
+      names.forEach((name) => query.append('name', name));
+      return `/download/bundle?${query.toString()}`;
+    }
+
+    function sheetGroupMembers(item) {
+      // Every child of a gallery/live post that can actually be saved.
+      const children = Array.isArray(item?.items) ? item.items : [];
+      return children.filter((child) => child && child.name);
+    }
+
+    async function showInfoSheet() {
+      const item = currentItem();
+      const display = currentDisplayEntry();
+      if (!item || !display?.name) return;
+      openMediaSheet({
+        title: T('flow.info.title'),
+        copy: T('flow.info.copy'),
+        rows: [infoRow(T('flow.info.path'), T('flow.info.loading'))],
+      });
+      let data = null;
+      try {
+        const res = await fetch(`/api/media/info?uri=${encodeURIComponent(display.name)}`, {
+          signal: AbortSignal.timeout(20000),
+        });
+        const payload = await res.json();
+        if (!res.ok || !payload?.success) throw new Error(payload?.error || `HTTP ${res.status}`);
+        data = payload.data || null;
+      } catch (error) {
+        if (mediaSheetIsOpen()) {
+          mediaSheetBody.replaceChildren(infoRow(T('flow.info.path'), error.message || T('common.error.internal')));
+        }
+        return;
+      }
+      if (!data || !mediaSheetIsOpen()) return;
+      const rows = [];
+      rows.push(infoRow(T('flow.info.path'), data.path || display.name, { mono: true }));
+      if (data.size_label) rows.push(infoRow(T('flow.info.size'), data.size_label));
+      if (data.width && data.height) {
+        rows.push(infoRow(T('flow.info.dimensions'), `${data.width} × ${data.height}`));
+      }
+      if (data.duration_label) rows.push(infoRow(T('flow.info.duration'), data.duration_label));
+      const kind = item.kind_label || display.kind_label || '';
+      if (kind) rows.push(infoRow(T('flow.info.type'), kind));
+      const dateLabel = postDateLabel(data.post_date || item.post_date || display.post_date);
+      if (dateLabel) rows.push(infoRow(T('flow.info.date'), dateLabel));
+      if (data.album_size > 1 && data.album_index) {
+        // A group's own kind is already on the row above, so this row only says
+        // where in the group the reader is.
+        rows.push(infoRow(
+          T('flow.info.position'),
+          T('flow.info.position_value', { index: data.album_index, total: data.album_size }),
+        ));
+      }
+      if (data.live_video_uri) {
+        rows.push(infoRow(T('flow.info.live_video'), data.live_video_uri, { mono: true }));
+      }
+      mediaSheetBody.replaceChildren(...rows);
+
+      const actions = [];
+      actions.push(sheetButton(T('flow.info.copy_path'), '', async () => {
+        try {
+          await navigator.clipboard.writeText(data.path || '');
+          TikLocalUI.toast(T('flow.info.copied'), 'success');
+        } catch (_) {
+          TikLocalUI.toast(T('flow.info.copy_failed'), 'error');
+        }
+      }));
+      const detailUrl = String(display.detail_url || item.detail_url || '');
+      if (detailUrl && detailUrl !== '#') {
+        actions.push(sheetButton(T('flow.info.open_detail'), '', () => {
+          window.location.href = detailUrl;
+        }, { primary: true }));
+      }
+      mediaSheetActions.replaceChildren(...actions);
+    }
+
+    function downloadCurrentWork() {
+      const item = currentItem();
+      const display = currentDisplayEntry();
+      if (!display?.name) return;
+      const members = item?.type === 'image_group' ? sheetGroupMembers(item) : [];
+      if (members.length > 1) {
+        const index = Math.max(0, Math.min(Number(item.activeChildIndex) || 0, (item.items || []).length - 1));
+        const activeName = item.items?.[index]?.name || display.name;
+        openMediaSheet({
+          title: T('flow.download.title'),
+          copy: T('flow.download.copy', { total: members.length }),
+          actions: [
+            sheetButton(T('flow.download.current'), T('flow.download.current_hint', { index: index + 1 }), () => {
+              closeMediaSheet();
+              triggerDownload(downloadHref(activeName));
+              TikLocalUI.toast(T('flow.download.started'));
+            }, { primary: true }),
+            sheetButton(T('flow.download.all'), T('flow.download.all_hint', { total: members.length }), () => {
+              closeMediaSheet();
+              triggerDownload(bundleHref(members.map((child) => child.name)));
+              TikLocalUI.toast(T('flow.download.started'));
+            }),
+          ],
+        });
+        return;
+      }
+      triggerDownload(downloadHref(display.name));
+      TikLocalUI.toast(T('flow.download.started'));
+    }
+
 
     function currentTopicTag() {
       return new URLSearchParams(window.location.search).get('tag') || '';
+    }
+
+    function currentCaptionFilter() {
+      return (new URLSearchParams(window.location.search).get('caption') || '').trim();
+    }
+
+    // A caption search renders as a small chip under the top bar so the reader can
+    // see why the timeline is narrow and step back out of it.
+    function syncCaptionFilter() {
+      const caption = currentCaptionFilter();
+      if (!caption || !douyinFilter) return;
+      douyinFilter.hidden = false;
+      if (douyinFilterText) {
+        douyinFilterText.textContent = T('flow.context.caption', { query: caption });
+      }
+      if (douyinTopBack) douyinTopBack.hidden = false;
+      document.title = `${caption} · ${T('search.title')} · tikLocal`;
     }
 
     function syncTopicHeader() {
@@ -1356,6 +1603,10 @@
           if (blogFilter) query.set('blog', blogFilter);
           const tagFilter = currentTopicTag();
           if (tagFilter) query.set('tag', tagFilter);
+          // A caption search keeps the timeline on the searched words instead of
+          // dropping the reader back into the recommendation feed.
+          const captionFilter = currentCaptionFilter();
+          if (captionFilter) query.set('caption', captionFilter);
           const startUri = flowStartUri();
           if (startUri) query.set('start', startUri);
 
@@ -1383,6 +1634,8 @@
               author_name: item.author_name || '',
               author_url: item.author_url || '',
               caption_text: item.caption_text || '',
+              kind_label: item.kind_label || '',
+              post_date: item.post_date || '',
               items: Array.isArray(item.items) ? item.items : [],
               renderChild: typeof mediaEl._renderImageGroup === 'function' ? (index, force = false) => {
                 mediaEl._renderImageGroup(index, force);
@@ -1961,9 +2214,13 @@
         });
       });
 
-      douyinInfoBtn.addEventListener('click', () => {
+      // The reference app opens a details sheet here; the anchor href is only a
+      // no-JS fallback, so it must never navigate to '#'.
+      douyinInfoBtn.addEventListener('click', (event) => {
+        event.preventDefault();
         const target = activityTarget(currentItem());
         if (!target) return;
+        void showInfoSheet();
         postActivity([{
           session_id: activitySessionId,
           uri: target.uri,
@@ -1971,6 +2228,30 @@
           surface: 'flow',
           event: 'open_detail',
         }]);
+      });
+
+      douyinDownloadBtn?.addEventListener('click', (event) => {
+        event.preventDefault();
+        downloadCurrentWork();
+      });
+
+      mediaSheetClose?.addEventListener('click', closeMediaSheet);
+      mediaSheet?.addEventListener('click', (event) => {
+        if (event.target === mediaSheet) closeMediaSheet();
+      });
+      mediaSheet?.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeMediaSheet();
+        }
+      });
+
+      douyinFilterClear?.addEventListener('click', (event) => {
+        event.preventDefault();
+        const url = new URL(window.location.href);
+        url.searchParams.delete('caption');
+        url.searchParams.delete('start');
+        window.location.href = url.toString();
       });
 
       douyinCaptionExpand.addEventListener('click', (e) => {

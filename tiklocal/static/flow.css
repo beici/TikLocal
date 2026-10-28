@@ -1387,3 +1387,247 @@ body.tag-feed .image-group-badge { left: 56px; }
 /* The caption is repeated by the Douyin chrome, and its own bottom bar covers
    this strip, so the quiet caption overlay is not drawn in that mode. */
 body.douyin .image-group-overlay { display: none; }
+
+/* --- Douyin post meta line: @author [kind] · 2025年11月16日 --- */
+
+.douyin-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.douyin-meta .douyin-author { margin-bottom: 0; }
+
+/* Douyin's small square tag after the handle (图文 / 视频 / 实况). */
+.douyin-kind {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 3px;
+  color: rgba(255, 255, 255, 0.78);
+  font: 500 10px/1.5 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+
+.douyin-kind[hidden] { display: none; }
+
+.douyin-meta-dot {
+  color: rgba(255, 255, 255, 0.5);
+  font: 500 12px/1.4 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+
+.douyin-meta-dot[hidden] { display: none; }
+
+/* #807E7F-ish grey sampled from the reference screenshot: white at half alpha
+   over the black clip, one step smaller than the handle. */
+.douyin-date {
+  color: rgba(255, 255, 255, 0.5);
+  font: 400 12px/1.4 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+.douyin-date[hidden] { display: none; }
+
+/* --- Caption-search filter chip in the top bar --- */
+
+.douyin-filter {
+  position: absolute;
+  left: 14px;
+  right: 72px;
+  top: calc(56px + env(safe-area-inset-top));
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: max-content;
+  padding: 3px 4px 3px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.92);
+  font: 500 12px/1.5 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  backdrop-filter: blur(8px);
+  z-index: 26;
+}
+
+.douyin-filter[hidden] { display: none; }
+
+/* The top bar is pointer-events:none so the video stays draggable; every
+   interactive child re-enables it, and so must the clear button. */
+.douyin-filter { pointer-events: auto; }
+
+.douyin-filter-text {
+  max-width: 46vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.douyin-filter-clear {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.24);
+  color: #fff;
+  cursor: pointer;
+}
+
+.douyin-filter-clear svg { width: 11px; height: 11px; }
+
+/* A topic feed and a caption filter own the same strip; the topic wins. */
+body.tag-feed .douyin-filter { display: none; }
+
+/* --- Details / download sheet --- */
+
+.media-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 262;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.56);
+  backdrop-filter: blur(2px);
+}
+
+.media-sheet[hidden] { display: none; }
+
+.media-sheet-card {
+  width: min(520px, 100%);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 18px calc(14px + env(safe-area-inset-bottom));
+  border-radius: 18px 18px 0 0;
+  background: rgba(22, 22, 24, 0.98);
+  color: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 -12px 48px rgba(0, 0, 0, 0.55);
+  font: 400 14px/1.5 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  animation: media-sheet-in 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes media-sheet-in {
+  from { transform: translateY(24px); opacity: 0.4; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media-sheet-card { animation: none; }
+}
+
+.media-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.media-sheet-title {
+  margin: 0;
+  font: 600 16px/1.4 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.media-sheet-close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.86);
+  cursor: pointer;
+}
+
+.media-sheet-copy {
+  margin: 6px 0 0;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 12px;
+}
+
+.media-sheet-copy[hidden] { display: none; }
+
+.media-sheet-body {
+  margin: 12px 0 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.media-info-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.media-info-row:last-child { border-bottom: 0; }
+
+.media-info-label {
+  flex: 0 0 68px;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 12px;
+  padding-top: 2px;
+}
+
+.media-info-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-all;
+  font-size: 13px;
+}
+
+.media-info-value.is-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.media-sheet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.media-sheet-actions:empty { display: none; }
+
+.media-sheet-btn {
+  flex: 1 1 140px;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font: 600 13px/1.3 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  cursor: pointer;
+  text-align: left;
+}
+
+.media-sheet-btn.is-primary {
+  background: #fe2c55;
+  color: #fff;
+}
+
+.media-sheet-btn:active { opacity: 0.82; }
+
+.media-sheet-btn:disabled { opacity: 0.55; cursor: default; }
+
+.media-sheet-btn small {
+  display: block;
+  margin-top: 2px;
+  font: 400 11px/1.3 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  opacity: 0.72;
+}
+

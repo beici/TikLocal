@@ -111,6 +111,12 @@
       <span class="douyin-topic-name" id="douyin-topic-name"></span>
       <span class="douyin-topic-count" id="douyin-topic-count"></span>
     </div>
+    <div class="douyin-filter" id="douyin-filter" hidden>
+      <span class="douyin-filter-text" id="douyin-filter-text"></span>
+      <button type="button" class="douyin-filter-clear" id="douyin-filter-clear" aria-label="{{ t('flow.context.clear') }}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
     <a class="douyin-search" id="douyin-search" href="/search" aria-label="{{ t('search.open') }}">
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
     </a>
@@ -128,13 +134,21 @@
       <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
       <span class="collection-count" id="douyin-collection-count">0</span>
     </button>
+    <a class="action-btn douyin-action" id="douyin-download-btn" href="#" role="button" aria-label="{{ t('flow.download.label') }}">
+      <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+    </a>
     <a class="action-btn douyin-action" id="douyin-info-btn" href="#" aria-label="{{ t('flow.douyin.media_details') }}">
       <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
     </a>
   </div>
 
   <div class="douyin-info" id="douyin-info">
-    <a class="douyin-author" id="douyin-author" href="/flow"></a>
+    <div class="douyin-meta" id="douyin-meta">
+      <a class="douyin-author" id="douyin-author" href="/flow"></a>
+      <span class="douyin-kind" id="douyin-kind" hidden></span>
+      <span class="douyin-meta-dot" id="douyin-meta-dot" hidden>·</span>
+      <time class="douyin-date" id="douyin-date" hidden></time>
+    </div>
     <div class="douyin-caption" id="douyin-caption" hidden>
       <span class="douyin-caption-text" id="douyin-caption-text"></span>
       <button type="button" class="douyin-caption-expand" id="douyin-caption-expand" hidden>{{ t('flow.caption.expand') }}</button>
@@ -162,6 +176,21 @@
       <span>{{ t('flow.nav.me') }}</span>
     </a>
   </nav>
+</div>
+
+<!-- Details / download sheet: one card, two views (flow_page_controller.js fills it). -->
+<div class="media-sheet" id="media-sheet" hidden>
+  <div class="media-sheet-card" role="dialog" aria-modal="true" aria-labelledby="media-sheet-title">
+    <div class="media-sheet-head">
+      <h2 class="media-sheet-title" id="media-sheet-title"></h2>
+      <button type="button" class="media-sheet-close" id="media-sheet-close" aria-label="{{ t('common.close') }}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+    <p class="media-sheet-copy" id="media-sheet-copy"></p>
+    <div class="media-sheet-body" id="media-sheet-body"></div>
+    <div class="media-sheet-actions" id="media-sheet-actions"></div>
+  </div>
 </div>
 
 <div id="collection-modal" class="collection-modal" aria-hidden="true">

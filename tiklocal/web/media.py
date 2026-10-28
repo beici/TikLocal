@@ -5,7 +5,9 @@ import errno
 import io
 import math
 import mimetypes
+import re
 import time
+import zipfile
 import zlib
 from email.utils import formatdate
 from pathlib import Path
@@ -16,12 +18,48 @@ from flask import Response, redirect, render_template, request, send_file
 from tiklocal.i18n import t
 from tiklocal.services.embedded_metadata import read_embedded_generation
 from tiklocal.services.library import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+from tiklocal.services.media_info import probe_media_duration
 from tiklocal.web import json_body
 from tiklocal.web.media_payloads import media_urls
+
+# Downloading a whole album is one request: the archive is built in memory, so the
+# number of members and their combined size are capped to keep a stray tap cheap.
+BUNDLE_MAX_FILES = 60
+BUNDLE_MAX_BYTES = 3 * 1024 * 1024 * 1024
+_ALBUM_FILE_SUFFIX = re.compile(r'_\d+$')
 
 # Inline delivery is limited to formats the app itself renders; anything else in
 # the media library (svg, html, js) is downloaded as an opaque attachment.
 INLINE_MEDIA_SUFFIXES = frozenset(VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS)
+
+
+def format_size(num_bytes) -> str:
+    """Human file size, deliberately mirroring the template's filesizeformat filter."""
+    try:
+        size = float(num_bytes)
+    except (TypeError, ValueError):
+        return '0 B'
+    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+        if size < 1024.0 or unit == 'TB':
+            return f'{int(size)} {unit}' if unit == 'B' else f'{size:.1f} {unit}'
+        size /= 1024.0
+    return '0 B'
+
+
+def format_duration(seconds) -> str:
+    """``m:ss`` or ``h:mm:ss``; '' when the length is unknown."""
+    try:
+        total = int(round(float(seconds)))
+    except (TypeError, ValueError):
+        return ''
+    if total <= 0:
+        return ''
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f'{hours}:{minutes:02d}:{secs:02d}'
+    return f'{minutes}:{secs:02d}'
+
 
 
 def _byte_range(header: str | None, size: int):
@@ -393,6 +431,12 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         target = library_service.resolve_path(filename)
         if not target or not target.exists() or not target.is_file():
             return t('image.error.file_not_found'), 404
+        if request.args.get('download') == '1':
+            # The download button must save the file, including the formats the
+            # browser would otherwise render inline. No Range handling here: a
+            # resumed partial read of an attachment is not what was asked for.
+            return send_file(target, mimetype='application/octet-stream',
+                             as_attachment=True, download_name=target.name)
         # 只对已知音视频/图片内联下发：媒体库是用户可写目录，一个 .svg/.html 落进来
         # 再给个链接，脚本就会在本应用源内执行（可带 cookie 调 /api/*）。
         if target.suffix.lower() in INLINE_MEDIA_SUFFIXES:
@@ -410,6 +454,103 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         uri = request.args.get('uri')
         if not uri: return "Missing uri", 400
         return redirect(f"/media/{quote(library_service.find_existing_uri(uri), safe='/')}")
+
+    @app.route('/api/media/info')
+    def api_media_info():
+        """Everything the flow's info sheet shows for one work, in one round trip."""
+        uri = str(request.args.get('uri') or '').strip()
+        if not uri:
+            return {'success': False, 'error': t('image.error.missing_uri')}, 400
+        canonical = library_service.find_existing_uri(uri) or uri
+        target = library_service.resolve_path(canonical)
+        if not target or not target.exists() or not target.is_file():
+            return {'success': False, 'error': t('image.error.file_not_found')}, 404
+        try:
+            size_bytes = target.stat().st_size
+        except OSError:
+            size_bytes = 0
+        record = {}
+        try:
+            rows = media_index.records_for_names([canonical]) if media_index else []
+            record = rows[0] if rows else {}
+        except Exception:  # a broken index must not hide the file it points at
+            record = {}
+        media_type = str(record.get('media_type') or '') or (
+            'video' if target.suffix.lower() in VIDEO_EXTENSIONS else 'image'
+        )
+        width = int(record.get('width') or 0)
+        height = int(record.get('height') or 0)
+        album_index = record.get('album_index')
+        album_size = int(record.get('album_size') or 0)
+        live_uri = str(record.get('live_video_uri') or '')
+        duration = format_duration(probe_media_duration(library_service, canonical, media_type))
+        return {
+            'success': True,
+            'data': {
+                'name': canonical,
+                'path': str(target),
+                'file_name': target.name,
+                'suffix': target.suffix.lower().lstrip('.'),
+                'size_bytes': size_bytes,
+                'size_label': format_size(size_bytes),
+                'media_type': media_type,
+                'width': width,
+                'height': height,
+                'duration_label': duration,
+                'post_date': str(record.get('captured_local_date') or '')[:10],
+                'album_index': (int(album_index) + 1) if album_index is not None else 0,
+                'album_size': album_size,
+                'live_video_uri': live_uri,
+                'media_url': media_urls(canonical)['media_url'],
+            },
+        }
+
+    @app.route('/download/bundle')
+    def download_bundle():
+        """Zip the requested works so "download all" is one file, not N prompts."""
+        names = [str(name).strip() for name in request.args.getlist('name') if str(name).strip()]
+        unique: list[str] = []
+        for name in names:
+            if name not in unique:
+                unique.append(name)
+        if not unique:
+            return t('image.error.missing_uri'), 400
+        if len(unique) > BUNDLE_MAX_FILES:
+            unique = unique[:BUNDLE_MAX_FILES]
+        files: list[Path] = []
+        total = 0
+        for name in unique:
+            target = library_service.resolve_path(library_service.find_existing_uri(name))
+            if not target or not target.exists() or not target.is_file():
+                continue
+            try:
+                total += target.stat().st_size
+            except OSError:
+                continue
+            if total > BUNDLE_MAX_BYTES:
+                break
+            files.append(target)
+        if not files:
+            return t('image.error.file_not_found'), 404
+        buffer = io.BytesIO()
+        used: set[str] = set()
+        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_STORED) as archive:
+            for target in files:
+                archive_name = target.name
+                if archive_name in used:
+                    stem = _ALBUM_FILE_SUFFIX.sub('', target.stem)
+                    counter = 2
+                    suffix = target.suffix
+                    while f'{stem} ({counter}){suffix}' in used:
+                        counter += 1
+                    archive_name = f'{stem} ({counter}){suffix}'
+                used.add(archive_name)
+                archive.write(target, arcname=archive_name)
+        payload = buffer.getvalue()
+        return send_file(
+            io.BytesIO(payload), mimetype='application/zip', as_attachment=True,
+            download_name=f'{_ALBUM_FILE_SUFFIX.sub("", files[0].stem) or "album"}.zip',
+        )
 
     def _placeholder_response():
         # A failed generation (ffmpeg missing, file being copied, unknown uri) must

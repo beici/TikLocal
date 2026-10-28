@@ -49,7 +49,7 @@
   {% if tiles %}
   <div class="author-grid">
     {% for tile in tiles %}
-    <a class="author-tile" href="{{ tile.detail_url }}"
+    <a class="author-tile" href="{{ tile.detail_url }}" data-tile-uri="{{ tile.uri }}"
        aria-label="{{ t('author.tile.video') if tile.plays else t('author.tile.image') }}">
       {% if tile.plays %}
       <img class="author-tile-media author-tile-image" src="{{ tile.thumb_url }}" alt=""
