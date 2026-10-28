@@ -15,6 +15,7 @@ from flask import Flask, jsonify, render_template, request, send_file, url_for
 # Service Imports
 from tiklocal.logging_setup import configure_logging
 from tiklocal.services.library import LibraryService, build_media_sources
+from tiklocal.services.media_sources_store import MediaSourceStore, resolve_startup_sources
 from tiklocal.services.favorites import FavoriteService
 from tiklocal.services.recommendation import RecommendService
 from tiklocal.services.thumbnail import ThumbnailService
@@ -53,6 +54,7 @@ from tiklocal.paths import (
     get_download_config_path,
     get_download_jobs_path,
     get_download_sources_path,
+    get_media_sources_path,
     get_collections_path,
     get_radio_profile_path,
     get_auth_path,
@@ -375,18 +377,40 @@ def create_app(test_config=None):
         return response
 
     # Initialize Services
-    media_sources = build_media_sources(app.config['MEDIA_ROOT'], app.config.get('MEDIA_SOURCES'))
+    startup_sources = build_media_sources(app.config['MEDIA_ROOT'], app.config.get('MEDIA_SOURCES'))
+    # Folders edited on the settings page live in the instance directory and outrank
+    # the launch configuration; otherwise a folder added there vanished on the next
+    # start and a removed one came back. An unreadable list keeps the launch
+    # configuration instead of starting with no library at all.
+    media_source_store = MediaSourceStore(get_media_sources_path())
+    try:
+        stored_sources = media_source_store.load()
+    except OSError as error:
+        app.logger.warning(
+            'Media folder list %s is unreadable; using the launch configuration: %s',
+            media_source_store.store_path, error,
+        )
+        stored_sources = None
+    media_sources = (
+        resolve_startup_sources(stored_sources, startup_sources, logger=app.logger)
+        if stored_sources else startup_sources
+    )
     library_service = LibraryService(app.config['MEDIA_ROOT'], media_sources=media_sources)
     default_media_root = library_service.media_root
     # `tiklocal D:\media\2026\hits` used to start happily on a missing nested
     # directory and serve an empty library with no explanation. The path came from
     # the user, so create it (parents included) and only warn when that fails.
+    # A folder saved in settings is not created: a typo or an unplugged disk must
+    # stay visibly unavailable instead of turning into an empty directory.
     if not default_media_root.is_dir():
-        try:
-            default_media_root.mkdir(parents=True, exist_ok=True)
-            app.logger.info('Created media directory: %s', default_media_root)
-        except OSError as error:
-            app.logger.warning('Media directory is not usable: %s (%s)', default_media_root, error)
+        if stored_sources is not None:
+            app.logger.warning('Media folder saved in settings is unavailable: %s', default_media_root)
+        else:
+            try:
+                default_media_root.mkdir(parents=True, exist_ok=True)
+                app.logger.info('Created media directory: %s', default_media_root)
+            except OSError as error:
+                app.logger.warning('Media directory is not usable: %s (%s)', default_media_root, error)
     media_root_str = str(default_media_root)
     app.config['MEDIA_ROOT'] = default_media_root
     favorite_service = FavoriteService(get_favorites_path(), library_service)
@@ -507,7 +531,12 @@ def create_app(test_config=None):
         trash_service, library_indexer, activity_store,
         favorite_service=favorite_service, collection_store=collection_store,
     )
-    register_settings_routes(app, media_index, favorite_service, thumbnail_service, app_version)
+    register_settings_routes(
+        app, media_index, favorite_service, thumbnail_service, app_version,
+        media_source_store=media_source_store,
+        library_service=library_service,
+        library_indexer=library_indexer,
+    )
 
     # --- Template Filters ---
     @app.template_filter('filesizeformat')

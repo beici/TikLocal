@@ -190,6 +190,8 @@ def register_radio_client_routes(
 
     @app.delete("/api/v1/device")
     def api_v1_revoke_device():
+        if not app.extensions.get("auth_enabled"):
+            return ok({"revoked": False})
         revoked = device_auth_store.revoke_token(
             bearer_token(),
             auth_revision=auth_store.revision,
@@ -198,6 +200,10 @@ def register_radio_client_routes(
 
     @app.get("/api/radio/devices")
     def api_radio_devices():
+        # Paired clients only exist while access authentication is on; without
+        # it AuthStore has no revision and the settings page must not blow up.
+        if not app.extensions.get("auth_enabled"):
+            return ok({"devices": []})
         return ok({
             "devices": device_auth_store.list_devices(
                 auth_revision=auth_store.revision,

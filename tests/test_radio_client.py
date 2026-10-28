@@ -425,3 +425,31 @@ def test_browser_admin_can_list_and_revoke_devices(radio_client_app):
         "/api/v1/radio/stations",
         headers=_bearer(second["token"]),
     ).status_code == 200
+
+
+def test_radio_device_endpoints_survive_without_authentication(tmp_path, monkeypatch):
+    """Paired clients cannot exist without auth, so the endpoints must stay quiet.
+
+    AuthStore refuses to expose a revision until a password is set, and with
+    authentication disabled nothing ever sets one; the settings page still asks
+    for the device list, so it has to answer instead of raising.
+    """
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    (media_root / "song-a.mp3").write_bytes(b"a" * 512)
+    monkeypatch.setenv("TIKLOCAL_INSTANCE", str(tmp_path / "tiklocal-data"))
+
+    app = create_app({
+        "TESTING": True,
+        "MEDIA_ROOT": media_root,
+        "AUTH_ENABLED": False,
+    })
+    client = app.test_client()
+
+    listed = client.get("/api/radio/devices")
+    revoked = client.delete("/api/v1/device", headers={"Authorization": "Bearer token"})
+
+    assert listed.status_code == 200
+    assert listed.get_json()["data"]["devices"] == []
+    assert revoked.status_code == 200
+    assert revoked.get_json()["data"]["revoked"] is False

@@ -1,14 +1,29 @@
 """Home, settings and shared library/cache statistics."""
 
 import sqlite3
+from pathlib import Path
 
 from flask import render_template, request, session
 
 from tiklocal.i18n import t
 from tiklocal.services.auth import MIN_PASSWORD_LENGTH
+from tiklocal.services.media_sources_store import (
+    MediaSourceError,
+    add_source,
+    apply_sources,
+    describe_sources,
+    item_counts,
+    remove_source,
+    retarget_thumbnail_service,
+    update_source,
+)
+from tiklocal.web import json_body
 
 
-def register_settings_routes(app, media_index, favorite_service, thumbnail_service, app_version):
+def register_settings_routes(
+    app, media_index, favorite_service, thumbnail_service, app_version, *,
+    media_source_store=None, library_service=None, library_indexer=None,
+):
     @app.route('/')
     def home_view():
         """Quiet launchpad for the local media library."""
@@ -82,6 +97,140 @@ def register_settings_routes(app, media_index, favorite_service, thumbnail_servi
             limiter.clear(client_key)
         session['auth_revision'] = auth_store.revision
         return {'success': True, 'revision': auth_store.revision}
+
+    # --- Media library folders ------------------------------------------------
+    # The settings page owns the folder list from here on: the launch
+    # configuration (config.yaml / --media-source / MEDIA_ROOT) only seeds it the
+    # first time. Edits are persisted first, then folded into the running
+    # LibraryService, so the change is live without a restart.
+    def _media_sources():
+        sources = getattr(library_service, 'sources', None) or []
+        return list(sources)
+
+    def _download_target_id() -> str:
+        manager = app.extensions.get('download_manager')
+        return str(getattr(manager, 'output_source_id', '') or '')
+
+    def _source_payload() -> dict:
+        counts = item_counts(media_index, logger=app.logger)
+        return {
+            'sources': describe_sources(
+                _media_sources(), counts=counts, download_source_id=_download_target_id(),
+            ),
+            'store_path': str(media_source_store.store_path) if media_source_store else '',
+        }
+
+    def _reason(error: MediaSourceError) -> str:
+        # t() echoes the key when a translation is missing; showing the raw key to
+        # the user is worse than the generic sentence.
+        key = f'settings.library.source_error_{error.code}'
+        message = t(key, **error.params)
+        return t('settings.library.source_error_generic') if message == key else message
+
+    def _persist_sources(sources, previous_ids: set[str]) -> None:
+        """Write the list before touching the running app.
+
+        Removal is recorded by id: launch-time sources (config.yaml,
+        ``--media-source``) are merged back on the next start, so without the record
+        a folder the user removed here would reappear after a restart.
+        """
+        if media_source_store is None:
+            raise MediaSourceError('store')
+        try:
+            stored = media_source_store.load()
+        except OSError:
+            stored = None
+        keep_ids = {source.id for source in sources}
+        removed_ids = set(stored.removed_ids if stored else ()) | (previous_ids - keep_ids)
+        media_source_store.save(sources, removed_ids=[item for item in removed_ids if item not in keep_ids])
+
+    def _apply_change(sources, message: str) -> dict:
+        previous_default = Path(library_service.media_root)
+        previous_ids = {source.id for source in _media_sources()}
+        try:
+            _persist_sources(sources, previous_ids)
+        except MediaSourceError as error:
+            return {'success': False, 'error': _reason(error)}, 400
+        except OSError:
+            app.logger.exception('Could not save the media folder list')
+            return {'success': False, 'error': t('settings.library.source_error_save')}, 500
+        try:
+            installed = apply_sources(library_service, sources)
+        except MediaSourceError as error:
+            return {'success': False, 'error': _reason(error)}, 400
+        new_default = Path(library_service.media_root)
+        app.config['MEDIA_ROOT'] = library_service.media_root
+        if new_default != previous_default:
+            # Cache keys embed the library root so two libraries cannot show each
+            # other's pictures; a moved default has to move that identity with it.
+            retarget_thumbnail_service(thumbnail_service, new_default)
+        target = library_service.sources_by_id.get(_download_target_id())
+        download_manager = app.extensions.get('download_manager')
+        if download_manager is not None and target is not None:
+            download_manager.media_root = Path(target.path).resolve()
+        scan = {'indexed': 0, 'deleted': 0, 'busy': False, 'unavailable': []}
+        if library_indexer is not None:
+            try:
+                result = library_indexer.sync()
+            except sqlite3.OperationalError as error:
+                if 'locked' not in str(error) and 'busy' not in str(error):
+                    raise
+                # The folder list is already saved; only the rescan has to wait for
+                # the next successful scan, so this is a warning, not a failure.
+                app.logger.warning('Rescan after a folder change hit a busy database: %s', error)
+                result = {'busy': True}
+            scan = {
+                'indexed': int(result.get('indexed') or 0),
+                'deleted': int(result.get('deleted') or 0),
+                'busy': bool(result.get('busy')),
+                'unavailable': list(result.get('unavailable_sources') or []),
+            }
+        app.logger.info(
+            'Media folders updated: %s', ', '.join(f"@{source.id}={source.path}" for source in installed),
+        )
+        return {'success': True, 'message': message, 'data': {**_source_payload(), 'scan': scan}}
+
+    @app.get('/api/library/sources')
+    def api_media_sources():
+        try:
+            return {'success': True, 'data': _source_payload()}
+        except sqlite3.Error:
+            # A damaged index must not hide the folder list: the user has to be
+            # able to point the app somewhere else to recover.
+            app.logger.exception('Could not read media folders')
+            return {'success': False, 'error': t('settings.library.source_error_generic')}, 500
+
+    @app.post('/api/library/sources')
+    def api_add_media_source():
+        payload = json_body()
+        try:
+            sources, source = add_source(
+                _media_sources(), path=payload.get('path'), name=payload.get('name'),
+            )
+        except MediaSourceError as error:
+            return {'success': False, 'error': _reason(error)}, 400
+        return _apply_change(sources, t('settings.library.source_added', name=source.name))
+
+    @app.patch('/api/library/sources/<source_id>')
+    def api_update_media_source(source_id):
+        payload = json_body()
+        try:
+            sources, source = update_source(
+                _media_sources(), source_id, path=payload.get('path'), name=payload.get('name'),
+            )
+        except MediaSourceError as error:
+            return {'success': False, 'error': _reason(error)}, 400
+        return _apply_change(sources, t('settings.library.source_updated', name=source.name))
+
+    @app.delete('/api/library/sources/<source_id>')
+    def api_remove_media_source(source_id):
+        try:
+            sources = remove_source(
+                _media_sources(), source_id, protected_ids=(_download_target_id(),),
+            )
+        except MediaSourceError as error:
+            return {'success': False, 'error': _reason(error)}, 400
+        return _apply_change(sources, t('settings.library.source_removed'))
 
     def library_stats() -> dict:
         # Settings is the only page that can clear the thumbnail cache or repair the

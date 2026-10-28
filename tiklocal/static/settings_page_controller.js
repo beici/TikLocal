@@ -14,6 +14,16 @@
   const copyPairingButton = document.getElementById('copy-radio-pairing');
   const openRadioLink = document.getElementById('open-radio-link');
   const radioDeviceList = document.getElementById('radio-device-list');
+  const mediaSourceList = document.getElementById('media-source-list');
+  const mediaSourceMask = document.getElementById('media-source-mask');
+  const mediaSourceForm = document.getElementById('media-source-form');
+  const mediaSourcePath = document.getElementById('media-source-path');
+  const mediaSourceName = document.getElementById('media-source-name');
+  const mediaSourceHint = document.getElementById('media-source-hint');
+  const mediaSourceTitle = document.getElementById('media-source-title');
+  const addMediaSourceButton = document.getElementById('add-media-source');
+  let editingSourceId = '';
+  let mediaSourceTrigger = null;
   let pairingTimer = 0;
   let concurrencyBusy = false;
 
@@ -463,6 +473,214 @@
     window.location.reload();
   }));
   syncLanguageButtons();
+
+  // Media folders: the library roots the user points TikLocal at. Saving rewrites
+  // the instance folder list and rescans, then the server returns the list it now
+  // serves so the UI shows server truth rather than the last click.
+  function mediaSourceBadge(text, variant) {
+    const badge = document.createElement('span');
+    badge.className = 'media-source-badge' + (variant ? ' is-' + variant : '');
+    badge.textContent = text;
+    return badge;
+  }
+
+  function folderName(path) {
+    const segments = String(path || '').split(/[\\/]+/).filter(Boolean);
+    return segments.length ? segments[segments.length - 1] : String(path || '');
+  }
+
+  // The launch folder arrives as the placeholder name "Default"; its folder name
+  // says more, and the badge already marks which folder is the default one.
+  function sourceDisplayName(source) {
+    const name = String(source?.name || '');
+    if (source?.is_default && /^default$/i.test(name)) return folderName(source.path);
+    return name || String(source?.id || '');
+  }
+
+  function buildMediaSourceRow(source) {
+    const row = document.createElement('div');
+    row.className = 'media-source-row';
+    row.dataset.mediaSourceId = source.id;
+    if (!source.available) row.classList.add('is-unavailable');
+
+    const main = document.createElement('div');
+    main.className = 'media-source-main';
+    const head = document.createElement('div');
+    head.className = 'media-source-head';
+    const name = document.createElement('span');
+    name.className = 'media-source-name';
+    name.textContent = sourceDisplayName(source);
+    head.append(name);
+    if (source.is_default) head.append(mediaSourceBadge(T('settings.library.source_default'), 'default'));
+    head.append(mediaSourceBadge(T('settings.library.source_items', { count: Number(source.item_count) || 0 })));
+    if (!source.available) head.append(mediaSourceBadge(T('settings.library.source_unavailable'), 'danger'));
+    const path = document.createElement('div');
+    path.className = 'media-source-path';
+    path.textContent = source.path;
+    path.title = source.path;
+    main.append(head, path);
+
+    const actions = document.createElement('div');
+    actions.className = 'media-source-actions';
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'settings-action';
+    edit.textContent = T('settings.library.source_edit');
+    edit.addEventListener('click', () => openMediaSourceDialog(source, edit));
+    actions.append(edit);
+    if (source.removable) {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'settings-action is-danger';
+      remove.textContent = T('settings.library.source_remove');
+      remove.addEventListener('click', () => removeMediaSource(source));
+      actions.append(remove);
+    }
+    row.append(main, actions);
+    return row;
+  }
+
+  function renderMediaSources(data) {
+    if (!mediaSourceList) return;
+    const sources = Array.isArray(data?.sources) ? data.sources : [];
+    mediaSourceList.replaceChildren();
+    if (!sources.length) {
+      const empty = document.createElement('div');
+      empty.className = 'media-source-empty';
+      empty.textContent = T('settings.library.sources_empty');
+      mediaSourceList.append(empty);
+      return;
+    }
+    sources.forEach((source) => mediaSourceList.append(buildMediaSourceRow(source)));
+  }
+
+  function showMediaSourceError(message) {
+    if (!mediaSourceList) return;
+    mediaSourceList.replaceChildren();
+    const box = document.createElement('div');
+    box.className = 'media-source-empty';
+    box.textContent = message;
+    mediaSourceList.append(box);
+  }
+
+  async function loadMediaSources(options) {
+    const payload = await requestJson('/api/library/sources', options);
+    renderMediaSources(payload.data || {});
+    return payload.data || {};
+  }
+
+  function openMediaSourceDialog(source, trigger) {
+    if (!mediaSourceMask) return;
+    editingSourceId = source ? String(source.id || '') : '';
+    mediaSourceTrigger = trigger || addMediaSourceButton;
+    mediaSourceTitle.textContent = T(editingSourceId
+      ? 'settings.library.source_edit_title'
+      : 'settings.library.source_add_title');
+    mediaSourcePath.value = source ? source.path || '' : '';
+    // Prefill what the list shows, so editing the default folder starts from the
+    // folder name rather than the placeholder the launcher passed in.
+    mediaSourceName.value = source ? sourceDisplayName(source) : '';
+    mediaSourceHint.textContent = '';
+    mediaSourceMask.hidden = false;
+    document.body.style.overflow = 'hidden';
+    mediaSourcePath.focus();
+    mediaSourcePath.select();
+  }
+
+  function closeMediaSourceDialog() {
+    if (!mediaSourceMask) return;
+    mediaSourceMask.hidden = true;
+    document.body.style.overflow = '';
+    mediaSourceHint.textContent = '';
+    editingSourceId = '';
+    if (mediaSourceTrigger) mediaSourceTrigger.focus();
+    mediaSourceTrigger = null;
+  }
+
+  function applyMediaSourceResult(payload) {
+    const data = payload?.data || {};
+    renderMediaSources(data);
+    void loadStats();
+    const scan = data.scan || {};
+    if (scan.busy) {
+      // The folder list is saved even when a scan was already running; say so
+      // instead of implying the new items are visible already.
+      TikLocalUI.toast(T('settings.library.source_scan_pending'), 'warning');
+    } else {
+      TikLocalUI.toast(typeof payload?.message === 'string' && payload.message
+        ? payload.message
+        : T('settings.library.source_scan_done', { count: Number(scan.indexed) || 0 }));
+    }
+    return data;
+  }
+
+  async function submitMediaSource() {
+    if (!mediaSourcePath) return;
+    const path = mediaSourcePath.value.trim();
+    const name = mediaSourceName.value.trim();
+    if (!path) {
+      mediaSourceHint.textContent = T('settings.library.source_error_required');
+      mediaSourcePath.focus();
+      return;
+    }
+    const saveButton = document.getElementById('save-media-source');
+    const editing = Boolean(editingSourceId);
+    const options = {
+      method: editing ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, name }),
+      // A folder added for the first time is scanned before the response, so the
+      // default 20 s budget is too small for a large library.
+      signal: AbortSignal.timeout(120000),
+    };
+    const url = editing
+      ? '/api/library/sources/' + encodeURIComponent(editingSourceId)
+      : '/api/library/sources';
+    try {
+      await runButton(saveButton, T('settings.library.source_saving'), async () => {
+        const payload = await requestJson(url, options);
+        applyMediaSourceResult(payload);
+        closeMediaSourceDialog();
+      });
+    } catch (error) {
+      mediaSourceHint.textContent = error instanceof Error && error.message
+        ? error.message
+        : T('settings.library.source_error_generic');
+    }
+  }
+
+  function removeMediaSource(source) {
+    const label = source.name || source.id;
+    confirmAction(
+      T('settings.library.source_remove_title'),
+      T('settings.library.source_remove_copy', { name: label }),
+      T('settings.library.source_remove_action'),
+      'danger',
+      async () => {
+        try {
+          const payload = await requestJson('/api/library/sources/' + encodeURIComponent(source.id), {
+            method: 'DELETE',
+            signal: AbortSignal.timeout(120000),
+          });
+          applyMediaSourceResult(payload);
+        } catch (error) {
+          TikLocalUI.toast(error instanceof Error && error.message
+            ? error.message
+            : T('settings.library.source_error_generic'), 'error');
+        }
+      },
+    );
+  }
+
+  addMediaSourceButton?.addEventListener('click', () => openMediaSourceDialog(null, addMediaSourceButton));
+  document.getElementById('close-media-source')?.addEventListener('click', closeMediaSourceDialog);
+  document.getElementById('cancel-media-source')?.addEventListener('click', closeMediaSourceDialog);
+  mediaSourceMask?.addEventListener('click', (event) => { if (event.target === mediaSourceMask) closeMediaSourceDialog(); });
+  mediaSourceMask?.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeMediaSourceDialog(); });
+  mediaSourceForm?.addEventListener('submit', (event) => { event.preventDefault(); void submitMediaSource(); });
+  if (mediaSourceList) {
+    loadMediaSources().catch(() => showMediaSourceError(T('settings.library.source_error_generic')));
+  }
 
   refreshButton.addEventListener('click', () => {
     confirmAction(T('settings.scan.confirm_title'), T('settings.scan.confirm_copy'), T('settings.scan.action'), 'primary', () => {
@@ -981,4 +1199,7 @@
   loadTrash();
   loadDownloadSettings();
   loadTikTokDownloaderStatus();
+  // The author-sync card renders from this call; without it the card sits on its
+  // "loading" placeholder until the user presses 刷新.
+  loadAuthorSources();
 })();

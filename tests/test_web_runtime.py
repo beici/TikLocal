@@ -26,16 +26,20 @@ def test_browser_cache_policy_and_media_range(tmp_path):
     assert client.get('/api/v1/pair').status_code == 405
 
 
-@pytest.mark.parametrize('key,value', [
-    ('https', True), ('tls_cert', 'cert.pem'), ('tls_key', 'key.pem'), ('hostnames', ['studio.local']),
+@pytest.mark.parametrize('key,value,expected', [
+    ('https', 'yes', "option 'https' must be true or false"),
+    ('tls_cert', 123, "option 'tls_cert' must be a path"),
+    ('hostnames', {'studio': True}, "option 'hostnames' must be a list"),
 ])
-def test_old_tls_config_does_not_silently_start_http(monkeypatch, capsys, key, value):
+def test_wrong_tls_config_type_is_rejected(monkeypatch, capsys, key, value, expected):
+    # These keys now configure the built-in HTTPS server, so a malformed value must
+    # fail loudly instead of silently falling back to plain HTTP.
     monkeypatch.setattr('tiklocal.run.load_config', lambda: {key: value})
     monkeypatch.setattr(sys, 'argv', ['tiklocal'])
     with pytest.raises(SystemExit) as stopped:
         main()
     assert stopped.value.code == 2
-    assert 'Built-in HTTPS has been removed' in capsys.readouterr().err
+    assert expected in capsys.readouterr().err
 
 
 def test_instance_config_takes_priority(tmp_path, monkeypatch):

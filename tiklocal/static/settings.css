@@ -330,3 +330,95 @@ body[data-nav-context="settings"] {
 .author-sync-row-status[hidden] { display: none; }
 .author-sync-row-status.is-error { color: #b4433b; }
 [data-theme="dark"] .author-sync-row-status.is-error { color: #e69a93; }
+
+/* Language switcher: a two-option segmented pill. The block used to reuse
+   .theme-option, so both buttons inherited its 104px height and the row read as
+   a tall empty box; .language-option is now sized by its own rules. */
+.language-options {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--settings-soft);
+}
+.language-option {
+  min-width: 52px;
+  height: 29px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--settings-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 140ms ease, background-color 150ms ease, box-shadow 150ms ease, transform 120ms ease;
+}
+.language-option:hover { color: var(--settings-ink); }
+.language-option:active { transform: scale(0.97); }
+.language-option:focus-visible { outline: 2px solid var(--settings-ink); outline-offset: 2px; }
+.language-option.is-active {
+  color: var(--settings-ink);
+  background: var(--settings-card);
+  box-shadow: 0 1px 3px rgba(30, 29, 25, 0.09);
+}
+[data-theme="dark"] .language-option.is-active {
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+@media (pointer: coarse) { .language-option { height: 34px; } }
+
+/* Media folders: the list under the "Media Folders" row. */
+.media-source-card { margin-top: 8px; }
+.media-source-list { display: grid; }
+.media-source-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 15px;
+  border-top: 1px solid var(--settings-line);
+}
+.media-source-main { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.media-source-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.media-source-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--settings-ink);
+  font-size: 12.5px;
+  font-weight: 620;
+}
+.media-source-badge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--settings-muted);
+  background: var(--settings-soft);
+  font-size: 9.5px;
+  font-weight: 620;
+  line-height: 1.5;
+}
+.media-source-badge.is-default { color: #4c6c62; background: rgba(76, 108, 98, 0.1); }
+[data-theme="dark"] .media-source-badge.is-default { color: #9fc3b6; background: rgba(159, 195, 182, 0.12); }
+.media-source-badge.is-danger { color: #b4433b; background: rgba(180, 67, 59, 0.1); }
+[data-theme="dark"] .media-source-badge.is-danger { color: #e69a93; background: rgba(230, 154, 147, 0.12); }
+.media-source-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--settings-muted);
+  font: 10.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.media-source-row.is-unavailable .media-source-path { color: #b4433b; }
+[data-theme="dark"] .media-source-row.is-unavailable .media-source-path { color: #e69a93; }
+.media-source-actions { flex: 0 0 auto; display: flex; gap: 6px; }
+.media-source-actions .settings-action { min-height: 30px; padding: 0 10px; }
+.media-source-empty { padding: 13px 15px 16px; color: var(--settings-muted); font-size: 11px; line-height: 1.45; }
+@media (prefers-reduced-motion: reduce) {
+  .language-option, .media-source-row .settings-action { transition-duration: 0.01ms !important; }
+}

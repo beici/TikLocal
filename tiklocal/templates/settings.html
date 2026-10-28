@@ -54,13 +54,9 @@
             <div class="settings-row-title">{{ t('settings.language.title') }}</div>
             <div class="settings-row-copy">{{ t('settings.language.copy') }}</div>
           </div>
-          <div class="theme-options language-options" role="group" aria-label="{{ t('settings.language.title') }}">
-            <button class="theme-option language-option" type="button" data-locale-choice="zh" aria-pressed="false">
-              <span class="theme-check"><i data-feather="check"></i></span><span>中文</span>
-            </button>
-            <button class="theme-option language-option" type="button" data-locale-choice="en" aria-pressed="false">
-              <span class="theme-check"><i data-feather="check"></i></span><span>English</span>
-            </button>
+          <div class="language-options" role="group" aria-label="{{ t('settings.language.title') }}">
+            <button class="language-option" type="button" data-locale-choice="zh" aria-pressed="false">中文</button>
+            <button class="language-option" type="button" data-locale-choice="en" aria-pressed="false">English</button>
           </div>
         </div>
       </div>
@@ -112,6 +108,19 @@
             <div class="settings-row-copy" id="cache-copy">{{ t('settings.library.cache_copy', size=cache_size_mb ~ ' MB') }}</div>
           </div>
           <button id="clear-cache" class="settings-action" type="button">{{ t('settings.library.clear') }}</button>
+        </div>
+      </div>
+      <div class="settings-card media-source-card">
+        <div class="settings-row">
+          <span class="setting-icon"><i data-feather="folder"></i></span>
+          <div class="settings-row-main">
+            <div class="settings-row-title">{{ t('settings.library.sources_title') }}</div>
+            <div class="settings-row-copy">{{ t('settings.library.sources_copy') }}</div>
+          </div>
+          <button id="add-media-source" class="settings-action is-primary" type="button">{{ t('settings.library.sources_add') }}</button>
+        </div>
+        <div id="media-source-list" class="media-source-list">
+          <div class="media-source-empty">{{ t('settings.library.sources_loading') }}</div>
         </div>
       </div>
     </section>
@@ -346,6 +355,30 @@
       <button id="save-tiktok-downloader" class="settings-action is-primary" type="button">{{ t('common.save') }}</button>
     </div>
   </section>
+</div>
+<div id="media-source-mask" class="pairing-mask" hidden>
+  <form id="media-source-form" class="pairing-dialog" role="dialog" aria-modal="true" aria-labelledby="media-source-title" novalidate>
+    <div class="credential-head">
+      <div>
+        <h2 id="media-source-title" class="credential-title">{{ t('settings.library.source_add_title') }}</h2>
+        <p class="credential-copy">{{ t('settings.library.source_dialog_copy') }}</p>
+      </div>
+      <button id="close-media-source" class="credential-close" type="button" aria-label="{{ t('common.close') }}"><i data-feather="x"></i></button>
+    </div>
+    <label class="pairing-field">
+      <span class="pairing-label">{{ t('settings.library.source_path_label') }}</span>
+      <input id="media-source-path" class="pairing-input" type="text" autocomplete="off" spellcheck="false" placeholder="{{ t('settings.library.source_path_placeholder') }}">
+    </label>
+    <label class="pairing-field">
+      <span class="pairing-label">{{ t('settings.library.source_name_label') }}</span>
+      <input id="media-source-name" class="pairing-input" type="text" autocomplete="off" maxlength="60">
+    </label>
+    <p id="media-source-hint" class="pairing-warning" aria-live="polite"></p>
+    <div class="pairing-actions">
+      <button id="cancel-media-source" class="settings-action" type="button">{{ t('common.cancel') }}</button>
+      <button id="save-media-source" class="settings-action is-primary" type="submit">{{ t('common.save') }}</button>
+    </div>
+  </form>
 </div>
 {% endblock %}
 

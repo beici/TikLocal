@@ -80,6 +80,12 @@ def get_download_sources_path() -> Path:
     return get_data_dir() / 'download_sources.json'
 
 
+def get_media_sources_path() -> Path:
+    # Library folders managed from the settings page; separate from the download
+    # source map above, which records which blogger a downloaded file came from.
+    return get_data_dir() / 'media_sources.json'
+
+
 def get_download_urls_path() -> Path:
     return get_data_dir() / 'download-urls.txt'
 
