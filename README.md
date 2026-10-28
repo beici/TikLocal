@@ -145,15 +145,62 @@ from a hash of the media root and the file URI, so several libraries can share
 one cache directory. Settings → Media library clears it (it regenerates on the
 next visit).
 
+### Media folders
+
+Settings → Media folders (媒体目录) → **Add folder** points TikLocal at any
+folder on the machine, including one on another drive. Every folder is checked
+before it is accepted (it must exist, be a directory, and be readable), listed
+with an item count, and can be renamed, re-pointed, or removed again. Saving
+rescans the library immediately, so the new files show up without a restart, and
+the list is stored in `TIKLOCAL_INSTANCE/media_sources.json` so it is still there
+after a restart. The folder TikLocal started with stays as `@default` and cannot
+be removed, so an existing single-folder setup keeps working, and a folder that is
+unplugged or offline is reported in Settings instead of being dropped from the
+library.
+
+### Interface language
+
+Settings → Language (语言) is a compact two-option pill — 中文 / English — that
+switches the interface on the next page load and remembers the choice.
+
 ### HTTPS
 
-TikLocal serves plain HTTP. For HTTPS, put it behind a reverse proxy that keeps
-the original Host header and media Range requests, and mark the session cookie
-secure:
+TikLocal can serve HTTPS itself, without a reverse proxy — useful for phones and
+tablets, where some browser features only work on a secure address:
+
+```bash
+tiklocal ~/Videos --tls          # https://<machine>:8443, certificate created on first start
+tiklocal tls status              # certificate path, the names it covers, and its expiry
+```
+
+The first `--tls` start writes a self-signed certificate for this instance to
+`TIKLOCAL_INSTANCE/tls/server.crt` (`~/.tiklocal/tls` unless you set
+`TIKLOCAL_INSTANCE`). It covers `localhost`, this machine's name, its `.local`
+name and the LAN addresses it currently has, and is reused on later starts until
+it is close to expiring — then it is regenerated. Because it is self-signed, the
+first visit shows a browser warning: accept it once, or install `server.crt` on
+the device to stop the warning. Never copy `server.key` anywhere.
+
+HTTPS defaults to port 8443, so it can run next to a plain-HTTP instance on 8000.
+`--tls-hosts media.lan,studio` adds names or IPs before the certificate is
+created, `--tls-days 365` shortens its lifetime, and `tiklocal tls generate
+--force` replaces it. A real certificate pair works too:
+
+```bash
+tiklocal ~/Videos --tls --tls-cert /etc/ssl/tiklocal.crt --tls-key /etc/ssl/tiklocal.key
+```
+
+HTTPS is served by Werkzeug's threaded server because Waitress cannot terminate
+TLS; plain `tiklocal` keeps using Waitress. Behind a reverse proxy, keep serving
+plain HTTP on localhost and mark the session cookie secure instead:
 
 ```bash
 FLASK_AUTH_COOKIE_SECURE=true tiklocal ~/Videos --host 127.0.0.1 --port 8000
 ```
+
+Over `--tls` the session cookie is always `Secure`, and the banner and startup log
+say which server is running. If certificate generation fails, TikLocal exits with
+one line: install OpenSSL, or pass `--tls-cert`/`--tls-key`.
 
 ### URL downloads
 
@@ -195,6 +242,14 @@ tiklocal dedupe /path --keep newest --execute
 Options: `--type video|image|all`, `--algorithm sha256|md5`,
 `--keep oldest|newest|shortest_path`, `--dry-run` (default), `--execute`,
 `--auto-confirm`.
+
+**TLS certificate**
+
+```bash
+tiklocal tls status                          # path, covered names, expiry
+tiklocal tls generate --hosts media.lan,studio
+tiklocal tls generate --days 365 --force     # replace an existing certificate
+```
 
 </details>
 
@@ -258,13 +313,15 @@ The CLI owns the download manager. When hosting `create_app()` yourself, call
 <details>
 <summary><strong>Upgrading from versions with built-in HTTPS or PWA</strong></summary>
 
-Built-in HTTPS, certificate management, PWA installation and offline caching were
-removed. Remove `https`, `tls_cert`, `tls_key` and `hostnames` from the YAML
-configuration; active old TLS settings stop startup rather than silently switching
-to HTTP. The `--https`, `--tls-cert`, `--tls-key`, `--hostname` options, `tls`
-commands and the `[https]` extra are gone. Files under `~/.tiklocal/tls/` are left
-untouched. Revisit the same address once to retire the old service worker; old
-home-screen shortcuts can be removed by hand.
+PWA installation and offline caching are gone. Revisit the same address once to
+retire the old service worker; old home-screen shortcuts can be removed by hand.
+
+Built-in HTTPS is back, rebuilt on the system OpenSSL instead of the removed local
+CA and the `[https]` extra. `tiklocal --tls` is the new switch; a configuration
+with `https: true` or a `tls_cert`/`tls_key` pair starts HTTPS again, and
+`hostnames` now adds names to the generated certificate. Certificates left by the
+old local-CA setup are not reused: delete the old files or run
+`tiklocal tls generate --force`.
 
 </details>
 

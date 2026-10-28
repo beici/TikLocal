@@ -1,6 +1,6 @@
 # Web 代码收敛执行方案
 
-- 状态：P1–P6 已完成（2026-09-30），未执行项见第十一批记录；P0 的入口/契约汇总未单独成文，由本文与各模块文档承担。PWA 和内置 HTTPS 已移除，仅保留外部反向代理 HTTPS；默认只做受影响功能的关键验证，不逐批跑全量测试。P3 详情页覆盖确认后的浏览器验收受工具弹窗限制，已用前端行为验证覆盖相应状态逻辑。
+- 状态：P1–P6 已完成（2026-09-30），未执行项见第十一批记录；P0 的入口/契约汇总未单独成文，由本文与各模块文档承担。PWA 已移除；内置 HTTPS 曾于第九批下线，2026-10-28 以 `tiklocal --tls` 重新加回（见 [`docs/https.md`](https.md)）。默认只做受影响功能的关键验证，不逐批跑全量测试。P3 详情页覆盖确认后的浏览器验收受工具弹窗限制，已用前端行为验证覆盖相应状态逻辑。
 - 制定日期：2026-09-19。
 - 范围：Flask Web、相关 CLI、模板和静态资源、共享媒体服务、Python 测试。
 - 不涉及：`apps/radio/` 的 React Native 实现、原生产品改版、发布和部署。
@@ -20,8 +20,8 @@
 | AI 标题和标签 | 稳定、常用的正式能力 | 独立业务模块，移出媒体切换必经路径 |
 | Flow 主题卡片 | 正式内容发现能力 | 保留并修复分页，第一轮维持初级规则 |
 | 向量构建、视觉相似搜索和相似分组 | 实验能力 | 集中隔离，可整体关闭，保留实现与数据 |
-| 认证、HTTP、媒体传输与反向代理 HTTPS | 核心运行基础 | 保留认证、私有缓存、Range 和安全 Cookie 配置 |
-| PWA、本地证书管理与内置 HTTPS | 已决定下线 | 删除安装入口、证书命令、专属依赖和测试；已有证书及业务数据不删除 |
+| 认证、HTTP、媒体传输与 HTTPS | 核心运行基础 | 保留认证、私有缓存、Range 和安全 Cookie 配置；内置 HTTPS 已恢复（`tiklocal --tls`），反向代理 HTTPS 仍然支持 |
+| PWA、本地证书管理与内置 HTTPS | 已决定下线（HTTPS 部分已修订） | 删除 PWA 安装入口和专属依赖；内置 HTTPS 于 2026-10-28 以系统 OpenSSL 重新加回，不恢复 cheroot/cryptography |
 
 Gallery 是产品层面的网格浏览方式，当前主要由 `/library` 承载；本次不恢复已删除的 `/gallery` 路由。
 
@@ -382,7 +382,7 @@ TIKLOCAL_INSTANCE=/tmp/tiklocal-review-data poetry run tiklocal /tmp/tiklocal-re
 
 ### 第九批：Flow 收拢与可安装 Web / 本地 HTTPS 下线
 
-- 用户明确选择删除 PWA 和内置本地 HTTPS，仅保留外部反向代理 HTTPS；这取代原方案中将 HTTPS/PWA 作为核心能力保留的决定。
+- 用户明确选择删除 PWA 和内置本地 HTTPS，仅保留外部反向代理 HTTPS；这取代原方案中将 HTTPS/PWA 作为核心能力保留的决定。**后续修订（2026-10-28）：内置 HTTPS 已以 `tiklocal --tls` 重新加回，改用系统 OpenSSL + Werkzeug 线程服务器，不再引入 cheroot/cryptography；PWA 仍保持下线。详见 [`docs/https.md`](https.md)。**
 - Flow 页面、混合流和反馈 API 集中到 `web/flow.py`，删除四组可替换回调及 app.py 内的薄包装。主题与图集由本模块直接组装，共用条目输出逻辑；推荐权重、4:1 目标比例、连续段限制、seed、分页、首屏主题和来源图集规则保持。公共 URL/字段归入 `web/media_payloads.py`，删除 `view_builders.py`，实际使用方全部更新。
 - 删除 manifest、安装图标生成、设置页安装卡片、安装向导、证书下载和 PWA 注册脚本；删除内置 HTTPS 服务、TLS CLI、证书生成/信任实现、TLS 路径函数和专属测试。移除 cheroot、cryptography 以及四个间接依赖，更新锁文件与 CI 安装方式。
 - HTTP 启动保留 `FLASK_AUTH_COOKIE_SECURE`，不再被启动入口覆盖；旧 YAML 的 https/tls_cert/tls_key/hostnames 有效值直接报错，避免升级时暗中以 HTTP 接管原 HTTPS 地址。README 中提供反向代理运行方法；未自动删除本地证书、系统信任记录或 React Native 代码。

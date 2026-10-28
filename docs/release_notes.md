@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Brought back built-in HTTPS without new dependencies: `tiklocal --tls` generates a self-signed certificate on the first start (into `~/.tiklocal/tls/`, covering `localhost`, the machine name, its `.local` name and the current LAN addresses), reuses it afterwards, and renews it when it nears expiry or the machine gains an address. `--tls-cert`/`--tls-key` take a real certificate pair, `--tls-hosts`/`--tls-days` shape the generated one, and `tiklocal tls status|generate` manage it without starting a server. HTTPS runs on Werkzeug's threaded server (Waitress cannot terminate TLS) on port 8443 by default, marks the session cookie `Secure`, and names the running server in the banner; plain `tiklocal` still runs Waitress on 8000. Failures (no OpenSSL, unreadable or mismatched pair, port in use) exit with one actionable line instead of a traceback.
+
 ## v0.8.45 (2026-10-01)
 
 - Flow now and then shows a memory: photos from one week at least a year ago that you have not seen in a while, swiped through sideways and labelled only with their month, or "This week in 2023" when the week lines up. It replaces the Recently Added and Favorite Picks grid, which led out of Flow.

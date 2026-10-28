@@ -7,6 +7,7 @@ This directory records TikLocal's key design decisions, release changes, and imp
 ## Documents
 
 - [Web convergence plan](web-convergence-plan.md): implementation plan and delivery record for consolidating backend routes, shared resources, title handling, and experimental features.
+- [Built-in HTTPS](https.md): the `--tls` / `tiklocal tls` surface, where the generated certificate lives, which names it covers, when it is reused or regenerated, why HTTPS uses Werkzeug instead of Waitress, and the expected failure messages.
 - `docs/mixed-feed-design.md`: design and implementation notes for the mixed video and image Flow feed.
 - `docs/flow-interaction-unification.md`: the shared interaction model for Flow, Library, and Favorites, including title entry points and asynchronous state rules.
 - `docs/media-index-and-recommendation.md`: data flow and implementation boundaries for media indexing, safe synchronization, thumbnails, and local recommendations.
