@@ -152,6 +152,28 @@ def test_page_renders_folder_identity_and_works_grid(tmp_path):
     assert 'data-author-picker' not in html
 
 
+def test_works_grid_lists_the_newest_post_first(tmp_path):
+    """A whole download batch shares one mtime, so the grid must sort by publish time.
+
+    The fixture stamps every file with the same modification time; without the
+    publish-time sort the grid would fall back to file-name order.
+    """
+    _, client = _blogger_app(tmp_path, [
+        '2024-03-01 10.00.00-视频-示例博主-早.mp4',
+        '2024-05-09 10.00.00-视频-示例博主-晚.mp4',
+        '2024-04-02 10.00.00-图集-示例博主-中_1.jpeg',
+    ])
+
+    html = _html(client)
+
+    tiles = [part.split('"')[0] for part in html.split('data-tile-uri="')[1:]]
+    assert [tile.split('/')[-1] for tile in tiles] == [
+        '2024-05-09 10.00.00-视频-示例博主-晚.mp4',
+        '2024-04-02 10.00.00-图集-示例博主-中_1.jpeg',
+        '2024-03-01 10.00.00-视频-示例博主-早.mp4',
+    ]
+
+
 def test_page_404s_for_unknown_sources(tmp_path):
     _, client = _blogger_app(tmp_path, ['2024-05-01 10.00.00-视频-示例博主-一.mp4'])
 

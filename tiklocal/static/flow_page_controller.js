@@ -590,10 +590,17 @@
       return `/media/${encodeURI(String(name || '').replace(/^@/, '@')).replace(/#/g, '%23')}?download=1`;
     }
 
-    function bundleHref(names) {
-      const query = new URLSearchParams();
-      names.forEach((name) => query.append('name', name));
-      return `/download/bundle?${query.toString()}`;
+    // "Download all" saves every file of the work on its own instead of packing a
+    // zip the reader then has to unpack. The saves are spaced out because a burst
+    // of clicks inside one task makes the browser drop everything after the first.
+    const DOWNLOAD_GAP_MS = 250;
+
+    function downloadAll(names) {
+      const queue = (names || []).filter((name) => name);
+      queue.forEach((name, index) => {
+        window.setTimeout(() => triggerDownload(downloadHref(name)), index * DOWNLOAD_GAP_MS);
+      });
+      return queue.length;
     }
 
     function sheetGroupMembers(item) {
@@ -687,8 +694,8 @@
             }, { primary: true }),
             sheetButton(T('flow.download.all'), T('flow.download.all_hint', { total: members.length }), () => {
               closeMediaSheet();
-              triggerDownload(bundleHref(members.map((child) => child.name)));
-              TikLocalUI.toast(T('flow.download.started'));
+              const count = downloadAll(members.map((child) => child.name));
+              TikLocalUI.toast(T('flow.download.all_started', { total: count }));
             }),
           ],
         });

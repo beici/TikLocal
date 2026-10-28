@@ -115,10 +115,26 @@ def local_work_names(media_index, source_id: str) -> list[str]:
     return [str(record.get('name') or '') for record in records or () if record.get('name')]
 
 
+def _publish_order(record) -> tuple:
+    """Sort key for the author grid: publishing time first, file name as tie-break.
+
+    The index hands records back in filesystem-mtime order, which groups a whole
+    download batch onto the same timestamp and scrambles the timeline. The capture
+    time comes from the post's own name (2026-09-22 23.34.19-图集-...), so sorting
+    on it puts the author page back in publishing order.
+    """
+    captured = record.get('captured_at') or record.get('mtime_ts') or 0
+    try:
+        captured = float(captured)
+    except (TypeError, ValueError):
+        captured = 0.0
+    return (captured, str(record.get('name') or ''))
+
+
 def build_tiles(records) -> list[dict]:
-    """Grid tiles: one square cover per work, newest first, album covers only."""
+    """Grid tiles: one square cover per work, newest published first, album covers only."""
     tiles = []
-    for record in records or ():
+    for record in sorted(records or (), key=_publish_order, reverse=True):
         uri = str(record.get('name') or '')
         if not uri:
             continue

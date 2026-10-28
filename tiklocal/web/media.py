@@ -5,9 +5,7 @@ import errno
 import io
 import math
 import mimetypes
-import re
 import time
-import zipfile
 import zlib
 from email.utils import formatdate
 from pathlib import Path
@@ -21,12 +19,6 @@ from tiklocal.services.library import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_
 from tiklocal.services.media_info import probe_media_duration
 from tiklocal.web import json_body
 from tiklocal.web.media_payloads import media_urls
-
-# Downloading a whole album is one request: the archive is built in memory, so the
-# number of members and their combined size are capped to keep a stray tap cheap.
-BUNDLE_MAX_FILES = 60
-BUNDLE_MAX_BYTES = 3 * 1024 * 1024 * 1024
-_ALBUM_FILE_SUFFIX = re.compile(r'_\d+$')
 
 # Inline delivery is limited to formats the app itself renders; anything else in
 # the media library (svg, html, js) is downloaded as an opaque attachment.
@@ -504,53 +496,6 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
                 'media_url': media_urls(canonical)['media_url'],
             },
         }
-
-    @app.route('/download/bundle')
-    def download_bundle():
-        """Zip the requested works so "download all" is one file, not N prompts."""
-        names = [str(name).strip() for name in request.args.getlist('name') if str(name).strip()]
-        unique: list[str] = []
-        for name in names:
-            if name not in unique:
-                unique.append(name)
-        if not unique:
-            return t('image.error.missing_uri'), 400
-        if len(unique) > BUNDLE_MAX_FILES:
-            unique = unique[:BUNDLE_MAX_FILES]
-        files: list[Path] = []
-        total = 0
-        for name in unique:
-            target = library_service.resolve_path(library_service.find_existing_uri(name))
-            if not target or not target.exists() or not target.is_file():
-                continue
-            try:
-                total += target.stat().st_size
-            except OSError:
-                continue
-            if total > BUNDLE_MAX_BYTES:
-                break
-            files.append(target)
-        if not files:
-            return t('image.error.file_not_found'), 404
-        buffer = io.BytesIO()
-        used: set[str] = set()
-        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_STORED) as archive:
-            for target in files:
-                archive_name = target.name
-                if archive_name in used:
-                    stem = _ALBUM_FILE_SUFFIX.sub('', target.stem)
-                    counter = 2
-                    suffix = target.suffix
-                    while f'{stem} ({counter}){suffix}' in used:
-                        counter += 1
-                    archive_name = f'{stem} ({counter}){suffix}'
-                used.add(archive_name)
-                archive.write(target, arcname=archive_name)
-        payload = buffer.getvalue()
-        return send_file(
-            io.BytesIO(payload), mimetype='application/zip', as_attachment=True,
-            download_name=f'{_ALBUM_FILE_SUFFIX.sub("", files[0].stem) or "album"}.zip',
-        )
 
     def _placeholder_response():
         # A failed generation (ffmpeg missing, file being copied, unknown uri) must
