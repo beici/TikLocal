@@ -417,6 +417,106 @@ def test_port_taken_reports_one_actionable_line(tmp_path, monkeypatch, capsys, f
         occupant.close()
 
 
+def test_listener_present_sees_a_wildcard_listener():
+    from tiklocal.run import listener_present
+
+    occupant = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    occupant.bind(('0.0.0.0', 0))
+    occupant.listen(1)
+    port = occupant.getsockname()[1]
+    try:
+        # 0.0.0.0 itself is not connectable everywhere; the loopback address is.
+        assert listener_present(socket.AF_INET, ('0.0.0.0', port)) is True
+    finally:
+        occupant.close()
+    assert listener_present(socket.AF_INET, ('0.0.0.0', port)) is False
+
+
+def test_probe_listen_is_never_stricter_than_the_real_server():
+    """Werkzeug sets ``allow_reuse_address``; the probe must not refuse what it can bind.
+
+    A port parked in TIME_WAIT by the previous run is the everyday case: the
+    server takes it, so the probe has to as well instead of sending the user off
+    to find a "free" port.
+    """
+    from tiklocal.run import probe_listen
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(('127.0.0.1', 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client.connect(('127.0.0.1', port))
+    accepted, _ = server.accept()
+    accepted.close()  # closing first is what parks the port in TIME_WAIT
+    client.close()
+    server.close()
+
+    # Exactly what Werkzeug's own server does before binding.
+    real = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        real.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        real.bind(('127.0.0.1', port))
+    except OSError:
+        pytest.skip('this platform refuses the reuse-address bind the probe mirrors')
+    finally:
+        real.close()
+
+    probe_listen('127.0.0.1', port, '127.0.0.1')  # must not exit 1
+
+
+def test_dev_reloader_child_does_not_take_the_instance_lock(tmp_path, monkeypatch):
+    """--dev re-runs main() in a child while the parent holds the lock."""
+    from tiklocal.services.instance_lock import acquire_instance_lock
+
+    instance = tmp_path / 'instance'
+    monkeypatch.setenv('TIKLOCAL_INSTANCE', str(instance))
+    monkeypatch.setenv('WERKZEUG_RUN_MAIN', 'true')
+    served = []
+    monkeypatch.setattr('flask.Flask.run', lambda self, **kwargs: served.append(kwargs))
+    main = _run_cli(
+        monkeypatch,
+        [str(tmp_path), '--host', '127.0.0.1', '--port', '8831', '--dev'],
+    )
+    holder = acquire_instance_lock(instance)  # what the parent already owns
+    try:
+        main()
+    finally:
+        holder.close()
+    assert served and served[0]['debug'] is True
+
+
+def test_a_second_serve_on_the_same_instance_is_refused(tmp_path, monkeypatch, capsys):
+    """The --dev child may skip the lock; a genuinely second server may not."""
+    from tiklocal.services.instance_lock import acquire_instance_lock
+
+    instance = tmp_path / 'instance'
+    monkeypatch.setenv('TIKLOCAL_INSTANCE', str(instance))
+    main = _run_cli(monkeypatch, [str(tmp_path), '--host', '127.0.0.1', '--port', '8832'])
+
+    holder = acquire_instance_lock(instance)  # a server that is already running
+    try:
+        with pytest.raises(SystemExit) as stopped:
+            main()
+    finally:
+        holder.close()
+
+    assert stopped.value.code == 1
+    assert 'already in use' in capsys.readouterr().err
+
+
+def test_an_explicit_zero_lifetime_is_an_error_not_the_default(tmp_path, monkeypatch, capsys):
+    """``--days 0`` must reach the range check instead of meaning "unset"."""
+    monkeypatch.setenv('TIKLOCAL_INSTANCE', str(tmp_path / 'instance'))
+    main = _run_cli(monkeypatch, ['tls', 'generate', '--days', '0'])
+
+    with pytest.raises(SystemExit) as stopped:
+        main()
+
+    assert stopped.value.code == 1
+    assert 'between 1 and 3650 days' in capsys.readouterr().err
+
+
 def test_tls_status_without_material_explains_the_next_step(tmp_path, monkeypatch, capsys):
     from tiklocal.run import main
 

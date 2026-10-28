@@ -8,6 +8,7 @@ from tiklocal.auth import LoginAttemptLimiter
 from tiklocal.i18n import t
 from tiklocal.services.library import AUDIO_EXTENSIONS
 from tiklocal.services.radio import RadioCandidate
+from tiklocal.web import json_body
 
 
 def register_radio_client_routes(
@@ -93,7 +94,7 @@ def register_radio_client_routes(
                 429,
             )
             return response, status, {"Retry-After": str(retry_after)}
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         if not auth_store.verify(str(payload.get("password") or "")):
             pair_limiter.record_failure(client_key)
             return error("invalid_password", t('radio.error.invalid_password'), 401)
@@ -113,7 +114,7 @@ def register_radio_client_routes(
                 t('radio.pairing.not_required'),
                 409,
             )
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         server_url = _pairing_server_url(
             payload.get("server_url") or request.host_url
         )
@@ -162,7 +163,7 @@ def register_radio_client_routes(
                 429,
             )
             return response, status, {"Retry-After": str(retry_after)}
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         if not pairing_grant_store.consume(
             str(payload.get("grant") or ""),
             auth_revision=auth_store.revision,
@@ -269,7 +270,7 @@ def register_radio_client_routes(
 
     @app.put("/api/v1/radio/favorite")
     def api_v1_radio_favorite():
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         uri = existing_audio_uri(payload.get("uri") or "")
         if not uri:
             return error("audio_not_found", t('radio.audio_not_found'), 404)
@@ -283,7 +284,7 @@ def register_radio_client_routes(
 
     @app.post("/api/v1/radio/feedback")
     def api_v1_radio_feedback():
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         uri = existing_audio_uri(payload.get("uri") or "")
         event = str(payload.get("event") or "").strip()
         if not uri:

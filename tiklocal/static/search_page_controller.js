@@ -39,6 +39,12 @@
   let currentGrid = null;
   const renderedKeys = new Set();
 
+  // The term and tab the grid on screen was built for. Typing a new term does not
+  // replace the results until the form is submitted, so paging must follow the
+  // grid the user is looking at instead of whatever the input holds by then.
+  let resultsQuery = '';
+  let resultsTab = 'general';
+
   const reduceMotion = Boolean(
     window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
   );
@@ -219,7 +225,9 @@
   }
 
   function renderResults(payload) {
-    const query = readQuery();
+    // The server echoes the cleaned term it answered for; the input may already
+    // hold the next thing the user is typing.
+    const query = textValue(payload.query) || readQuery();
     const users = Array.isArray(payload.users) ? payload.users.filter(Boolean) : [];
     const videos = Array.isArray(payload.videos) ? payload.videos.filter(Boolean) : [];
     const tab = TABS.includes(payload.tab) ? payload.tab : activeTab;
@@ -228,6 +236,8 @@
       renderEmpty(query);
       return;
     }
+    resultsQuery = query;
+    resultsTab = tab;
 
     renderedKeys.clear();
     videos.forEach((video) => {
@@ -318,6 +328,7 @@
     hasMore = false;
     loadingMore = false;
     currentGrid = null;
+    resultsQuery = '';
     renderedKeys.clear();
     removeSentinel();
   }
@@ -330,8 +341,8 @@
 
   function canLoadMore() {
     return Boolean(
-      hasMore && !loadingMore && currentGrid && readQuery() &&
-      TABS.includes(activeTab) && activeTab !== 'user'
+      hasMore && !loadingMore && currentGrid && resultsQuery &&
+      TABS.includes(resultsTab) && resultsTab !== 'user'
     );
   }
 
@@ -371,8 +382,8 @@
     loadingMore = true;
     setMoreStatus('loading');
     const params = new URLSearchParams({
-      q: readQuery(),
-      tab: activeTab,
+      q: resultsQuery,
+      tab: resultsTab,
       limit: String(PAGE_SIZE),
       offset: String(offset),
     });

@@ -36,6 +36,7 @@
 | 18 | 2026-10-27 | 469P/6S/0F | 1/6/5（确认 12，修复 12） | `fix: compress pages, validate ranges and normalise search`，10 文件 `+209/-28` | [round-18](round-18.md) |
 | 19 | 2026-10-27 | 477P/6S/0F | 1/6/8（确认 15，修复 12，转 backlog 3） | `fix: surface unavailable sources and bound media decoding`，20 文件 `+384/-25` | [round-19](round-19.md) |
 | 20 | 2026-10-27 | 484P/6S/0F | 0/0/7/3（确认 10，全部修复；data-layer 域未交付） | `fix: own legacy thumbnails, expire device tokens and keep ranged media off-thread` | [round-20](round-20.md) |
+| 21 | 2026-10-29 | 579P/7S/0F | 0/0/12/24（五域 35 + 独立复审 1 = 36，驳回 1，成立 35，修复 9，转 backlog 26） | `fix: align the port probe, unlock --dev and bound bad request bodies`，14 文件 `+331/-44` | [round-21](round-21.md) |
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
 
@@ -74,6 +75,8 @@
 第 19 轮结束后：`pytest -q` = **484 passed / 6 skipped / 0 failed**（153.47s，新增 7 个用例：`tests/test_round19_regressions.py` 5 条 + `test_thumbnails.py` 2 条）。
 
 第 20 轮结束后：`pytest -q` = **494 passed / 6 skipped / 0 failed**（234.08s，新增 10 个用例：`tests/test_round20_regressions.py` 7 条 + `test_thumbnails.py` 2 条 + `test_downloader_lifecycle.py` 1 条）。
+
+第 21 轮结束后：`pytest -q` = **591 passed / 7 skipped / 0 failed**（307.71s，新增 12 个用例，全部并入既有测试文件：`test_tls.py` 5 条 + `test_search.py` 3 条 + `test_auth.py` 2 条 + `test_radio_client.py` 2 条）。第 20 轮之后新增 HTTPS/媒体来源/统一搜索三块功能，套件规模从 494 涨到 579，本轮再 +12。
 
 ## 目录
 

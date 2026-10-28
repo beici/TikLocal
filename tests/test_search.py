@@ -6,6 +6,7 @@ exports. Douyin export names encode type and author, so the fixtures also prove
 the search results are built from the same naming rules as the feed.
 """
 
+import os
 import time
 
 from PIL import Image
@@ -21,7 +22,6 @@ def _touch(path, size=1024):
     else:
         path.write_bytes(b'0' * size)
     stamp = time.time() - 100
-    import os
     os.utime(path, (stamp, stamp))
 
 
@@ -176,8 +176,47 @@ def test_unknown_tab_and_overlong_query_are_bounded(tmp_path):
     long_query = '海' * 400
     payload = _search(client, long_query)
     assert payload['query'] == '海' * 200
-    # No LIKE metacharacter reached the index as a wildcard.
     assert payload['videos'] == []
+
+
+def test_a_card_carries_the_capture_day(tmp_path):
+    """The date under the caption is the post day, shared with the feed's payload."""
+    app, client = _client(tmp_path, ['2024-05-04 12.00.00-视频-示例博主-海边晚风.mp4'])
+
+    payload = _search(client, '海边', tab='video')
+
+    assert payload['videos'][0]['date_label'] == '2024-05-04'
+
+
+def test_a_card_without_a_usable_date_shows_no_date(tmp_path):
+    """A zero mtime used to print 1970-01-01 under the caption."""
+    media = tmp_path / 'media'
+    media.mkdir()
+    path = media / '海边晚风.mp4'
+    path.write_bytes(b'0' * 1024)
+    os.utime(path, (0, 0))
+    app = create_app({'TESTING': True, 'MEDIA_ROOT': media})
+    client = app.test_client()
+
+    payload = _search(client, '海边', tab='video')
+
+    assert payload['videos'][0]['date_label'] == ''
+
+
+def test_like_metacharacters_are_text_not_wildcards(tmp_path):
+    """A '%' in the box must not match every name in the index.
+
+    The escape table in ``_like_term`` is only exercised by a query that really
+    contains a metacharacter; without this the search would still look right
+    while ``q=%`` returned the whole library.
+    """
+    app, client = _client(tmp_path, ['2024-05-04 12.00.00-视频-示例博主-海边晚风.mp4'])
+
+    for query in ('%', '_', '\\', '％'):
+        payload = _search(client, query)
+        assert payload['query'] == query
+        assert payload['videos'] == [], query
+        assert payload['counts']['videos'] == 0, query
 
 
 def test_offset_walks_the_work_results(tmp_path):

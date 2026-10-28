@@ -16,18 +16,22 @@ def post_date_of(record: dict | None) -> str:
 
     The export's own timestamp wins; a media library synced from a phone or an
     unzipped archive only carries a file mtime, and showing that beats showing
-    nothing at all on the author line.
+    nothing at all on the author line. Epoch zero is the exception: the index
+    clamps an unrepresentable mtime there, and a caption dated 1970 is noise.
     """
     if not record:
         return ''
     captured = str(record.get('captured_local_date') or '').strip()[:10]
-    if len(captured) == 10 and captured[4] == '-' and captured[7] == '-':
+    if len(captured) == 10 and captured[4] == '-' and captured[7] == '-' and captured != '1970-01-01':
         return captured
     try:
-        moment = datetime.datetime.fromtimestamp(float(record.get('mtime_ts') or 0))
+        stamp = float(record.get('mtime_ts') or 0)
+        moment = datetime.datetime.fromtimestamp(stamp)
     except (TypeError, ValueError, OSError, OverflowError):
         return ''
-    return moment.strftime('%Y-%m-%d') if moment.year >= 1970 else ''
+    if stamp <= 0 or moment.year <= 1970:
+        return ''
+    return moment.strftime('%Y-%m-%d')
 
 
 def build_feed_media_item(name: str, media_type: str, *, live_video_uri: str = '') -> dict[str, str]:

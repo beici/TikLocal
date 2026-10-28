@@ -20,7 +20,6 @@ never repeated mid-scroll).
 
 from __future__ import annotations
 
-import datetime
 import re
 from urllib.parse import quote
 
@@ -32,7 +31,7 @@ from tiklocal.services.author_profiles import resolve_profile
 from tiklocal.services.search_text import normalize as normalize_search_text
 from tiklocal.web import read_int_arg
 from tiklocal.web.author import display_name, folder_name_for, format_count
-from tiklocal.web.media_payloads import media_urls
+from tiklocal.web.media_payloads import media_urls, post_date_of
 
 SEARCH_TABS = ('general', 'video', 'user')
 DEFAULT_TAB = 'general'
@@ -191,18 +190,6 @@ def _kind_label(record: dict) -> str:
     return ''
 
 
-def _date_label(record: dict) -> str:
-    """The capture day, falling back to the file's mtime when the export had none."""
-    captured = str(record.get('captured_local_date') or '').strip()[:10]
-    if captured:
-        return captured
-    try:
-        moment = datetime.datetime.fromtimestamp(float(record.get('mtime_ts') or 0))
-    except (TypeError, ValueError, OSError, OverflowError):
-        return ''
-    return moment.strftime('%Y-%m-%d')
-
-
 def _video_items(records, sources_by_id: dict, profiles: dict, caption: str = '') -> list[dict]:
     """One card per work, matching the feed's media links so taps land on /flow.
 
@@ -238,7 +225,7 @@ def _video_items(records, sources_by_id: dict, profiles: dict, caption: str = ''
             'media_url': urls['media_url'],
             'kind_label': _kind_label(record),
             **_work_author_fields(uri, source_id, sources_by_id, profiles),
-            'date_label': _date_label(record),
+            'date_label': post_date_of(record),
             'open_url': open_url,
         })
     return items

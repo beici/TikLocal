@@ -61,7 +61,7 @@ def register_settings_routes(
         auth_store = app.extensions.get('auth_store')
         if not app.extensions.get('auth_enabled') or auth_store is None:
             return {'success': False, 'error': t('settings.password.disabled')}, 400
-        payload = request.get_json(silent=True) or {}
+        payload = json_body()
         current_password = str(payload.get('current_password') or '')
         new_password = str(payload.get('new_password') or '')
         if not current_password or not new_password:

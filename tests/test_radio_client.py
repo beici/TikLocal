@@ -165,6 +165,35 @@ def test_pairing_is_rate_limited(radio_client_app):
     assert int(limited.headers["Retry-After"]) > 0
 
 
+def test_pairing_ignores_a_non_object_body_instead_of_crashing(radio_client_app):
+    # request.get_json() or {} leaves a JSON array a list, so payload.get() raised
+    # AttributeError: an unauthenticated POST answered 500 with a full traceback.
+    app, _, _ = radio_client_app
+    client = app.test_client()
+
+    paired = client.post("/api/v1/pair", json=[1])
+    claimed = client.post("/api/v1/pair/claim", json=[1])
+
+    assert paired.status_code == 401
+    assert paired.get_json()["error"]["code"] == "invalid_password"
+    assert claimed.status_code == 401
+    assert claimed.get_json()["error"]["code"] == "invalid_pairing_grant"
+
+
+def test_native_radio_endpoints_ignore_a_non_object_body(radio_client_app):
+    app, _, _ = radio_client_app
+    client = app.test_client()
+    token = _pair(client).get_json()["data"]["device"]["token"]
+
+    favorite = client.put("/api/v1/radio/favorite", json=[1], headers=_bearer(token))
+    feedback = client.post("/api/v1/radio/feedback", json=[1], headers=_bearer(token))
+
+    assert favorite.status_code == 404
+    assert favorite.get_json()["error"]["code"] == "audio_not_found"
+    assert feedback.status_code == 404
+    assert feedback.get_json()["error"]["code"] == "audio_not_found"
+
+
 def test_browser_creates_single_use_pairing_link_and_native_claims_it(
     radio_client_app,
 ):

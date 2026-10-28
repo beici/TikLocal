@@ -98,7 +98,16 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
     def csrf_is_valid() -> bool:
         expected = str(session.get('_csrf_token') or '')
         supplied = csrf_value_from_request()
-        return bool(expected and supplied and secrets.compare_digest(expected, supplied))
+        if not expected or not supplied:
+            return False
+        # A header or form field can carry any character, and compare_digest()
+        # raises TypeError on non-ASCII str: a bogus token would have answered 500
+        # with a full traceback in the log instead of the 403 a bad token deserves.
+        # Comparing bytes keeps the constant-time property; 'replace' only turns an
+        # unencodable lone surrogate into bytes that cannot match the token.
+        return secrets.compare_digest(
+            expected.encode('utf-8'), supplied.encode('utf-8', 'replace'),
+        )
 
     def unauthorized_response():
         if request.path.startswith('/api/'):

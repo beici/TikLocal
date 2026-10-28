@@ -189,6 +189,21 @@ def test_csrf_and_logout_are_enforced(authenticated_app):
     assert client.get('/api/library/stats').status_code == 401
 
 
+def test_a_non_ascii_csrf_token_is_a_rejection_not_a_crash(authenticated_app):
+    # compare_digest() raises TypeError on a non-ASCII str, so a bogus token used
+    # to answer 500 and write a full traceback into the log instead of a 403.
+    app, _ = authenticated_app
+    client = app.test_client()
+    _login(client)
+
+    response = client.post(
+        '/api/activity',
+        json={'events': [], '_csrf_token': '日本語トークン'},
+    )
+
+    assert response.status_code == 403
+
+
 def test_cli_password_change_invalidates_running_sessions(authenticated_app):
     app, auth_path = authenticated_app
     client = app.test_client()
@@ -323,6 +338,23 @@ def test_password_change_rejects_a_short_password(authenticated_app):
 
     assert response.status_code == 400
     assert str(MIN_PASSWORD_LENGTH) in response.get_json()['error']
+    assert AuthStore(auth_path).verify(PASSWORD)
+
+
+def test_password_change_rejects_a_non_object_body(authenticated_app):
+    # A JSON array used to reach payload.get() and answer 500 with a traceback.
+    app, auth_path = authenticated_app
+    client = app.test_client()
+    _login(client)
+
+    response = client.post(
+        '/api/auth/password',
+        json=[NEW_PASSWORD],
+        headers={'X-CSRF-Token': _api_csrf(client)},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()['error'] == t('settings.password.required')
     assert AuthStore(auth_path).verify(PASSWORD)
 
 

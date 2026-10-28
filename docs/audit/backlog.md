@@ -126,4 +126,37 @@
 - 第 19 轮 P1（首次索引 EXIF）已在第 20 轮并行化，条目见上，仍保留结构化修法。
 - `data-layer` 域（跨标签广播、下载 URL 幂等、数据层并发）本轮 subagent 中途失败、未交付报告，该域结论停留在第 16 轮的 backlog 条目，未被本轮重新验证。
 
+## 第 21 轮新增（按严重度）
+
+本轮 34 条成立发现中修 8 条（4×P2 + 4×P3），其余 26 条如下。C 域 #2 经复核实为伪阳性，已驳回（理由见 `round-21.md` §三）。
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| [P2] 媒体来源存储读不出来时被整表覆盖：`StoreUnreadableError` 被吞成 `stored=None` 后照常 `save()`，完好的文件被重写、`removed_ids` 丢失 | `tiklocal/web/settings.py:139-145`、`tiklocal/services/json_storage.py:117-138` | `_apply_change` 已有 `except OSError → 500 source_error_save`，最小修法是删掉这里的 try/except；但要与下一条「运行态回写」同批改，否则会出现「能保存但语义错」的中间状态 |
+| [P2] 启动目录「仅本次」顶替不可达的默认源后，任何一次增删改都把它永久写成用户配置 | `tiklocal/web/settings.py:147-158`、`tiklocal/services/media_sources_store.py:248-286` | 需给回退来源打标记，而 `MediaSource`/`StoredMediaSources` 都是 frozen dataclass，要扩字段 + 存储版本迁移 |
+| [P2] 可把 `<home>`、`<home>/.tiklocal`、盘符根加为来源，`/media/@home/.tiklocal/auth.json` 与 `~/.ssh/id_rsa` 可下载（`validate_folder` 无保留目录判断，`serve_media` 无后缀白名单） | `tiklocal/services/media_sources_store.py:163-181`、`tiklocal/web/media.py:421-441` | 需在来源校验里拒绝等于/包含 `get_data_dir()`、`instance_path` 的路径；同时要决定「用户确实想挂载 home 时怎么放行」，属策略决策 |
+| [P2] 索引损坏时 `/settings/` 直接 500，改目录的唯一入口打不开（`library_stats()` 的 `safe()` 对 `sqlite3.DatabaseError` 显式 re-raise） | `tiklocal/web/settings.py:32-40`、`:235-245` | 与第 18 轮「`safe()` 把统计异常吞成 0、页面上看不出统计不可用」合并处理：需要用户可见提示，前端配合 |
+| [P2] 非抖音模式下从搜索进入 `/flow?start=…&caption=…`：服务端已窄化，但 chip/清除/返回全在默认 `display:none` 的 `.douyin-topbar` 内 → 时间线无声变少或空，无提示无出口，空态还复用「添加媒体并刷新索引」文案 | `tiklocal/static/flow_page_controller.js:719-728`、`tiklocal/static/flow.css:992`、`:1003-1004`、`tiklocal/web/flow.py:405-412` | 需新增 `caption-feed` body class + CSS 分列 + 专用空态文案，属 UI 改版 |
+| [P2] 弹层打开时 ArrowDown/Up/Space 仍作用于底层 feed；作品 A 的 `/api/media/info` 响应把 A 的 path/尺寸/日期写进正在展示 B 的弹层 | `tiklocal/static/flow_page_controller.js:2302`、`:635`、`:658`、`:661-668` | 键盘守卫补 `mediaSheetIsOpen()` 是一行，但 `showInfoSheet` 的请求序号/AbortController 改造要连带作者页的同类调用一起做 |
+| [P3] TLS 续期阈值固定 30 天而 `--tls-days` 允许 1..3650 → ≤30 天时每次启动都重生成、指纹每次都变 | `tiklocal/services/tls.py:424` | 阈值应随 `days` 缩放（如 `min(RENEW_BEFORE_DAYS, days // 3)`），但 `_reusable_material` 拿不到 `days`，需扩签名 |
+| [P3] 证书与私钥两次 `os.replace` 非成对原子；`docs/https.md:47-48`「cannot leave a half-written pair」措辞强于实际保证 | `tiklocal/services/tls.py:494-495`、`docs/https.md:47-48` | 成对原子需「写临时目录 + 一次替换目录」，Windows 不支持目录原子替换，实际只能收窄文档措辞 |
+| [P3] `tls generate` 不读 `config.yaml` 的 `hostnames`（只有 serve 路径读）→ 预生成证书下次 serve 被 `_metadata_covers` 判为不覆盖而重生成 | `tiklocal/run.py:432-439` | 需把 `config_tls_hosts` 的读取提前到 generate 分支，且要先定 CLI 与 config 的合并语义 |
+| [P3] 出网探测拿到的源地址未经 `_is_lan_ipv4` 过滤就进 SAN → 公网 IP 进证书，与 `tls.py:195-197` docstring 承诺相反 | `tiklocal/services/tls.py:247-248` | 加一行过滤即可，但会改变「多网卡机器自动 SAN」的覆盖面，需实测各平台 UDP 探测返回值 |
+| [P3] 文档教 Android「Install a certificate → CA certificate」，但自签 leaf 是 `CA:FALSE`，该入口会被系统拒绝 | `tiklocal/services/tls.py:543`、`docs/https.md:104-108` | 要么把证书改成 `CA:TRUE` + 正确 keyUsage，要么改文档引导走「VPN 和应用 → 安装证书」；需真机验证 |
+| [P3] `validate_certificate_pair` 只验可读与配对，不查 notAfter/SAN → 过期自定义证书照常启动、握手才失败、启动零提示 | `tiklocal/services/tls.py:305-307`（经 `run.py:614`） | 需先定「过期就拒绝启动 vs 只警告」，后者要一条启动横幅提示通道 |
+| [P3] 容器内 `--tls`（默认 8443）时健康检查仍打 `http:8000` → 恒 unhealthy；`EXPOSE 8000`、compose 只发布 8000 | `Dockerfile:38-39`、`:35`、`compose.yaml` | 需按 `TIKLOCAL_TLS` 分支健康检查与端口发布，属部署配置改版 |
+| [P3] 两已登录会话同时改密码：都过 verify、都读 revision=N、各写 N+1，后写覆盖且都 200；`_save` 临时名固定，并发 `os.replace` 在 Windows 可能 PermissionError | `tiklocal/services/auth.py:90-101`、`tiklocal/web/settings.py:85-99` | 需 `AuthStore` 加 `threading.RLock` + `tempfile.mkstemp`（照 `DeviceAuthStore` 的模式），与来源存储的并发条目一起做 |
+| [P3] 登录限流的 `defaultdict` 为每个失败过的源 IP 建键且永不回收（`retry_after()` 每个请求都调 `_active()`，只有成功才 pop） | `tiklocal/auth.py:20`、`:38-43` | 改 `self._attempts.get(key)` 一行即可，但**不能**在 `_active` 里 pop：`record_failure` 会追加到已脱离 dict 的 deque，计数清零、限流可绕过。需连带确认 `record_failure`/`clear` 语义 |
+| [P3] 搜索结果每个 general/user 请求都跑 `blog_rows()`（1 条 GROUP BY + 每源 1 条 `LIMIT 1`）+ 每源 `resolve_profile()`，而 general 第 2 页起客户端已丢弃 users | `tiklocal/web/search.py:338-345`、`tiklocal/services/library_index.py:552-584` | 加「offset>0 且 tab=general 跳过作者块」会改变 `counts['users']` 语义，需先定「后续页是否仍显示作者总数」 |
+| [P3] 命中来自文件名/目录名时仍挂 `&caption=`，而 `flow.py` 的 caption 收窄序列为空时会回落到推荐流 | `tiklocal/web/search.py:226`、`tiklocal/web/flow.py:208-213`、`:405-412` | 改用 `media_naming.post_title(uri)` 判定即可，但要连带确认「目录名命中」是否也该带 caption |
+| [P3] OFFSET 分页在索引刷新期间会漏条（`ORDER BY mtime DESC, uri` + `LIMIT/OFFSET`） | `tiklocal/services/library_index.py:392`、`:414-417` | 需 keyset 游标（`WHERE (mtime, uri) < (?, ?)`），涉及三处查询与前端游标传参 |
+| [P3] 搜索 tab 的 ARIA 不完整（panel 无 `aria-labelledby`），键盘只映射左右箭头、无 Home/End | `tiklocal/templates/search.html:42-57`、`tiklocal/static/search_page_controller.js:554-566` | 与第 20 轮弹层 ARIA 条目同批做，需真机读屏验证 |
+| [P3] store 已落盘、运行态已切换后 `sync()` 抛非 busy 异常 → 500，前端显示失败且对话框不关，重试撞 duplicate/not_found | `tiklocal/web/settings.py:172-187` | 需把「已保存但索引未同步」表达成警告而非错误，前端要新增状态分支 |
+| [P3] 来源读-改-写无锁：两标签页并发加目录后写者整文件覆盖 | `tiklocal/web/settings.py:147-158` | `_apply_change` 加模块级 `threading.Lock` 即可，但与上面两条回写语义条目同批改更安全 |
+| [P3] 移除来源后 `<source>/.tiklocal-trash` 仍在磁盘，回收站列表与保留期清理只遍历现役来源 → 文件永久占盘且不可见 | `tiklocal/services/media_sources_store.py:228-245`、`tiklocal/services/trash.py:86-112` | 与第 13 轮「源移出后回收站失联」同源，需存储格式迁移（记录已移除来源的回收站路径） |
+| [P3] 默认来源改路径时只迁移缩略图缓存身份，`@default/rel` 形态的收藏/合集/播放进度/回收站条目全部改指新目录，同名文件静默错配 | `tiklocal/web/settings.py:161-166` | 需「改路径 = 新源 + 迁移引用」的整体设计，涉及 favorites/collections/progress 三处存储 |
+| [P3] 媒体弹层无焦点归还、无焦点陷阱；焦点离开弹层后 Escape 完全失效 | `tiklocal/static/flow_page_controller.js:571-577`、`:2249-2254` | 需 `previousFocus` + Tab 循环 + document 级 Escape 分支，与第 20 轮弹层焦点条目同批做 |
+| [P3] 「全部下载」用 N 个 `setTimeout` 触发 `<a download>`，全部丢失用户手势（Chrome 只落第一个），重复点击无 busy 门 | `tiklocal/static/flow_page_controller.js:596-604`、`:678-706` | 需先实测浏览器多文件下载策略；恢复服务端流式 zip 是备选但属新功能 |
+| [P3] `/api/media/info` 把服务器绝对路径回给浏览器（前端展示 + 复制），与同文件 `/delete` 的「不泄漏绝对路径」政策相反 | `tiklocal/web/media.py:483` | 改回 canonical uri 或 `source_id + rel_path` 会改变前端展示与「复制路径」语义，需产品决策 |
+
 

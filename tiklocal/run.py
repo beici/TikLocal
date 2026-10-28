@@ -175,13 +175,39 @@ def tls_failure(message):
     sys.exit(1)
 
 
+def listener_present(family, address):
+    """Return True when something accepts a connection on ``address`` right now.
+
+    A wildcard bind is checked through the loopback address: connecting to
+    0.0.0.0 is not portable, while every listener on it answers on 127.0.0.1.
+    """
+    host = str(address[0])
+    if host in ('', '0.0.0.0'):
+        host = '127.0.0.1'
+    elif host == '::':
+        host = '::1'
+    target = (host, address[1], *address[2:])
+    probe = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        probe.settimeout(0.5)
+        probe.connect(target)
+    except OSError:
+        return False
+    finally:
+        probe.close()
+    return True
+
+
 def probe_listen(host, port, display_host):
     """Fail with one actionable line when nothing can bind ``host:port``.
 
     Mirrors Werkzeug's own address resolution (AF_INET6 only for a literal IPv6
-    host, first getaddrinfo result otherwise) so the probe binds exactly what the
-    real server will bind. The socket is closed immediately; Werkzeug binds for
-    real a moment later.
+    host, first getaddrinfo result otherwise) and its ``allow_reuse_address``
+    setting, so a port left in TIME_WAIT by a previous run — which the real
+    server binds without trouble — is not reported as a conflict. Windows lets a
+    reuse-address socket bind next to a listening one, so a bind that succeeds is
+    only believed once nothing answers on the address. The socket is closed
+    immediately; Werkzeug binds for real a moment later.
     """
     family = socket.AF_INET6 if ':' in host and hasattr(socket, 'AF_INET6') else socket.AF_INET
     try:
@@ -189,14 +215,22 @@ def probe_listen(host, port, display_host):
     except (socket.gaierror, UnicodeError):
         address = (host, port)
     probe = socket.socket(family, socket.SOCK_STREAM)
+    reason = None
     try:
-        probe.bind(address)
-    except OSError as exc:
-        print(f"Error: cannot listen on {display_host}:{port} ({exc})", file=sys.stderr)
-        print("Another process may already use this port; retry with --port <free port>.", file=sys.stderr)
-        sys.exit(1)
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(address)
+        except OSError as exc:
+            reason = str(exc)
+        else:
+            if listener_present(family, address):
+                reason = 'address already in use'
     finally:
         probe.close()
+    if reason is not None:
+        print(f"Error: cannot listen on {display_host}:{port} ({reason})", file=sys.stderr)
+        print("Another process may already use this port; retry with --port <free port>.", file=sys.stderr)
+        sys.exit(1)
 
 
 def parse_cli_media_source(value):
@@ -434,7 +468,8 @@ Examples:
                 material = ensure_self_signed_certificate(
                     extra_hosts=extra_hosts,
                     extra_ips=extra_ips,
-                    days=args.days or TLS_DEFAULT_DAYS,
+                    # An explicit 0 must reach the range check, not the default.
+                    days=TLS_DEFAULT_DAYS if args.days is None else args.days,
                     force=args.force,
                 )
                 print('\n'.join(describe_material(material)))
@@ -592,8 +627,11 @@ Examples:
     # (the second marks the first one's running jobs as interrupted, and every
     # jobs.json write is a whole-list overwrite). Take the lock before building
     # the app; the OS releases it when this process exits, crash included.
+    # --dev runs this function again in the reloader child while the parent keeps
+    # holding the lock, so the child must not take it a second time.
+    dev_child = args.dev and os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
     try:
-        instance_lock = acquire_instance_lock(Path(resolve_data_dir(parser)))
+        instance_lock = None if dev_child else acquire_instance_lock(Path(resolve_data_dir(parser)))
     except InstanceLockError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -620,7 +658,9 @@ Examples:
                 tls_material = ensure_self_signed_certificate(
                     extra_hosts=extra_hosts,
                     extra_ips=extra_ips,
-                    days=args.tls_days or TLS_DEFAULT_DAYS,
+                    # ``or`` would turn an explicit 0 into the 825-day default and
+                    # hide the range error the generator already reports.
+                    days=TLS_DEFAULT_DAYS if args.tls_days is None else args.tls_days,
                 )
         except TlsError as exc:
             tls_failure(str(exc))
