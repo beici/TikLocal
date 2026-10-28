@@ -271,6 +271,92 @@ class MediaIndexStore:
             ).fetchall()
         return [self._to_library_record(row) for row in rows]
 
+    def neighbors(self, media_type: str, name: str) -> tuple[str | None, str | None]:
+        """The URIs before and after ``name`` in library order (newest first).
+
+        The detail and image pages only need the two neighbours, but looking them
+        up through :meth:`records` materialised the whole media type first: 3000
+        rows for a video library and 19000 for an image one, on the two most
+        visited pages. Each side is a pair of key-set lookups on
+        ``idx_media_items_type_mtime``: an index range scan for the nearest row
+        with a different mtime, then a small sort among the rows sharing the
+        target's mtime to apply the URI tie-break. The order is ``mtime DESC,
+        uri``, so a row is "before" the target when its mtime is newer, or equal
+        with a smaller URI. Live photos pair with images in image-shaped views, so
+        the image walk covers both types and merges the two index walks.
+        """
+
+        types = ('image', 'live') if media_type == 'image' else (media_type,)
+        with self.database.connect() as conn:
+            target = None
+            for kind in types:
+                target = conn.execute(
+                    "SELECT mtime FROM media_items WHERE uri = ? AND media_type = ?",
+                    (name, kind),
+                ).fetchone()
+                if target is not None:
+                    break
+            if target is None:
+                return None, None
+            mtime = target["mtime"]
+            previous = self._nearest(conn, types, mtime, name, before=True)
+            following = self._nearest(conn, types, mtime, name, before=False)
+        return previous, following
+
+    @staticmethod
+    def _nearest(conn, types, mtime, name: str, *, before: bool) -> str | None:
+        """The closest neighbour of ``name`` among ``types``, or None.
+
+        One index walk per type: a filter of ``media_type IN ('image', 'live')``
+        would make SQLite sort the whole partition to answer the ORDER BY, which
+        is exactly the cost this method exists to avoid.
+        """
+
+        best = None
+        for kind in types:
+            if before:
+                # The rows sharing the target's mtime come first in display order, so
+                # the tie-break is checked before the older mtime band.
+                row = conn.execute(
+                    "SELECT mtime, uri FROM media_items WHERE media_type = ? "
+                    "AND mtime = ? AND uri < ? ORDER BY uri DESC LIMIT 1",
+                    (kind, mtime, name),
+                ).fetchone()
+                if row is None:
+                    row = conn.execute(
+                        "SELECT mtime, uri FROM media_items WHERE media_type = ? AND mtime > ? "
+                        "ORDER BY mtime ASC LIMIT 1",
+                        (kind, mtime),
+                    ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT mtime, uri FROM media_items WHERE media_type = ? "
+                    "AND mtime = ? AND uri > ? ORDER BY uri ASC LIMIT 1",
+                    (kind, mtime, name),
+                ).fetchone()
+                if row is None:
+                    row = conn.execute(
+                        "SELECT mtime, uri FROM media_items WHERE media_type = ? AND mtime < ? "
+                        "ORDER BY mtime DESC LIMIT 1",
+                        (kind, mtime),
+                    ).fetchone()
+            if row is None:
+                continue
+            if best is None:
+                best = row
+            elif before:
+                # Newest first: "before" is the oldest of the newer rows, and the
+                # URI breaks an equal mtime the same way the ORDER BY does.
+                if row["mtime"] < best["mtime"] or (
+                    row["mtime"] == best["mtime"] and str(row["uri"]) > str(best["uri"])
+                ):
+                    best = row
+            elif row["mtime"] > best["mtime"] or (
+                row["mtime"] == best["mtime"] and str(row["uri"]) < str(best["uri"])
+            ):
+                best = row
+        return str(best["uri"]) if best is not None else None
+
     def count_uris(self, uris) -> int:
         """How many of the given URIs are still indexed.
 

@@ -1,3 +1,4 @@
+import itertools
 import json
 import os
 import random
@@ -16,7 +17,10 @@ _WRITE_ATTEMPTS = 3
 _READ_ATTEMPTS = 5
 _READ_DELAY_SEC = 0.05
 _QUARANTINE_KEEP = 3
-_TEMP_COUNTER = 0
+# A counter guarded by nothing is not a counter: `+=` is three bytecodes, so two
+# threads can read the same value and build the same temporary name, and the
+# loser's os.replace() fails with FileNotFoundError. itertools.count() is atomic.
+_TEMP_COUNTER = itertools.count(1)
 
 
 class StoreUnreadableError(OSError):
@@ -28,15 +32,19 @@ class StoreUnreadableError(OSError):
     """
 
 
-def write_json_atomic(path: Path, value: object) -> None:
-    """Publish complete JSON or leave the previous file intact."""
-    global _TEMP_COUNTER
-    _TEMP_COUNTER += 1
+def write_json_atomic(path: Path, value: object, *, mode: int | None = None) -> None:
+    """Publish complete JSON or leave the previous file intact.
+
+    ``mode`` is applied to the temporary file before it replaces the target, so a
+    store holding a secret is never readable with the umask default, not even for
+    the instant between the write and a later ``os.chmod``. Windows ignores the
+    bits beyond the read-only flag.
+    """
     # `tempfile` is deliberately avoided: when the directory itself denies writes,
     # CPython's mkdtemp/mkstemp treat PermissionError as "name taken" and retry
     # TMP_MAX (2**31-1) times, pinning a request thread for days. A sibling name
     # built from pid+counter lets PermissionError surface immediately.
-    temporary = path.with_name(f'{path.name}.{os.getpid()}.{_TEMP_COUNTER}.tmp')
+    temporary = path.with_name(f'{path.name}.{os.getpid()}.{next(_TEMP_COUNTER)}.tmp')
     try:
         payload = json.dumps(value, ensure_ascii=False, indent=2)
         for attempt in range(_WRITE_ATTEMPTS):
@@ -47,6 +55,11 @@ def write_json_atomic(path: Path, value: object) -> None:
                 if attempt == _WRITE_ATTEMPTS - 1:
                     raise
                 time.sleep(_REPLACE_DELAY_SEC)
+        if mode is not None:
+            try:
+                os.chmod(temporary, mode)
+            except OSError:
+                pass
         delay = _REPLACE_DELAY_SEC
         for attempt in range(_REPLACE_ATTEMPTS):
             try:

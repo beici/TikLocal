@@ -942,6 +942,11 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body || {}),
+      // These endpoints fetch from the outside world, so they are the slowest on the
+      // page and the ones most likely to hang. Without a deadline the caller's
+      // finally never ran and the row stayed "syncing" with a disabled button until
+      // the page was reloaded.
+      signal: AbortSignal.timeout(60000),
     });
     const payload = await response.json().catch(() => ({}));
     return { status: response.status, payload };

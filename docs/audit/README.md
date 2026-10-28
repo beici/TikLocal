@@ -37,6 +37,7 @@
 | 19 | 2026-10-27 | 477P/6S/0F | 1/6/8（确认 15，修复 12，转 backlog 3） | `fix: surface unavailable sources and bound media decoding`，20 文件 `+384/-25` | [round-19](round-19.md) |
 | 20 | 2026-10-27 | 484P/6S/0F | 0/0/7/3（确认 10，全部修复；data-layer 域未交付） | `fix: own legacy thumbnails, expire device tokens and keep ranged media off-thread` | [round-20](round-20.md) |
 | 21 | 2026-10-29 | 579P/7S/0F | 0/0/12/24（五域 35 + 独立复审 1 = 36，驳回 1，成立 35，修复 9，转 backlog 26） | `fix: align the port probe, unlock --dev and bound bad request bodies`，14 文件 `+331/-44` | [round-21](round-21.md) |
+| 22 | 2026-10-29 | 591P/7S/0F | 0/3/30/35（七域 68 + 独立复审 9 = 77，修复 18，驳回 1，转 backlog 54） | `fix: keep canceled downloads indexed, bound the password store and stop the history rebuild`，17 文件 | [round-22](round-22.md) |
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
 
@@ -77,6 +78,8 @@
 第 20 轮结束后：`pytest -q` = **494 passed / 6 skipped / 0 failed**（234.08s，新增 10 个用例：`tests/test_round20_regressions.py` 7 条 + `test_thumbnails.py` 2 条 + `test_downloader_lifecycle.py` 1 条）。
 
 第 21 轮结束后：`pytest -q` = **591 passed / 7 skipped / 0 failed**（307.71s，新增 12 个用例，全部并入既有测试文件：`test_tls.py` 5 条 + `test_search.py` 3 条 + `test_auth.py` 2 条 + `test_radio_client.py` 2 条）。第 20 轮之后新增 HTTPS/媒体来源/统一搜索三块功能，套件规模从 494 涨到 579，本轮再 +12。
+
+第 22 轮结束后：`pytest -q` = **602 passed / 8 skipped / 0 failed**（317.17s，新增 12 个用例：`tests/test_round22_regressions.py`）。本轮把审查视角从「新代码 + 安全」轮换到「数据完整性 / 并发与资源泄漏 / 性能」，因此 P0 仍为 0 但 P1 有 3 条（详情页删除按钮 ReferenceError、下载页每 2.2 s 重建历史列表、`records()` 全表物化压在详情页与 `/flow`），全部当轮修完。独立复审另指出 4 条「本轮修复本身有问题」（`neighbors()` 漏活照片、`AuthStore._load` 的 `exists()` 吞掉共享冲突、`_prune()` 会清掉仍在生效的限流块、`chmod` 在 `replace` 之后），也当轮改正——这类「修完了但没修对」只有独立复审能抓到。
 
 ## 目录
 

@@ -970,11 +970,19 @@ class DownloadManager:
                     return
 
                 cancel_event = self._cancel_events.get(job_id)
-                if cancel_event and cancel_event.is_set():
+                canceled = bool(cancel_event and cancel_event.is_set())
+                if canceled:
+                    # A cancel can land after a file has already been moved into the
+                    # library. Dropping those outputs made the UI report "canceled, 0
+                    # files" while the bytes sat in the media root, outside both the
+                    # index and the job history, until the next manual scan.
+                    if output_rel_list:
+                        job["output_files_rel"] = list(output_rel_list)
+                        job["file_count"] = len(output_rel_list)
+                        job["output_path_rel"] = output_rel_list[0]
+                        job["partial"] = True
                     self._mark_canceled_locked(job)
-                    return
-
-                if return_code == 0:
+                elif return_code == 0:
                     job["progress_percent"] = 100.0
                     job["eta_sec"] = 0
                     job["output_files_rel"] = output_rel_list
@@ -1004,6 +1012,11 @@ class DownloadManager:
                         job["partial"] = True
                     job["finished_at"] = utc_now_iso()
                     self._persist_locked()
+
+            if canceled:
+                if output_rel_list and self.on_outputs:
+                    self.on_outputs(output_rel_list)
+                return
 
             if source_context:
                 self._record_job_sources_on_success(source_context)

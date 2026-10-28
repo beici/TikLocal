@@ -276,9 +276,11 @@ document.addEventListener('DOMContentLoaded', () => {
 // Delete moves the file to the trash and continues to a neighbour, where Undo is offered.
 // It used to fire on the first tap of the red menu item, so a mis-tap on a phone
 // deleted the file; every other destructive action asks first.
+// `fileName` is scoped to the DOMContentLoaded callback below, so reading it here threw
+// ReferenceError and the button never asked anything: use the boot payload directly.
 async function confirmDelete() {
   const confirmed = await TikLocalUI.confirm({
-    title: T('detail.delete_confirm_title', { file: fileName }),
+    title: T('detail.delete_confirm_title', { file: detailBoot.file }),
     message: T('detail.delete_confirm_copy'),
     confirmLabel: T('common.delete'),
     tone: 'danger'

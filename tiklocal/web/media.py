@@ -134,13 +134,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
                           activity_store, favorite_service=None, collection_store=None):
     def neighbors(media_type, name):
         """Previous and next items in library order (newest first)."""
-        names = [str(record['name']) for record in media_index.records(media_type=media_type)]
-        try:
-            index = names.index(name)
-        except ValueError:
-            return None, None
-        return (names[index - 1] if index > 0 else None,
-                names[index + 1] if index < len(names) - 1 else None)
+        return media_index.neighbors(media_type, name)
 
     @app.route('/detail/<path:name>')
     def detail_view(name):

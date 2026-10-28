@@ -1,11 +1,12 @@
 import datetime
 import json
-import os
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
 from werkzeug.security import check_password_hash, generate_password_hash
+
+from tiklocal.services.json_storage import write_json_atomic
 
 
 AUTH_FILE_VERSION = 1
@@ -30,19 +31,31 @@ class AuthStore:
         self._mtime_ns: int | None = None
 
     def _load(self) -> dict | None:
-        if not self.path.exists():
+        try:
+            mtime_ns = self.path.stat().st_mtime_ns
+        except FileNotFoundError:
             self._data = None
             self._mtime_ns = None
             return None
-        try:
-            mtime_ns = self.path.stat().st_mtime_ns
         except OSError as exc:
+            # An antivirus or search indexer holding the file for a moment must
+            # not turn every request into a 500: the copy read a moment ago is
+            # still the truth, and the next stat will notice a real change.
+            # `Path.exists()` cannot answer the missing-file case above: it
+            # swallows this same OSError and reports "no file", which would turn
+            # a sharing violation into what looks like a fresh install.
+            if self._data is not None:
+                return self._data
             raise RuntimeError(f'Authentication configuration cannot be read: {self.path}') from exc
         if self._data is not None and self._mtime_ns == mtime_ns:
             return self._data
         try:
             data = json.loads(self.path.read_text(encoding='utf-8'))
-        except (OSError, json.JSONDecodeError) as exc:
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f'Authentication configuration cannot be read: {self.path}') from exc
+        except OSError as exc:
+            if self._data is not None:
+                return self._data
             raise RuntimeError(f'Authentication configuration cannot be read: {self.path}') from exc
         required = {'password_hash', 'secret_key', 'revision'}
         if not isinstance(data, dict) or not required.issubset(data):
@@ -53,17 +66,12 @@ class AuthStore:
 
     def _save(self, data: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_suffix(f'{self.path.suffix}.tmp')
-        temp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-        try:
-            os.chmod(temp_path, 0o600)
-        except OSError:
-            pass
-        os.replace(temp_path, self.path)
-        try:
-            os.chmod(self.path, 0o600)
-        except OSError:
-            pass
+        # A fixed `.tmp` name let two writers replace each other's half-written file,
+        # and a sharing violation left that file (password hash and secret_key in
+        # clear JSON) behind for good. write_json_atomic retries the replace, always
+        # removes its own temporary file, and applies the private mode before the
+        # replace so the target is never briefly world-readable.
+        write_json_atomic(self.path, data, mode=0o600)
         self._data = data
         try:
             self._mtime_ns = self.path.stat().st_mtime_ns

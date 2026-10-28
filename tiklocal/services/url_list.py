@@ -7,9 +7,11 @@ line is one URL; blank lines and ``#`` comments are ignored.
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import os
+import shutil
 import threading
 from pathlib import Path
 from urllib.parse import urlparse
@@ -23,7 +25,9 @@ logger = logging.getLogger(__name__)
 #: Without this the read-modify-write below silently drops rows, and both writers
 #: fight over one fixed ``.tmp`` name (WinError 32 -> HTTP 500).
 _LIST_LOCK = threading.RLock()
-_TEMP_COUNTER = 0
+# `+=` is not atomic: two threads could read the same value, build the same
+# temporary name, and the loser's os.replace() would fail with FileNotFoundError.
+_TEMP_COUNTER = itertools.count(1)
 
 STORE_FILENAME = 'download-urls.txt'
 CONFIG_FILENAME = 'download-urls.json'
@@ -120,18 +124,22 @@ class UrlListStore:
             raise ValueError(f'Too many URLs: the list holds at most {MAX_LINES} entries.')
         if backup and self.store_path.exists():
             # Bulk overwrites (import, pull) used to be unrecoverable: a stale or
-            # emptied server file silently wiped a hand-written queue.
+            # emptied server file silently wiped a hand-written queue. Copy rather
+            # than rename: renaming left a window in which every reader saw "no
+            # file" and the download page rendered an empty queue.
             try:
-                self.store_path.replace(self.store_path.with_suffix(self.store_path.suffix + '.bak'))
+                shutil.copyfile(
+                    self.store_path,
+                    self.store_path.with_suffix(self.store_path.suffix + '.bak'),
+                )
             except OSError:
                 pass
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
         # A fixed ``.tmp`` name lets concurrent writers replace each other's
         # half-written file: use a unique name per write. `tempfile` is avoided
         # because a write-denied directory makes it spin through TMP_MAX names.
-        global _TEMP_COUNTER
-        _TEMP_COUNTER += 1
-        tmp_name = self.store_path.with_name(f'{self.store_path.name}.{os.getpid()}.{_TEMP_COUNTER}.tmp')
+        tmp_name = self.store_path.with_name(
+            f'{self.store_path.name}.{os.getpid()}.{next(_TEMP_COUNTER)}.tmp')
         try:
             tmp_name.write_text(format_text(cleaned), encoding='utf-8', newline='\n')
             os.replace(tmp_name, self.store_path)
@@ -251,7 +259,12 @@ class UrlListStore:
             text = target.read_text(encoding='utf-8', errors='replace')
         except OSError as exc:
             raise ValueError(f'Unable to read {target}: {exc.strerror or exc}') from exc
-        lines = self._write(parse_text(text), backup=True)
+        imported = parse_text(text)
+        # Hold the lock the other writers use: _write() replaces the whole list, so
+        # an add() that ran between its read and its write would be merged into
+        # nothing and silently dropped.
+        with _LIST_LOCK:
+            lines = self._write(imported, backup=True)
         return {'direction': 'pull', 'lines': lines, 'path': str(target)}
 
     def push(self) -> dict:

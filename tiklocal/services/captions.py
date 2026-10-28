@@ -165,7 +165,9 @@ def _local_or_private_host(base_url: str) -> bool:
         return True
     candidates = [host]
     try:
-        candidates.extend(socket.getaddrinfo(host, None)[i][4][0] for i in range(len(socket.getaddrinfo(host, None))))
+        # One lookup, not one per address: the old form called getaddrinfo() twice
+        # per resolved address, on every caption run.
+        candidates.extend(info[4][0] for info in socket.getaddrinfo(host, None))
     except OSError:
         pass
     for candidate in candidates:

@@ -2,7 +2,7 @@ import datetime
 import secrets
 import threading
 import time
-from collections import defaultdict, deque
+from collections import deque
 from urllib.parse import urlsplit
 
 from flask import make_response, redirect, render_template, request, session, url_for
@@ -14,29 +14,54 @@ UNSAFE_METHODS = {'POST', 'PUT', 'PATCH', 'DELETE'}
 
 
 class LoginAttemptLimiter:
+    # An exposed instance sees one key per source address, so the table needs a
+    # ceiling: it used to grow by one entry for every address that ever failed.
+    MAX_KEYS = 1024
+
     def __init__(self, limit: int = 5, window_seconds: int = 300):
         self.limit = limit
         self.window_seconds = window_seconds
-        self._attempts: dict[str, deque[float]] = defaultdict(deque)
+        self._attempts: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
 
     def retry_after(self, key: str) -> int:
         with self._lock:
-            attempts = self._active(key)
+            # A read must not create a bucket: retry_after() runs on every login
+            # attempt, including the unauthenticated pairing endpoints.
+            attempts = self._active(key, create=False)
             if len(attempts) < self.limit:
                 return 0
             return max(1, int(self.window_seconds - (time.monotonic() - attempts[0])))
 
     def record_failure(self, key: str) -> None:
         with self._lock:
+            if key not in self._attempts and not self._prune():
+                # Every bucket is still blocking an address inside the window.
+                # Evicting one would hand that attacker a clean slate, so the
+                # newcomer goes unrecorded instead: it costs one extra 401, not a
+                # reset of a block that already exists.
+                return
             self._active(key).append(time.monotonic())
 
     def clear(self, key: str) -> None:
         with self._lock:
             self._attempts.pop(key, None)
 
-    def _active(self, key: str) -> deque[float]:
-        attempts = self._attempts[key]
+    def _prune(self) -> bool:
+        """Drop buckets whose last failure left the window; report room for one more."""
+        if len(self._attempts) < self.MAX_KEYS:
+            return True
+        cutoff = time.monotonic() - self.window_seconds
+        for key in [name for name, attempts in self._attempts.items() if not attempts or attempts[-1] < cutoff]:
+            del self._attempts[key]
+        return len(self._attempts) < self.MAX_KEYS
+
+    def _active(self, key: str, *, create: bool = True) -> deque[float]:
+        attempts = self._attempts.get(key)
+        if attempts is None:
+            if not create:
+                return deque()
+            attempts = self._attempts[key] = deque()
         cutoff = time.monotonic() - self.window_seconds
         while attempts and attempts[0] < cutoff:
             attempts.popleft()

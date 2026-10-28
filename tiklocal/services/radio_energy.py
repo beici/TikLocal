@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import array
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -37,7 +38,9 @@ MAX_HOPS = 4 * 60 * 60 * 4
 # worker forever: the read loop runs on a helper thread and is abandoned after
 # this long, with the child killed.
 DECODE_TIMEOUT_SEC = 60.0
-_TEMP_COUNTER = 0
+# `+=` is not atomic: two decoders could build the same temporary name and the
+# loser's os.replace() would fail with FileNotFoundError.
+_TEMP_COUNTER = itertools.count(1)
 FORMAT_VERSION = 1
 
 
@@ -82,9 +85,7 @@ class RadioEnergyService:
         # Publish atomically so a concurrent reader never sees a partial file.
         # `tempfile` is avoided on purpose: when the cache directory denies writes,
         # mkstemp treats PermissionError as "name taken" and retries TMP_MAX times.
-        global _TEMP_COUNTER
-        _TEMP_COUNTER += 1
-        temporary = cache.with_name(f'{cache.name}.{os.getpid()}.{_TEMP_COUNTER}.tmp')
+        temporary = cache.with_name(f'{cache.name}.{os.getpid()}.{next(_TEMP_COUNTER)}.tmp')
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             temporary.write_text(json.dumps(envelope, separators=(',', ':')), encoding='utf-8')

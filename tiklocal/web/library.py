@@ -469,7 +469,13 @@ def register_library_routes(
             return {'success': True, 'data': {'item': _serialize_collection_summary(found)}}
 
         if request.method == 'DELETE':
-            deleted = collection_store.delete(collection_id)
+            try:
+                deleted = collection_store.delete(collection_id)
+            except OSError as exc:
+                # The store could not be written: answer the same 503 the create
+                # route already answers instead of letting it become a 500.
+                app.logger.warning('Could not delete the collection', exc_info=exc)
+                return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
             if not deleted:
                 return {'success': False, 'error': t('library.collection.not_found')}, 404
             return {'success': True, 'data': {'deleted': True}}
@@ -487,6 +493,9 @@ def register_library_routes(
             )
         except ValueError as exc:
             return {'success': False, 'error': str(exc)}, 400
+        except OSError as exc:
+            app.logger.warning('Could not save the collection', exc_info=exc)
+            return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
         if not updated:
             return {'success': False, 'error': t('library.collection.not_found')}, 404
         return {'success': True, 'data': {'item': _serialize_collection_summary(updated)}}
@@ -514,10 +523,14 @@ def register_library_routes(
         if not uris:
             return {'success': False, 'error': t('library.error.uris_required')}, 400
 
-        if request.method == 'POST':
-            updated = collection_store.add_items(collection_id, uris)
-        else:
-            updated = collection_store.remove_items(collection_id, uris)
+        try:
+            if request.method == 'POST':
+                updated = collection_store.add_items(collection_id, uris)
+            else:
+                updated = collection_store.remove_items(collection_id, uris)
+        except OSError as exc:
+            app.logger.warning('Could not save the collection items', exc_info=exc)
+            return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
         if not updated:
             return {'success': False, 'error': t('library.collection.not_found')}, 404
         return {'success': True, 'data': {'item': _serialize_collection_summary(updated)}}

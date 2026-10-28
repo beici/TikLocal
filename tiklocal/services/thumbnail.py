@@ -1,5 +1,6 @@
 import hashlib
 import io
+import itertools
 import logging
 import math
 import os
@@ -53,11 +54,13 @@ THUMB_VERSION = 2
 #: while still letting a multi-core box fill the grid faster than two at a time.
 _GENERATE_SLOTS = threading.BoundedSemaphore(max(2, min(4, (os.cpu_count() or 4) // 2)))
 
+#: `+=` is not atomic: two threads could build the same temporary name, and the
+#: loser's replace would publish the other frame as its own thumbnail.
+_TEMP_COUNTER = itertools.count(1)
+
+
 #: A frame whose mean luminance sits below this is treated as a black title card:
 #: the next candidate timestamp is tried instead of publishing a black tile.
-_TEMP_COUNTER = 0
-
-
 BLACK_FRAME_LUMA = 6.0
 #: HDR transfer functions whose frames need a tonemap before being stored as sRGB.
 HDR_TRANSFERS = frozenset({'smpte2084', 'arib-std-b67'})
@@ -391,18 +394,20 @@ class ThumbnailService:
         # A failed or concurrent generation must not publish a partial cache file.
         with self._locks[hash(str(output)) % self._LOCK_POOL_SIZE]:
             # Re-check under the lock so a burst of requests extracts one frame; a
-            # cache older than its source is stale and must be rebuilt.
-            if not overwrite and output.is_file() and output.stat().st_size > 0:
+            # cache older than its source is stale and must be rebuilt. Both stats
+            # belong inside the guard: clearing the cache can unlink the file
+            # between is_file() and stat(), and that FileNotFoundError used to
+            # escape /thumb as a 500 instead of a regenerated thumbnail.
+            if not overwrite and output.is_file():
                 try:
-                    if output.stat().st_mtime_ns >= source.stat().st_mtime_ns:
+                    if (output.stat().st_size > 0
+                            and output.stat().st_mtime_ns >= source.stat().st_mtime_ns):
                         return output
                 except OSError:
                     pass
             # `tempfile` is avoided on purpose: a write-denied cache directory makes
             # mkdtemp retry TMP_MAX (2**31-1) names, pinning the request thread.
-            global _TEMP_COUNTER
-            _TEMP_COUNTER += 1
-            temporary = self.thumb_dir / f'.thumb-{os.getpid()}-{_TEMP_COUNTER}.jpg'
+            temporary = self.thumb_dir / f'.thumb-{os.getpid()}-{next(_TEMP_COUNTER)}.jpg'
             try:
                 if self._generate(source, temporary, timestamp, auto_timestamp=auto_timestamp):
                     if _replace_with_retry(temporary, output):

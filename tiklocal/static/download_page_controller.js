@@ -4,6 +4,7 @@
   const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
   let pollTimer = null;
   let lastJobsSignature = '';
+  let lastHistorySignature = '';
   let dependencyMeta = { yt_dlp_available: false, gallery_dl_available: false, ffmpeg_available: false, tiktok_downloader: null };
   let selectedEngine = 'yt-dlp';
   let selectedTab = 'post';
@@ -359,6 +360,16 @@
     ].join(':')).join('|');
   }
 
+  // The history rows never show progress, so a running job must not be allowed to
+  // change this key: rebuilding the list on every 2.2 s poll destroyed the focused
+  // row, collapsed an expanded error <details>, and made the aria-live region
+  // announce the whole history again on each tick.
+  function historySignature(jobs) {
+    return jobs.map((job) => [
+      job.id, job.status, job.finished_at, job.file_count, job.error_message,
+    ].join(':')).join('|');
+  }
+
   function renderJobs(jobs, { force = false } = {}) {
     const signature = jobsSignature(jobs);
     const hasActiveJobs = jobs.some((job) => ACTIVE_STATUSES.has(job.status));
@@ -371,6 +382,9 @@
 
     const activeJobs = jobs.filter((job) => ACTIVE_STATUSES.has(job.status));
     historyJobs = jobs.filter((job) => !ACTIVE_STATUSES.has(job.status));
+    const historyKey = historySignature(historyJobs);
+    const historyChanged = force || historyKey !== lastHistorySignature;
+    lastHistorySignature = historyKey;
     const activeSection = document.getElementById('active-section');
     const activeList = document.getElementById('active-list');
 
@@ -384,7 +398,7 @@
       if (!knownIds.has(jobId)) selectedJobIds.delete(jobId);
     });
     if (historySelecting && historyJobs.length === 0) exitHistorySelection();
-    renderHistoryPage();
+    if (historyChanged) renderHistoryPage();
     schedulePolling(activeJobs.length > 0);
   }
 
@@ -721,7 +735,13 @@
       const onCancel = () => finish(false);
       const onAccept = () => finish(true);
       const onMaskClick = (event) => { if (event.target === mask) finish(false); };
-      const onKeydown = (event) => { if (event.key === 'Escape') finish(false); };
+      // Keep the document-level Escape handler from also leaving multi-select: the
+      // user asked to close this dialog, not to drop the rows they had ticked.
+      const onKeydown = (event) => {
+        if (event.key !== 'Escape') return;
+        event.stopPropagation();
+        finish(false);
+      };
       cancel.addEventListener('click', onCancel);
       accept.addEventListener('click', onAccept);
       mask.addEventListener('click', onMaskClick);

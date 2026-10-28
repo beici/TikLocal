@@ -159,4 +159,61 @@
 | [P3] 「全部下载」用 N 个 `setTimeout` 触发 `<a download>`，全部丢失用户手势（Chrome 只落第一个），重复点击无 busy 门 | `tiklocal/static/flow_page_controller.js:596-604`、`:678-706` | 需先实测浏览器多文件下载策略；恢复服务端流式 zip 是备选但属新功能 |
 | [P3] `/api/media/info` 把服务器绝对路径回给浏览器（前端展示 + 复制），与同文件 `/delete` 的「不泄漏绝对路径」政策相反 | `tiklocal/web/media.py:483` | 改回 canonical uri 或 `source_id + rel_path` 会改变前端展示与「复制路径」语义，需产品决策 |
 
+## 第 22 轮新增（按严重度）
+
+本轮 68 条域报告发现 + 9 条独立复审意见中修 18 条（3×P1 + 7×P2 + 8×P3），驳回 1 条，其余 54 条如下。P1 全部当轮修完，故下表从 P2 开始。**优先做**：电台列表的探测上限（第一行）与索引损坏时的设置页（第十一行）。
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| **[P2] 优先** 电台列表冷启动逐条探测，而「每请求探测上限」这个约束**从未实现**：`grep MAX_PROBE` 只命中 `docs/audit/backlog.md:26` 与本文件同条 `round-04.md:81`，`git log -S` 无提交。`limit` 可到 500，8 线程逐条 ffprobe（失败再落 `banner_duration` 的 `timeout=10`），最坏 200/8×10 s ≈ 250 s 占满 waitress | `tiklocal/web/radio.py:79-83`、`tiklocal/services/radio.py:250-259`、`:264`、`:296`、`tiklocal/services/thumbnail.py:109-125` | 要么真的实现上限（先返回、后台补时长），要么改成「时长缺失时前端按需拉」，两种都要动 `radio.py` 的响应契约与前端回落逻辑 |
+| [P2] `records()` 剩下的调用点仍在整类物化：`/flow` 每请求对 video、image 各一次，`CANDIDATE_TTL_SEC = 2.0` 让缓存几乎每请求失效 | `tiklocal/services/library_index.py:249-254`、`tiklocal/services/recommendation.py:64-71` | 本轮只修了详情页侧（新增 `neighbors()`）。`/flow` 侧要给 `_candidates` 做列投影（只需 `uri, mtime`）并重定缓存策略，属推荐算法输入改造 |
+| [P2] 尺寸探针在退避条目 >400 时活锁：`skip` 被 `[:400]` 截断，被截断的尾部每轮重新被返回、再退避，`results` 仍空 → 每轮空转 5 s + 一次 400 项 `NOT IN` 查询；`_warned` 超 500 整体 `clear()` → 同一批 URI 反复 WARNING，数万条/轮冲掉轮转日志 | `tiklocal/services/library_index.py:1090-1093`、`:1110`、`:1138-1141`、`:1154` | 要重构索引扫描主循环的退避队列（`if not results and 本轮无新增退避: break` + 有界 LRU），需单独设计可复现的测试 |
+| [P2] `timeline_months` N+1：每个月份一次 `SELECT *`×120 行，`/library` 首屏 10 条查询、`/api/library/timeline` 最多 38 条、物化 4320 行后只采样 ≤18 条 | `tiklocal/services/library_index.py:479-504` | 改写成 `ROW_NUMBER() OVER (PARTITION BY capture_month ...)`（同文件 `on_days` 已有写法），但要逐条核对与现有排序/去重语义等价 |
+| [P2] `image_random` 每页全量取回并全量洗牌（无 LIMIT 的 `SELECT media_items.*` → `fetchall()` → `shuffle` → 切片），`total` 也依赖全量 | `tiklocal/services/library_index.py:407-411`、`tiklocal/web/library.py:35-45` | 需稳定的伪随机序（rowid 线性变换或 uri 稳定 hash 排序）才能配合 `LIMIT/OFFSET`，且 `total` 语义要一并改，前端「随机」体验不能变 |
+| [P2] `time_states()` 在每次 `register_uris` 全表读（无 WHERE，19k 库 ≈ 20k 行 + 20k dict），且整段在 `_sync_lock` 内与扫描串行；调用方是每个下载 job 完成回调 | `tiklocal/services/library_index.py:586-596`、`:899-903`、`tiklocal/app.py:498` | 需 `time_states(uris=...)` 分块（`existing_uris`/`profiles_for` 已有写法），并连带验证取消/失败 job 的回调路径 |
+| [P2] `sync()` 与 `register_uris()` 对同一把锁语义相反（前者非阻塞返回 busy，后者阻塞）→ 回收站恢复请求与下载回调会等满整轮扫描（19k 冷索引注释 8.19 s） | `tiklocal/services/library_index.py:853`、`:899`、`tiklocal/web/media.py:303` | 改 `acquire(timeout=…)` 要定「超时后谁负责补索引」，现有「下次扫描自愈」分支未覆盖恢复路径 |
+| [P2] 全量索引在监听端口前/请求线程内同步跑：`create_app()` 里 `sync()`，同一函数还被 `POST /api/library/sync` 与设置页在请求线程直接调用 | `tiklocal/app.py:428`、`tiklocal/web/library.py:395`、`tiklocal/web/settings.py:174` | 需后台线程 + 进度接口（`MediaProbeWorker.start()/wake()` 是现成模式），属启动流程改版 |
+| [P2] 请求线程里同步起 `--version` 子进程且无缓存：入队一次、`probe_dependencies()` 三次、失败还加长重试 → 工具卡住时设置页最坏 105 s 占死 waitress 线程 | `tiklocal/services/downloader.py:580`、`:496-498`、`tiklocal/services/download_tools.py:195` | 加模块级 memo 要处理「用户刚装好 yt-dlp」的失效场景（TTL 或手动刷新入口） |
+| [P2] 视频封面固定多起一次 ffprobe（`_probe_color_transfer` 无按文件缓存），黑场/暗场最多 1+3 个进程，全程持 `_GENERATE_SLOTS` | `tiklocal/services/thumbnail.py:521`、`:535-573` | 需把 duration 与 color_transfer 合并成一次 ffprobe 并按 `(path, mtime_ns)` 缓存，`auto_timestamp` 路径要一起测 |
+| **[P2] 优先** 索引损坏时 `/settings/` 整页 500：`library_stats()` 对 `sqlite3.DatabaseError` 显式 re-raise，而 `settings_view` 直接调用 → 改目录的**唯一入口**打不开；同页 `/api/library/sources` 却专门兜住，自相矛盾 | `tiklocal/web/settings.py:32-40`、`:242-245`、`:193-201` | 需前端配合的「统计不可用」提示条（与第 18 轮 `safe()` 条目合并），stats 失败时回退 `index_corrupt` 标志照常渲染 |
+| [P2] 来源变更后索引状态不一致：`sync()` 只捕 locked/busy 的 `OperationalError`，其余 `raise` → 500 且无回滚；busy 分支返回 `{'busy': True}` → 被移除来源的 `media_items` 行不清，`page()` 不过滤 source → 幽灵行出现在 `/library`，点开 404 | `tiklocal/web/settings.py:157-187`、`tiklocal/services/library_index.py:850-864` | 需定「已保存但未同步」的状态语义 + 幽灵行清理，前端要新增状态分支 |
+| [P2] 作者来源列表只为数个数就全量读：`len(local_work_names(media_index, source_id))`，而 `local_work_names` 全量 `records(source_id=...)`；每源还两次读 profile 文件 | `tiklocal/web/author.py:369`、`:104-115`、`:360`、`:367` | 需新增 `count_works(source_id)` 聚合查询，并确认 `local_work_names` 的其它调用点是否也要换 |
+| [P2] 作者页无分页：`build_tiles(media_index.records(source_id=..., album_covers_only=True))`，模板裸 `{% for tile in tiles %}` | `tiklocal/web/author.py:201`、`tiklocal/templates/author.html:51` | 属 UI 改版（分页或无限滚动 + 缩略图懒加载），要连带作者页的搜索/排序状态 |
+| [P2] `collect_candidates()` 无缓存：每次换台全扫 `records(media_type='audio')` + 每条 `resolve_path()`（含 2 次 `Path.resolve()`）+ `is_file()` | `tiklocal/services/radio.py:202-227`、`tiklocal/static/radio_controller.js:282-290` | 照 `recommendation.py:79-87` 加 TTL 缓存即可，但要定失效条件（下载完成后 / 库变更） |
+| [P2] 能量包络无同 URI 去重、无锁、无负缓存：并发 N 请求 = N 个 ffmpeg 全曲解码；超时分支 `_kill_process` 后**不 close `process.stdout`**（句柄泄漏）；`_write_cache` 把 OSError 全吞 | `tiklocal/services/radio_energy.py:49-63`、`:155-188`、`:81-96` | 需按 URI 做 single-flight + 负缓存 + 超时关管道，属并发重构 |
+| [P2] caption 收窄路径每页全库读 + 双次 collapse：无 `source_id` 时 `records()` 全库，随后无条件 `collapse_media_entries`，命中收窄序列后再 collapse 一次才切片 | `tiklocal/web/flow.py:383-393`、`:403`、`:406-407`、`:413-419` | 需先按 source 过滤再 collapse，且要确认「跨源 caption 搜索」的产品语义 |
+| [P2] 媒体弹层无请求令牌 + 键盘穿透（同一根因）：`showInfoSheet` 落地只判 `mediaSheetIsOpen()`，不判「当前展示的还是不是这一件」→ 作品 A 的响应写进展示 B 的弹层，「复制路径」复制到上一件；全局 keydown 前置条件缺 `mediaSheetIsOpen()` | `tiklocal/static/flow_page_controller.js:613-673`、`:2302` | 键盘守卫是一行，但请求令牌（`sheetToken` + 落地校验 `currentItem() !== item`）要连带作者页同类调用一起做 |
+| [P2] 相册首帧在 build 阶段 eager 拉原图（普通图片走 `loading='lazy'`） | `tiklocal/static/flow_page_controller.js:1336-1344`、`:1474`、`:1577-1592` | 需区分「首帧可见」与「预加载」，否则会引入滑动时白屏 |
+| [P2] `refreshJobs` 无请求代际号：轮询响应后到会覆盖删除/取消结果，被删 job 回到列表（最长 12 s 后自愈） | `tiklocal/static/download_page_controller.js:579-604` | 照 `search_page_controller.js:337,399` 的 `requestSeq` 加即可，但要与本轮新加的 `historySignature` 一起测 |
+| [P2] 电台页 `localStorage` 裸读写：模块作用域 `getItem` 抛错（存储被禁/配额满）→ `init()` 从不运行，整页哑；`setItem` 抛错 → 状态已改但 UI 与场景停在旧值 | `tiklocal/static/radio_controller.js:71`、`:92`、`:98`、`:658-662`、`:787-793`、`:1087-1094` | 需统一 `readJson/writeJson` 包装并定写失败时的回滚策略（先应用状态还是先落盘） |
+| [P3] `DeviceAuthStore` 仍是固定 `.tmp` 名 + 裸 `os.replace`；`tiklocal auth set-password` 自建 `AuthStore` 且不持实例锁 → 服务运行中执行会争同一临时名 | `tiklocal/services/device_auth.py:148`、`tiklocal/run.py:432-453` | `AuthStore` 本轮已改 `write_json_atomic`，`DeviceAuthStore` 同一改法留待下一轮；CLI 加锁要动实例锁语义 |
+| [P3] `DeviceAuthStore.verify()` 每个 `/api/v1/*` 请求整份读盘解析（无 mtime 缓存，`AuthStore` 有）；音频流一首歌多个 Range 请求 = 每请求一次读 + 解析 | `tiklocal/services/device_auth.py:55`、`:132-144` | 加 mtime 缓存即可，但设备令牌是安全边界，改动要连带 `tests/test_radio_client.py` 全量复核 |
+| [P3] `CollectionStore._read()` 把任何 `Exception`（含 OSError）当损坏返回空 payload，与 `json_storage` 契约相反：瞬时独占时合集列表短暂消失 | `tiklocal/services/collections.py:83-94` | 应只隔离 `JSONDecodeError`/`UnicodeDecodeError`、OSError 走 `StoreUnreadableError`；但 `_read` 有 6 个调用点，需逐个确认「读不到」时前端该显示什么。**注意**：第 22 轮复审建议「读路由补 503」，核实后不可达——`strict=False` 时这个 `except Exception` 已经把读失败吞成空 payload，读路由永远拿不到 OSError；只有改掉 `_read` 本身才需要给读路由加兜底 |
+| [P3] 集合摘要每张卡片整份读 `collections.json`：`list_for_media(include_items=False)` 仍触发 `list_item_uris()`，`_build_library_page(collection_id=...)` 再一次 | `tiklocal/web/library.py:128`、`:169-173`、`:531-537` | 需让 `list_for_media` 走 `list_with_items()` 的同一份快照，属数据层接口调整 |
+| [P3] `page()` 每页跑两次全表条件扫描（`COUNT(*)` + `LIMIT/OFFSET`），`media_type IN (...)` 无索引前缀 | `tiklocal/services/library_index.py:413-417`、`:658-665` | `has_more` 改 `LIMIT limit+1`、`total` 只在 offset=0 时取；但 `total` 被前端进度条依赖，要先定「后续页 total 从哪来」 |
+| [P3] `blog_rows()` N+1：`GROUP BY source_id` 后对每个 source 单独 `SELECT uri ... LIMIT 1` | `tiklocal/services/library_index.py:566-576`、`tiklocal/web/library.py:387` | 可用 `ROW_NUMBER()` 合并；改动小但收益随来源数（≤24）有限，优先级低 |
+| [P3] `_record_many_once` 每批印象事件都全表 prune（`DELETE ... NOT IN (子查询)`），表未满 20k 时也全扫且持写锁 | `tiklocal/services/database.py:548-557` | 改 `id <= MAX(id) - ?` 或仅超限时执行即可，但属写入热点路径，要连带压测 |
+| [P3] backlog 里「`skipped_prefixes` 没回给前端」口径需修正：后端已写入、`POST /api/library/sync` 直接返回、测试已断言；`static/*.js` 无任何读取 → 后端与 API 已闭环 | `tiklocal/services/library_index.py:889-890`、`tiklocal/web/library.py:401` | 剩余缺口纯在前端提示（扫描跳过了哪些目录），降级为前端事项 |
+| [P3] 每个任务结束都无条件跑一次 `taskkill`（不在 `poll() is None` 保护内），每次下载多起一个进程、取消/超时路径 2-3 次 | `tiklocal/services/downloader.py:1450-1455`、`:1061-1065` | 先判 `poll() is None` 即可，但属进程生命周期路径，要连带 `test_downloader_lifecycle.py` 复核 |
+| [P3] 子进程未加 `CREATE_NO_WINDOW`（全仓无 `creationflags`）：从 pythonw/快捷方式启动时每次 yt-dlp/ffmpeg/`--version`/`taskkill` 都弹控制台窗口，批量缩略图持续闪窗 | `tiklocal/services/downloader.py:1432`、`download_tools.py:194`、`thumbnail.py:462`/`480`/`505`/`550` | 需逐站点验证（某些工具在无控制台时行为不同），且终端启动时不可见、难自动测 |
+| [P3] 来源映射每次读取都整文件重解析（`get_many` 锁内 open + `json.load`），`/flow` 每渲染一次执行一次，条目随下载量线性增长 | `tiklocal/services/download_sources.py:169`、`:198-210`、`tiklocal/web/flow.py:35` | 加进程内缓存 + mtime 校验即可，但要处理「另一进程写入」的失效 |
+| [P3] 电台 `_metadata_cache` 无上限无淘汰（`str(path)` 为键，mtime 变了不删旧键） | `tiklocal/services/radio.py:146`、`:241-248` | 改有界 LRU 即可，收益随曲库规模，优先级低 |
+| [P3] `_select_favorites` 在列表推导条件里每轮重建 `{chosen.name for chosen in selected}` → O(n×limit) | `tiklocal/services/radio.py:307-336` | 一行提到循环外即可，属纯热点微优化，等 #16 的缓存落地后一并做 |
+| [P3] 媒体弹层无焦点归还、Escape 只在弹层内有效（监听挂在 `#media-sheet` 自身），`role="dialog" aria-modal="true"` 却无焦点陷阱 | `tiklocal/static/flow_page_controller.js:560-577`、`:2249-2254`、`:2291-2330` | 需 `previousFocus` + Tab 循环 + document 级 Escape 分支，与第 20 轮弹层焦点条目同批做 |
+| [P3] 「全部下载」用 N 个 `setTimeout` 触发 `<a download>`，全部丢失 user activation（Chrome 只落第一个），重复点击无 busy 门 | `tiklocal/static/flow_page_controller.js:596-604` | 需先实测浏览器多文件下载策略；恢复服务端流式 zip 是备选但属新功能 |
+| [P3] Quick Viewer 的 `play()` 竞态把暂停图标画到新项 | `tiklocal/static/library_page_controller.js:816-818` | 需给播放状态加代际号，改动小但难自动测（无 JS 测试框架） |
+| [P3] 前端缓存只增不清：`captionCache`/`sourceState`/`collection_picker.cache` | `tiklocal/static/flow_media_actions_controller.js:19-26`、`tiklocal/static/collection_picker.js:79-91` | 需按「会话内可见条目数」定上限，属内存策略决策 |
+| [P3] 瀑布流只增不减、`dropHead` 在 library 从未调用 | `tiklocal/static/library_page_controller.js:440-486` | 与第 20 轮 `dropHead` 条目同源（backlog 已驳回动画部分）；DOM 回收要连带滚动位置恢复一起设计 |
+| [P3] 时间线滚动无节流且每次读 `offsetTop` | `tiklocal/static/library_timeline_controller.js:374-376` | 加 rAF 节流即可，但要实测长列表下的粘性标题定位 |
+| [P3] `collection_picker.open()` 无陈旧守卫 | `tiklocal/static/collection_picker.js:148-169` | 与弹层令牌条目同批做 |
+| [P3] 设置页来源读-改-写无锁：两标签页并发加目录后写者整文件覆盖 | `tiklocal/web/settings.py:130-145` | `_apply_change` 加模块级 `threading.Lock` 即可，但与第 21 轮两条回写语义条目同批改更安全 |
+| [P3] 默认来源改路径时只迁移缩略图缓存身份，`@default/rel` 形态的收藏/合集/播放进度/回收站条目全部改指新目录，同名文件静默错配 | `tiklocal/web/settings.py:163-166` | 需「改路径 = 新源 + 迁移引用」的整体设计（与第 21 轮同条合并） |
+| [P3] `set_profile_url` 无 try（磁盘失败 500），而同文件 `_sync_profile` 捕 Exception → 502 | `tiklocal/web/author.py:299`、`:314`、`:228-277` | 补 `except OSError → 502` 即可，但要统一作者页所有写路由的错误码 |
+| [P3] 搜索：命中来自文件名/目录名时仍挂 `&caption=`；general tab 每页都算 users 且第 2 页起客户端丢弃 | `tiklocal/web/search.py:213-215`、`:324-333`、`tiklocal/static/search_page_controller.js:390-393` | 与第 21 轮两条同源（`post_title` 判定 + offset>0 跳过作者块），合并处理 |
+| [P3] TLS 续期阈值固定 30 天而 `days` 允许 1..3650 → ≤30 天时每次启动都重生成 | `tiklocal/services/tls.py:424`、`:49`、`:379-380` | 与第 21 轮同条合并（阈值应随 `days` 缩放，但 `_reusable_material` 拿不到 `days`） |
+| [P3] 证书与私钥两次 `os.replace` 非成对原子 | `tiklocal/services/tls.py:494-495`、`:420` | 与第 21 轮同条合并（Windows 不支持目录原子替换，实际只能收窄文档措辞） |
+| [P3] 搜索 tab 的 ARIA 不完整：panel 无 `aria-labelledby`、三个 tab 无 `id`；键盘只映射左右箭头，无 Home/End | `tiklocal/templates/search.html:43-57`、`tiklocal/static/search_page_controller.js:568-577` | 与第 21 轮同条合并（补 `id` 是前置条件），需真机读屏验证 |
+| [P3] 睡眠定时器每秒重建 `btnSleep.innerHTML` 且输出恒定（文案取配置值而非剩余时间），每秒一次 `getElementById` | `tiklocal/static/radio_controller.js:510-553` | 改单个 `setTimeout(deadline)` 即可；若要显示剩余时间则是 UI 决策 |
+| [P3] `playback_resume.js` 后台仍累计观看时长（`timeupdate` 采样无 `document.hidden` 判定）→ 服务端 `visible_ms` 虚高 | `tiklocal/static/playback_resume.js:47`、`:84-88` | 一行 `if (document.hidden) return;`，但会改变观看统计口径，需先确认产品预期 |
+
 

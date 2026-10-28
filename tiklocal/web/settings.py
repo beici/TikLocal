@@ -82,7 +82,18 @@ def register_settings_routes(
                     'success': False,
                     'error': t('login.error_too_many', minutes=minutes),
                 }, 429, {'Retry-After': str(int(retry_after))}
-        if not auth_store.verify(current_password):
+        try:
+            verified = auth_store.verify(current_password)
+        except RuntimeError:
+            # AuthStore raises this when auth.json exists but cannot be read, so the
+            # password cannot be checked at all: answer "try again" like the write
+            # path below instead of letting it become a 500.
+            app.logger.exception('Could not read the access password')
+            return {
+                'success': False,
+                'error': t('common.error.storage_unavailable'),
+            }, 503
+        if not verified:
             if limiter:
                 limiter.record_failure(client_key)
             return {'success': False, 'error': t('settings.password.wrong_current')}, 400
@@ -93,6 +104,15 @@ def register_settings_routes(
                 'success': False,
                 'error': t('settings.password.too_short', n=MIN_PASSWORD_LENGTH),
             }, 400
+        except (OSError, RuntimeError):
+            # The password is validated but auth.json could not be read or written (a
+            # reader holding it, a full disk). That is "try again", not "internal
+            # error", and the old password still works, so say so instead of a 500.
+            app.logger.exception('Could not save the new access password')
+            return {
+                'success': False,
+                'error': t('common.error.storage_unavailable'),
+            }, 503
         if limiter:
             limiter.clear(client_key)
         session['auth_revision'] = auth_store.revision
