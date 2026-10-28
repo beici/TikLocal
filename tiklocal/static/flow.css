@@ -1390,9 +1390,15 @@ body.douyin .image-group-overlay { display: none; }
 
 /* --- Douyin post meta line: @author [kind] · 2025年11月16日 --- */
 
+/* The line mixes a 16px handle with a 10px chip and a 12px date. Aligning them
+   on the baseline (the old value) reads fine for two runs of text, but the chip
+   is a bordered box whose baseline sits low, so it hung ~2.5px under the
+   handle's optical centre and looked detachable. Centring the boxes instead
+   puts the chip within a fraction of a pixel of that centre and levels the date
+   and its separator too, which is how Douyin draws the same line. */
 .douyin-meta {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 6px;
@@ -1400,7 +1406,9 @@ body.douyin .image-group-overlay { display: none; }
 
 .douyin-meta .douyin-author { margin-bottom: 0; }
 
-/* Douyin's small square tag after the handle (图文 / 视频 / 实况). */
+/* Douyin's small square tag after the handle (图文 / 视频 / 实况). Its box is
+   symmetrical around the 10px label (1px border + 1px padding + a 15px line
+   box), so centring the box also centres the glyphs. */
 .douyin-kind {
   flex: 0 0 auto;
   padding: 1px 5px;
