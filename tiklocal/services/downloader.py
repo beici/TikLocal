@@ -424,6 +424,9 @@ class DownloadManager:
         self.on_outputs = on_outputs
 
         self._lock = threading.Lock()
+        # Serialises jobs.json writers so a slow atomic replace (Windows retries it for
+        # up to ~2 s while a scanner holds the file) never runs under `_lock`.
+        self._persist_lock = threading.Lock()
         # Cookie uploads touch one file on disk; they do not need the job lock, but
         # two uploads of the same name must not interleave (see upload_cookie_file).
         self._cookie_lock = threading.Lock()
@@ -1067,7 +1070,10 @@ class DownloadManager:
     def _dispatch_locked(self) -> None:
         if not self._started or self._closed:
             return
-        limit = int(self._config['max_concurrent'])
+        # 0 has always meant "no explicit limit"; keep that contract but bound it by
+        # the documented cap. Unbounded meant one worker and one child process per
+        # queued item: a 200-item batch started 200 yt-dlp processes at once.
+        limit = int(self._config['max_concurrent']) or DOWNLOAD_MAX_CONCURRENT_LIMIT
         deferred: deque[str] = deque()
         while self._pending and (limit == 0 or len(self._workers) < limit):
             job_id = self._pending.popleft()
@@ -1559,8 +1565,15 @@ class DownloadManager:
         copy_path = temp_dir / "cookies.txt"
         try:
             shutil.copyfile(cookie_path, copy_path)
-        except OSError:
-            return cookie_path
+        except OSError as error:
+            # Never hand the engine the user's original jar: yt-dlp writes the jar
+            # back when it exits, so two jobs sharing it interleave and truncate it —
+            # that corrupts the cookies for every site, not just this download.
+            # Failing this one job is the cheap outcome.
+            raise RuntimeError(
+                "Could not prepare a private copy of the cookie file: "
+                f"{error.strerror or error.__class__.__name__}"
+            ) from error
         return copy_path
 
     def _run_tool(self, job_id: str, cmd: list[str], on_line: Callable[[str], None]) -> tuple[int, str]:
@@ -1661,14 +1674,24 @@ class DownloadManager:
             if now - self._progress_persist_at.get(job_id, 0.0) < 1.0:
                 return
             self._progress_persist_at[job_id] = now
-            try:
-                self._persist_locked()
-            except OSError:
-                # A progress tick is bookkeeping: jobs.json can be locked for a second
-                # by a virus scanner or a backup agent, and letting that exception escape
-                # killed the whole download and deleted the bytes already fetched (the
-                # engine's finally rmtree()s the temp dir). The next tick retries.
-                LOGGER.warning('Could not persist download progress for %s; will retry', job_id)
+        # Outside `self._lock`: the write can sleep for seconds on a locked file, and
+        # every queue call (enqueue/cancel/list, polled every 2.2 s by the download
+        # page) waits on that same lock.
+        try:
+            self._persist()
+        except OSError:
+            # A progress tick is bookkeeping: jobs.json can be locked for a second by
+            # a virus scanner or a backup agent, and letting that exception escape
+            # killed the whole download and deleted the bytes already fetched (the
+            # engine's finally rmtree()s the temp dir). The next tick retries.
+            LOGGER.warning('Could not persist download progress for %s; will retry', job_id)
+
+    def _persist(self) -> None:
+        """Persist the job list; the state lock is held only for the snapshot copy."""
+        with self._persist_lock:
+            with self._lock:
+                jobs = [dict(self._jobs[job_id]) for job_id in self._job_order if job_id in self._jobs]
+            self.history_store.save(jobs)
 
     def _persist_locked(self) -> None:
         jobs = [dict(self._jobs[job_id]) for job_id in self._job_order if job_id in self._jobs]

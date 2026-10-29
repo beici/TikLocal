@@ -667,3 +667,30 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] 登录页 503 未提供「重置密码」的一键入口 | `tiklocal/templates/login.html` | 需写文件操作，风险高于收益 |
 | [P3] `auth_revision` 单调递增无上限校验 | `tiklocal/auth.py` | 每次改密 +1，整数溢出不现实 |
 | [P3] 配对端 `/api/v1/pair` 与登录共用限流桶，可能互相挤占 | `tiklocal/web/radio.py` | 同一密码，共用是合理的 |
+
+### 第 39 轮新增（22 条）
+
+| 问题 | 位置 | 为什么暂不修 |
+| --- | --- | --- |
+| [P2] `retry_job` 的 `index_only` 分支在全局任务锁内逐个 `resolve()`+`is_file()`，100 项播放列表 = 200 次 I/O 落在临界区 | `tiklocal/services/downloader.py:828-833` | 要改成锁内取副本、锁外 stat，涉及重试路径的状态机，单独一轮做 |
+| [P2] `cancel()` 在请求线程里同步 `taskkill /T /F`（最坏 22 s），且与 worker 的终止重复，8 个并发取消可打满 8 个 waitress 线程 | `tiklocal/services/downloader.py:973-997`、`:1708-1749` | 改成「只置事件、由 worker 终止」需要重排取消状态机并加去重集 |
+| [P2] 批量入队逐条 `enqueue`，每次一次全量 `jobs.json` 落盘（O(N²)），5000 行 URL 列表 = 5000 次全量写 | `tiklocal/web/downloads.py:253-264`、`tiklocal/services/tiktok_downloader.py:1092-1118` | 需要新增 `enqueue_many()` 并统一两条调用链 |
+| [P2] 只读 GET（`/api/source`、`/api/source/batch`）在 `set_many` 里整份读写来源映射，冷映射时一次网格批量 200 次整份重写 | `tiklocal/services/downloader.py:1879-1886`、`download_sources.py:228-233` | 改成「只读不落盘 + 后台 flush」会改变 `/api/source` 的可见语义 |
+| [P2] 缩略图临时文件与正式缓存同目录同后缀，`clear_cache()` 的 `glob('*.jpg')` 会删掉在途文件 → 写 `.fail` 让瓦片吃 1 小时灰块 | `tiklocal/services/thumbnail.py:457`、`:410-413`、`:308` | 改临时后缀要同时改 `_replace_with_retry` 与失败标记判据 |
+| [P2] `write_json_atomic` 无 fsync：断电后目标可为 0 字节，随后被隔离成默认值再覆盖 | `tiklocal/services/json_storage.py:55,69` | 加 fsync 会让每次保存多一次磁盘等待，需先量测对下载进度落盘的影响 |
+| [P2] `AuthStore` 全类无锁：两个并发改密可把 `(旧数据, 新 mtime)` 写进缓存并永久命中 → 旧密码仍有效、新密码被拒 | `tiklocal/services/auth.py:75-77`、`:50` | 加 `RLock` 是一行，但改密路径被 `web/settings.py` 与 `run.py` 同时调用，要连带审调用方 |
+| [P2] 回收站 manifest 二次就地 `write_text` 非原子：截断后条目永久不可见、不过期、`purge` 抛 `KeyError` | `tiklocal/services/trash.py:78-80`、`:61` | 改用 `write_json_atomic` 要重排 manifest 重写时机，涉及恢复路径 |
+| [P2] `load_profile` 绕过 `read_json_file`，损坏静默变 `{}` 再被 `save_profile` 覆盖，原 `douyin_id`/`sec_uid` 丢失且无 `.corrupt` 副本 | `tiklocal/services/author_profiles.py:76-82`、`:85-95` | 与第 34 轮 O3-2 的版本/损坏处理方式要统一 |
+| [P2] `tune()` 无代际号，连点两个电台会让队列混入上一个台的曲目 | `tiklocal/static/radio_controller.js:563-577`、`:282-307` | 改动落在播放状态机核心，需与 `playNext` 的并发一起改 |
+| [P3] `replace_snapshot` 的 `COUNT(*)` 落在写事务内 | `tiklocal/services/library_index.py:44-151` | 只是读放大，不改变结果 |
+| [P3] 放弃子进程后 `rmtree(ignore_errors=True)` 撞占用被吞 → `.tiklocal-download-tmp/<job_id>` 残留；晚完成的子进程还会往库里放无记录文件 | `tiklocal/services/downloader.py:1630-1635`、`:1327-1328` | 需要给「放弃」状态加跳过清理的标记 |
+| [P3] `url_list.push()` 在模块级锁内对同步路径做 `mkdir`/`write_text`/`os.replace`（可能是 SMB），半开共享盘挂 20-60 s | `tiklocal/services/url_list.py:277-291` | 锁内只取快照、锁外写；涉及多进程写同一目标 |
+| [P3] 缩略图 8 桶粗锁跨越整个 ffmpeg（≤35 s），同桶无关 URI 头阻塞 | `tiklocal/services/thumbnail.py:442` | 分桶策略需要实测 |
+| [P3] 电台元数据 LRU 无锁却被 8 线程并发 `move_to_end`（2000+ 曲库可 `KeyError`） | `tiklocal/services/radio.py:249-258`、`:269-270` | 需要大库才触发 |
+| [P3] `apply_sources` 无锁重建 7 字段，读者可见「新 sources + 旧 roots」→ 瞬时 404 | `tiklocal/services/media_sources_store.py:334-346` | 窗口极窄，`_SOURCES_LOCK` 只挡写不挡读 |
+| [P3] `devices.json.tmp` 固定名 + `os.replace` 无重试无清理；`verify` 每个请求在锁内读整份文件 | `tiklocal/services/device_auth.py:148` | 单实例写入，冲突概率低 |
+| [P3] `collections._quarantine` 只留一份 `.corrupt`，第二次损坏的字节被丢弃 | `tiklocal/services/collections.py:73-81` | 保留一份已够定位问题 |
+| [P3] 空队列时「自然结束」与「点下一首」重叠，两次 `playNext` 各 shift 一首 | `tiklocal/static/radio_controller.js:397-405`、`:142-149` | 需要先有 T4-2 的代际号 |
+| [P3] `collection_picker.open()` 无重入守卫，双击并发两个 `open()` 各发 2 个 GET | `tiklocal/static/collection_picker.js:232-236`、`:210-230` | 结果幂等，只是重复请求 |
+| [P3] `loadAuthorSources()` 无代际，旧请求晚失败会把列表清空 | `tiklocal/static/settings_page_controller.js:1263-1272` | 窗口窄、可刷新恢复 |
+| [P3] 合集移除操作不参与 `organizeBusy` 互斥，只禁自身按钮 | `tiklocal/static/library_page_controller.js:1210-1222` | 与整理操作并发时会重复提交，结果幂等 |

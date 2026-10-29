@@ -174,7 +174,8 @@ def register_settings_routes(
 
     def _apply_change(sources, message: str) -> dict:
         with _SOURCES_LOCK:
-            return _apply_change_locked(sources, message)
+            outcome = _apply_change_locked(sources, message)
+        return _respond_after_change(outcome)
 
     def _apply_change_locked(sources, message: str) -> dict:
         previous_default = Path(library_service.media_root)
@@ -236,37 +237,52 @@ def register_settings_routes(
         download_manager = app.extensions.get('download_manager')
         if download_manager is not None and target is not None:
             download_manager.media_root = Path(target.path).resolve()
-        scan = {'indexed': 0, 'deleted': 0, 'busy': False, 'unavailable': [], 'error': ''}
-        if library_indexer is not None:
-            try:
-                result = library_indexer.sync()
-            except sqlite3.Error as error:
-                # The folder list is already saved, so a failing rescan must not turn
-                # the request into a 500: the page then kept showing the old list while
-                # the server used the new one, and the new folder stayed unscanned
-                # until a restart. A damaged index ("database disk image is malformed"
-                # is a DatabaseError, not an OperationalError) lands here too.
-                busy = 'locked' in str(error) or 'busy' in str(error)
-                if busy:
-                    app.logger.warning('Rescan after a folder change hit a busy database: %s', error)
-                else:
-                    app.logger.exception('Rescan after a folder change failed')
-                result = {'busy': busy, 'error': 'busy' if busy else 'failed'}
-            scan = {
-                'indexed': int(result.get('indexed') or 0),
-                'deleted': int(result.get('deleted') or 0),
-                'busy': bool(result.get('busy')),
-                # Same names the scan button reads from /api/library/sync: the settings
-                # page used to get 'unavailable' here and report "rescanned 0 items" for
-                # a folder that could not be reached at all.
-                'unavailable_sources': list(result.get('unavailable_sources') or []),
-                'source_errors': dict(result.get('source_errors') or {}),
-                'error': str(result.get('error') or ''),
-            }
         app.logger.info(
             'Media folders updated: %s', ', '.join(f"@{source.id}={source.path}" for source in installed),
         )
-        return {'success': True, 'message': message, 'data': {**_source_payload(), 'scan': scan}}
+        # The rescan happens outside _SOURCES_LOCK: a cold scan of a large library
+        # takes minutes, and holding the list lock for it made every other folder
+        # edit (and every /library render that touches the list) queue behind it
+        # until the client gave up. Callers pass this through _respond_after_change().
+        return {'success': True, 'message': message, 'data': _source_payload()}
+
+    def _scan_after_change() -> dict:
+        scan = {'indexed': 0, 'deleted': 0, 'busy': False, 'unavailable': [], 'error': ''}
+        if library_indexer is None:
+            return scan
+        try:
+            result = library_indexer.sync()
+        except sqlite3.Error as error:
+            # The folder list is already saved, so a failing rescan must not turn
+            # the request into a 500: the page then kept showing the old list while
+            # the server used the new one, and the new folder stayed unscanned
+            # until a restart. A damaged index ("database disk image is malformed"
+            # is a DatabaseError, not an OperationalError) lands here too.
+            busy = 'locked' in str(error) or 'busy' in str(error)
+            if busy:
+                app.logger.warning('Rescan after a folder change hit a busy database: %s', error)
+            else:
+                app.logger.exception('Rescan after a folder change failed')
+            result = {'busy': busy, 'error': 'busy' if busy else 'failed'}
+        return {
+            'indexed': int(result.get('indexed') or 0),
+            'deleted': int(result.get('deleted') or 0),
+            'busy': bool(result.get('busy')),
+            # Same names the scan button reads from /api/library/sync: the settings
+            # page used to get 'unavailable' here and report "rescanned 0 items" for
+            # a folder that could not be reached at all.
+            'unavailable_sources': list(result.get('unavailable_sources') or []),
+            'source_errors': dict(result.get('source_errors') or {}),
+            'error': str(result.get('error') or ''),
+        }
+
+    def _respond_after_change(outcome):
+        if isinstance(outcome, tuple):
+            return outcome
+        data = dict(outcome.get('data') or {})
+        data['scan'] = _scan_after_change()
+        outcome['data'] = data
+        return outcome
 
     @app.get('/api/library/sources')
     def api_media_sources():
@@ -292,9 +308,10 @@ def register_settings_routes(
                 )
             except MediaSourceError as error:
                 return {'success': False, 'error': _reason(error)}, 400
-            return _apply_change_locked(
+            outcome = _apply_change_locked(
                 sources, t('settings.library.source_added', name=source.name),
             )
+        return _respond_after_change(outcome)
 
     @app.patch('/api/library/sources/<source_id>')
     def api_update_media_source(source_id):
@@ -306,9 +323,10 @@ def register_settings_routes(
                 )
             except MediaSourceError as error:
                 return {'success': False, 'error': _reason(error)}, 400
-            return _apply_change_locked(
+            outcome = _apply_change_locked(
                 sources, t('settings.library.source_updated', name=source.name),
             )
+        return _respond_after_change(outcome)
 
     @app.delete('/api/library/sources/<source_id>')
     def api_remove_media_source(source_id):
@@ -336,7 +354,8 @@ def register_settings_routes(
                 )
             except MediaSourceError as error:
                 return {'success': False, 'error': _reason(error)}, 400
-            return _apply_change_locked(remaining, t('settings.library.source_removed'))
+            outcome = _apply_change_locked(remaining, t('settings.library.source_removed'))
+        return _respond_after_change(outcome)
 
     def library_stats() -> dict:
         # Settings is the only page that can clear the thumbnail cache or repair the

@@ -26,6 +26,22 @@ class MediaIndexStore:
 
     def __init__(self, database: AppDatabase):
         self.database = database
+        #: URIs deleted while a scan was already walking the tree. The scan writes the
+        #: snapshot it collected *before* the delete, so without this the row came back
+        #: as a card whose file is in the trash (404 on every request) until the next
+        #: scan. Filled by delete(), drained by replace_snapshot().
+        self._deleted_uris: set[str] = set()
+        self._deleted_lock = threading.Lock()
+
+    def _remember_deleted(self, uri: str) -> None:
+        with self._deleted_lock:
+            self._deleted_uris.add(uri)
+
+    def _take_deleted(self) -> set[str]:
+        with self._deleted_lock:
+            taken = set(self._deleted_uris)
+            self._deleted_uris.clear()
+        return taken
 
     def replace_snapshot(
         self,
@@ -43,6 +59,12 @@ class MediaIndexStore:
         )
         with self.database.connect() as conn:
             conn.execute("CREATE TEMP TABLE media_index_seen(uri TEXT PRIMARY KEY)")
+            # One round trip per row (two, counting `seen`) kept the write transaction
+            # open for the whole walk: 19k files meant 38k statements, each a Python↔C
+            # call inside the single write lock every reader waits on. Batching turns
+            # that into two statements per scan.
+            rows: list[tuple] = []
+            seen: list[tuple[str]] = []
             for record in records:
                 uri = str(record.get('uri') or '')
                 try:
@@ -59,8 +81,10 @@ class MediaIndexStore:
                     # strip() here dropped those files from the index for good.
                     LOGGER.warning('Skipping a file with trailing whitespace in its name: %r', uri)
                     continue
-                values = self._record_values(record, now)
-                conn.execute(
+                rows.append(self._record_values(record, now))
+                seen.append((record["uri"],))
+            if rows:
+                conn.executemany(
                     """
                     INSERT INTO media_items(
                       uri, source_id, rel_path, filename, parent_path, media_type,
@@ -92,9 +116,17 @@ class MediaIndexStore:
                       album_size = excluded.album_size,
                       search_text = excluded.search_text
                     """,
-                    values,
+                    rows,
                 )
-                conn.execute("INSERT OR IGNORE INTO media_index_seen(uri) VALUES (?)", (record["uri"],))
+                conn.executemany("INSERT OR IGNORE INTO media_index_seen(uri) VALUES (?)", seen)
+            # A delete that raced the scan recorded its intent in `_deleted_uris`; the
+            # snapshot above was collected before the file went to the trash. Dropping
+            # those URIs (and their `seen` marks) here keeps the card from coming back
+            # with a 404 behind it until the next scan.
+            raced = self._take_deleted()
+            if raced:
+                conn.executemany("DELETE FROM media_items WHERE uri = ?", [(uri,) for uri in raced])
+                conn.executemany("DELETE FROM media_index_seen WHERE uri = ?", [(uri,) for uri in raced])
             deleted = 0
             if source_ids:
                 placeholders = ",".join("?" for _ in source_ids)
@@ -234,6 +266,9 @@ class MediaIndexStore:
         return len(records)
 
     def delete(self, uri: str) -> bool:
+        # Recorded before the row goes away: a scan that already collected this file
+        # would otherwise write it straight back (see `_deleted_uris`).
+        self._remember_deleted(uri)
         with self.database.connect() as conn:
             deleted = conn.execute("DELETE FROM media_items WHERE uri = ?", (uri,)).rowcount
             if deleted:
@@ -258,6 +293,7 @@ class MediaIndexStore:
         itself, including the vector blob, which is never cheap to keep.
         """
         removed = 0
+        self._remember_deleted(uri)
         with self.database.connect() as conn:
             for table in ('playback_positions', 'media_events', 'media_affinity', 'media_vectors'):
                 removed += conn.execute(f"DELETE FROM {table} WHERE uri = ?", (uri,)).rowcount
@@ -1186,6 +1222,12 @@ class LibraryIndexer:
                 'busy': True,
             }
         try:
+            # Anything that asked for a rescan while this lock was held by the scan we
+            # just waited for is covered by the scan we are about to run, so clear the
+            # flag here. Clearing it only inside the loop below left a stale True behind
+            # whenever the flag was set with no scan running, and the next sync then
+            # walked the whole library twice.
+            self._rescan_requested = False
             result = self._sync_locked()
             while self._rescan_requested:
                 self._rescan_requested = False
@@ -1235,6 +1277,11 @@ class LibraryIndexer:
         # A download finishing mid-scan must not be treated as "not seen by the
         # scan" by replace_snapshot(), which deletes every row outside its seen set.
         if not self._sync_lock.acquire(timeout=REGISTER_LOCK_TIMEOUT_SEC):
+            # The scan in flight enumerated the tree before these files existed, so it
+            # will not index them. Without a follow-up pass the download stays
+            # invisible until the next restart or manual rescan, and its job is
+            # reported as failed even though the bytes are already on disk.
+            self._rescan_requested = True
             LOGGER.warning('index scan still running; %d output(s) left for the next scan', len(uris))
             raise IndexBusyError(f'index scan still running; {len(uris)} output(s) not registered')
         try:

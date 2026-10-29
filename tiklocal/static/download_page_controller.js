@@ -9,6 +9,14 @@
   let dependencyMeta = { yt_dlp_available: false, gallery_dl_available: false, ffmpeg_available: false, tiktok_downloader: null };
   let selectedEngine = 'yt-dlp';
   let selectedTab = 'post';
+  // A batch delete can run for minutes (files mode moves every file to the trash).
+  // `updateSelectionUI()` recomputed `disabled` from the selection size alone, so any
+  // checkbox touch — or the 2.2 s history rebuild — re-enabled the button and a second
+  // click posted the same ids again.
+  let deleteSelectionInFlight = false;
+  // job ids with an action request in flight; the row is rebuilt on every poll, so
+  // the disabled state has to follow the id, not the button node.
+  const jobActionBusy = new Set();
   const DEFAULT_PLACEHOLDER = T('download.url_placeholder');
   const TIKTOK_PLACEHOLDER = T('download.tiktok_placeholder');
 
@@ -468,6 +476,13 @@
     if (footer) footer.hidden = historyJobs.length === 0 || historySelecting;
     const bar = document.getElementById('history-select-bar');
     if (bar) bar.hidden = !historySelecting;
+    if (jobActionBusy.size) {
+      // The row was rebuilt while its request was still running: keep the buttons of
+      // those jobs disabled so the same action cannot be posted twice.
+      list.querySelectorAll('[data-job-id]').forEach((item) => {
+        if (jobActionBusy.has(item.dataset.jobId)) item.disabled = true;
+      });
+    }
     updateSelectionUI();
     window.feather?.replace();
   }
@@ -495,7 +510,7 @@
       allButton.setAttribute('aria-pressed', String(pageSelected || allSelected));
     }
     const deleteButton = document.getElementById('history-select-delete');
-    if (deleteButton) deleteButton.disabled = count === 0;
+    if (deleteButton) deleteButton.disabled = count === 0 || deleteSelectionInFlight;
   }
 
   function enterHistorySelection() {
@@ -600,6 +615,7 @@
   }
 
   async function deleteSelectedJobs() {
+    if (deleteSelectionInFlight) return;
     if (!selectedJobIds.size) {
       TikLocalUI.toast(T('download.select.none'), 'error');
       return;
@@ -611,6 +627,7 @@
 
     const ids = selected.map((job) => job.id);
     const deleteButton = document.getElementById('history-select-delete');
+    deleteSelectionInFlight = true;
     if (deleteButton) deleteButton.disabled = true;
     try {
       const data = await api('/api/download/jobs/delete', {
@@ -635,7 +652,11 @@
       await refreshJobs({ force: true });
     } catch (error) {
       TikLocalUI.toast(error.message, 'error');
-      if (deleteButton) deleteButton.disabled = selectedJobIds.size === 0;
+    } finally {
+      deleteSelectionInFlight = false;
+      // Re-read the button: the list may have been rebuilt while the request was in
+      // flight, so the captured node can already be detached.
+      updateSelectionUI();
     }
   }
 
@@ -831,12 +852,17 @@
       button.setAttribute('aria-expanded', String(willOpen));
       return;
     }
-    if (action === 'delete' && !await confirmClear({
-      title: T('download.remove_record'),
-      copy: T('download.confirm_clear_copy'),
-    })) return;
+    // The row this button belongs to can be replaced while a request is in flight
+    // (the history list is rebuilt on every poll), so the guard lives on the job id
+    // rather than on the element: a detached button must not re-enable the action.
+    if (jobActionBusy.has(jobId)) return;
+    jobActionBusy.add(jobId);
     button.disabled = true;
     try {
+      if (action === 'delete' && !await confirmClear({
+        title: T('download.remove_record'),
+        copy: T('download.confirm_clear_copy'),
+      })) return;
       if (action === 'cancel') await api(`/api/download/jobs/${jobId}/cancel`, { method: 'POST' });
       if (action === 'retry') {
         await api(`/api/download/jobs/${jobId}/retry`, { method: 'POST' });
@@ -847,7 +873,8 @@
       await refreshJobs({ force: true });
     } catch (error) {
       TikLocalUI.toast(error.message, 'error');
-      button.disabled = false;
+    } finally {
+      jobActionBusy.delete(jobId);
     }
   }
 
