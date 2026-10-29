@@ -30,8 +30,22 @@ def test_position_is_kept_only_where_resuming_makes_sense(client):
     assert 'resume' not in library_item(client)
     assert b'resumePosition: 0,' in client.get('/detail/movie.mp4').data
 
-    assert save(client, 5).get_json() == {'saved': False}
+    # A glance (the first seconds) is not a reason to forget: the library quick
+    # viewer reports the position when it switches clips, and that used to delete the
+    # 40 minute position another device had saved. Nothing is stored, nothing is lost.
+    assert save(client, 5).get_json() == {'saved': True}
+    assert 'resume' not in library_item(client)
+    # A clip shorter than the resume threshold never gets a row either.
     assert save(client, 30, duration=45).get_json() == {'saved': False}
+
+
+def test_a_glance_does_not_erase_another_devices_position(client):
+    # Device A stops five minutes into a ten minute clip; device B opens the same clip
+    # in the quick viewer and swipes away three seconds later. The row used to be
+    # deleted on that second report.
+    assert save(client, 300).get_json() == {'saved': True}
+    assert save(client, 3).get_json() == {'saved': True}
+    assert library_item(client)['resume'] == 300
 
 
 def test_rejects_bad_input_and_reset_clears_positions(client):

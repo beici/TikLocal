@@ -1,28 +1,25 @@
 import argparse
 import datetime
-import json
 import os
 import sys
 from pathlib import Path
 from tiklocal.paths import get_thumbs_map_path, get_data_dir
+from tiklocal.services.json_storage import read_json_file, write_json_atomic
 from tiklocal.services.library import LibraryService, VIDEO_EXTENSIONS
 from tiklocal.services.download_tools import resolve_tool
 from tiklocal.services.thumbnail import ThumbnailService
 
 
 def _load_map() -> dict:
-    p = get_thumbs_map_path()
-    if p.exists():
-        try:
-            return json.loads(p.read_text(encoding='utf-8'))
-        except Exception:
-            return {}
-    return {}
+    # A truncated map used to read as "no timestamps" and then be overwritten by
+    # the next save, so one interrupted run lost every recorded poster timestamp.
+    data = read_json_file(get_thumbs_map_path(), {})
+    return data if isinstance(data, dict) else {}
 
 
 def _save_map(data: dict) -> None:
-    p = get_thumbs_map_path()
-    p.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+    # Same reason: a half-written map is what makes the next run start from {}.
+    write_json_atomic(get_thumbs_map_path(), data)
 
 
 def _print_progress(current: int, total: int, prefix: str = '') -> None:
@@ -42,6 +39,10 @@ def generate_thumbnails(media_root: str | Path, overwrite: bool = False, limit: 
     stats = {'total': len(videos), 'generated': 0, 'skipped': 0, 'failed': 0}
     if show_progress:
         print(f'Data directory: {get_data_dir()}')
+        # Name the folder being scanned: with the settings page able to choose a
+        # different library than the launch directory, "I ran thumbs and nothing
+        # appeared" was usually a run against the other folder.
+        print(f'Media folder: {library.media_root}')
         print(f'Found {len(videos)} videos; thumbnail directory: {service.thumb_dir}')
     if videos and resolve_tool('ffmpeg') is None:
         # Every poster needs ffmpeg; without it the run reported "failed: 5000"

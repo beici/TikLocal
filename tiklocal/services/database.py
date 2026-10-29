@@ -742,15 +742,27 @@ class MediaActivityStore:
     RESUME_END_MARGIN = 15.0
 
     def save_position(self, uri: str, position: float, duration: float) -> bool:
-        """Remember where playback stopped; returns False when the position was cleared instead."""
-        keep = (
-            duration >= self.RESUME_MIN_DURATION
-            and self.RESUME_MIN_POSITION <= position <= duration - self.RESUME_END_MARGIN
-        )
-        with self.database.connect() as conn:
-            if not keep:
+        """Remember where playback stopped; returns False when the position was cleared instead.
+
+        "Not worth remembering" and "finished" are different answers. A two second
+        glance in another tab (the library quick viewer reports the position when it
+        switches clips) used to fall into the clearing branch and delete the 40 minute
+        position another device had saved — silently, for the whole account.
+        """
+        if duration < self.RESUME_MIN_DURATION:
+            # A clip too short to resume never gets a row.
+            with self.database.connect() as conn:
                 conn.execute("DELETE FROM playback_positions WHERE uri = ?", (uri,))
-                return False
+            return False
+        if position < self.RESUME_MIN_POSITION:
+            # Opened and swiped away: leave whatever is stored alone.
+            return True
+        if position > duration - self.RESUME_END_MARGIN:
+            # Watched to the end: start over next time.
+            with self.database.connect() as conn:
+                conn.execute("DELETE FROM playback_positions WHERE uri = ?", (uri,))
+            return False
+        with self.database.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO playback_positions(uri, position, duration, updated_at) VALUES (?, ?, ?, ?)

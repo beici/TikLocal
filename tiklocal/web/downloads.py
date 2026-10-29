@@ -174,7 +174,12 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
                 _, added, rejected, truncated = store.add_reporting(raw_add)
                 counts = {'added': added, 'rejected': rejected, 'truncated': truncated}
             elif action == 'remove':
-                store.remove(str(payload.get('url') or ''))
+                if isinstance(raw_lines, list) and raw_lines:
+                    # Remove only what this page consumed; `clear` wiped links another
+                    # tab had imported in the meantime.
+                    store.remove_many([str(item) for item in raw_lines])
+                else:
+                    store.remove(str(payload.get('url') or ''))
             elif action == 'clear':
                 store.clear()
             elif action == 'source':

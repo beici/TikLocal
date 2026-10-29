@@ -734,3 +734,21 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] `formatBytes` 先按未舍入值选单位 → `1024.0 MB` | `tiklocal/static/settings_page_controller.js:911-914` | 与本轮 `filesizeformat` 同型，但只在设置页使用 |
 | [P3] 设置页数值拼接未做类型收敛 | `tiklocal/static/settings_page_controller.js:929`、`:934-935` | 见报告，改动面小但需先确认所有调用点 |
 | [P3] 前端格式化逻辑零散重复，缺公共函数 | `tiklocal/static/*.js` | 需一次统一重构，单独做比夹在缺陷修复里安全 |
+
+### 第 42 轮新增（13 条）
+
+| 问题 | 位置 | 为什么暂不修 |
+| --- | --- | --- |
+| [P3] 实例锁只覆盖 `serve` / `dedupe --execute`，`vectorize` 只锁到 `migrate()` 结束 | `tiklocal/experiments/similarity/cli.py`、`tiklocal/services/instance_lock.py` | 让 `vectorize` 全程持锁意味着建索引期间服务器不能启动，属产品语义变更 |
+| [P3] `.legacy-root` 读空→写自己无锁；`legacy.replace()` 失败时返回可能已被搬走的路径 | `tiklocal/services/thumbnail.py:220-240` | 只在首次迁移旧缓存目录时发生，且已补 `canonical.is_file()` 判据 |
+| [P3] `--help` 与错误提示措辞未随子命令重构更新 | `tiklocal/run.py` | 纯文案，需一次性梳理全部子命令 |
+| [P3] 除 `thumbs` 外的子命令在部分失败时仍 exit 0 | `tiklocal/run.py` | 退出码是对外契约，改动要让脚本调用方同步 |
+| [P3] CLI 无事可做时静默成功，脚本无法区分「没做」与「做了」 | `tiklocal/run.py` | 同属输出契约，需与上一条一起定 |
+| [P3] 跨卷 `os.replace` 抛 `OSError` 时未区分 `EXDEV` 与「被占用」 | `tiklocal/services/json_storage.py` | 两种情况都已重试并最终上抛，区分的收益在错误文案 |
+| [P3] cookie 目录可被配置成任意路径，未校验归属 | `tiklocal/services/downloader.py` | 属配置信任边界，收紧会影响既有部署 |
+| [P3] 下载临时目录名可预测（`.tiklocal-download-tmp`） | `tiklocal/paths.py:10` | 同机其他用户可预建同名目录；单用户桌面场景影响有限 |
+| [P2] 登出只在提交表单的标签页清电台状态，另一标签页每 5 s 写回 → 跨账号泄漏媒体名 | `tiklocal/static/radio_controller.js:900-915` | 需要广播机制（BroadcastChannel 或 storage 事件），本轮只修了 URL 列表 |
+| [P2] 隐藏的 `/flow` 标签页不暂停视频（双声道叠加 + `visible_ms=0` 但 `ratio=1.0` 的污染样本） | `tiklocal/static/flow_page_controller.js:106-119` | 暂停要与「滑走后自动恢复」的既有手势逻辑一起改 |
+| [P3] `/api/activity` 无幂等键，重试会自造一次 skip + impression | `tiklocal/web/library.py` | 需要客户端生成事件 id 并落库去重 |
+| [P3] `/flow` 只在加载时读 `douyin_mode`，跨标签页切换不生效 | `tiklocal/static/flow_page_controller.js` | 与上一条同属跨标签页同步，一起做 |
+| [P3] 合集选择器 `count ± 1` 不用服务端 `item_count` | `tiklocal/static/collection_picker.js:216-229` | 只在并发增删时短暂偏差，刷新即正 |

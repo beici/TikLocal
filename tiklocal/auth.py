@@ -174,8 +174,18 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
             'CSRF token rejected for %s %s from %s',
             request.method, request.path, request.remote_addr or 'unknown',
         )
+        if request.path.rstrip('/').endswith('/logout'):
+            # A tab that still holds the pre-login token could not even log out: the
+            # form landed on the 403 page while the cookie stayed valid for 30 more
+            # days. Logging out is always safe, so it does not need the token.
+            session.clear()
+            response = redirect(url_for('login_view'))
+            response.delete_cookie(app.config.get('SESSION_COOKIE_NAME') or 'session')
+            return response
         if request.path.startswith('/api/'):
-            return {'success': False, 'error': t('auth.error.csrf')}, 403
+            # `code` lets the client tell "your tab is stale, reload" (recoverable,
+            # base.js reloads once) from a genuinely forbidden request.
+            return {'success': False, 'code': 'csrf', 'error': t('auth.error.csrf')}, 403
         # A bare string rendered as an unstyled <html lang="en"> page: after a second
         # tab logged in (which rotates the token) the visible "log out" button landed
         # here with no way back, while the cookie stayed valid for 30 more days.
@@ -274,11 +284,19 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
             else:
                 limiter.clear(client_key)
                 remember = request.form.get('remember') == '1'
+                # Keep the CSRF token across the clear: the cookie is shared by every
+                # tab, so rotating it here made every other open tab's writes fail
+                # with 403 for good (its meta tag still holds the old value), and
+                # even the logout form in those tabs landed on the 403 page.
+                preserved_token = session.get('_csrf_token')
                 session.clear()
                 session['authenticated'] = True
                 session['auth_revision'] = auth_store.revision
                 session.permanent = remember
-                ensure_csrf_token()
+                if preserved_token:
+                    session['_csrf_token'] = preserved_token
+                else:
+                    ensure_csrf_token()
                 _LOGGER.info('login succeeded for %s', client_key)
                 return redirect(next_url)
 

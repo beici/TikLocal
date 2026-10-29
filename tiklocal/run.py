@@ -196,8 +196,15 @@ def _configured_media_root(config, args) -> str:
     while ``vectorize`` already understood ``media_sources``: the same config.yaml
     worked for one command and exited with "Specify a media directory" for the
     others. Prefer the default source, then the first configured one.
+
+    The settings page writes ``media_sources.json`` and the server folds it in
+    before picking a root; without the same fold these commands kept working on
+    the *launch* directory while the server served the folder chosen in settings —
+    a full poster cache generated for a library nobody looks at.
     """
-    configured = normalize_media_sources(config, getattr(args, 'media_source', None))
+    configured = fold_stored_media_sources(
+        normalize_media_sources(config, getattr(args, 'media_source', None))
+    )
     if not configured:
         return ''
     chosen = next((item for item in configured if item.get('id') == 'default'), configured[0])
@@ -325,6 +332,22 @@ def main():
             argv.pop(1)
             argv.insert(0, 'thumbs')
         elif len(argv) == 0 or argv[0] not in ('serve', 'thumbs', 'dedupe', 'vectorize', 'auth', 'tls'):
+            # A word that *looks* like a command but is not one used to be rewritten
+            # into "serve <word>", so `tiklocal migrate` failed with "Media directory
+            # does not exist: migrate" -- pointing at the argument instead of the
+            # command. Name the real command instead.
+            _near_misses = {
+                'migrate': 'migrations run automatically on `tiklocal serve`',
+                'vectorise': 'did you mean `tiklocal vectorize`?',
+                'thumb': 'did you mean `tiklocal thumbs`?',
+                'thumbnails': 'did you mean `tiklocal thumbs`?',
+                'duplicates': 'did you mean `tiklocal dedupe`?',
+                'status': 'did you mean `tiklocal tls status`?',
+            }
+            hint = _near_misses.get(argv[0])
+            if hint:
+                print(f"Error: unknown command: {argv[0]} ({hint})", file=sys.stderr)
+                raise SystemExit(2)
             # Default to serve when no known subcommand is present.
             argv.insert(0, 'serve')
 
@@ -460,6 +483,12 @@ Examples:
             # Non-zero so a script that ignores stdout still notices the tool is
             # missing instead of treating "failed: N" as a completed run.
             raise SystemExit(2)
+        if stats.get('failed') and not stats.get('generated'):
+            # Everything failed (a broken ffmpeg build, an unreadable folder, a
+            # share that dropped): "generated 0, failed 5000" plus exit 0 looked
+            # exactly like a finished run to the Task Scheduler and to `&&` chains.
+            print('Error: no thumbnail could be generated; see the messages above.', file=sys.stderr)
+            raise SystemExit(2)
         # Exit after completion.
         return
 
@@ -502,6 +531,12 @@ Examples:
             dry_run=dry_run,
             auto_confirm=getattr(args, 'auto_confirm', False)
         )
+        # Exit codes a script can act on. Every outcome used to be 0, so "canceled",
+        # "nothing to do" and "87 files could not be deleted" looked identical.
+        if stats.get('canceled'):
+            raise SystemExit(3)
+        if stats.get('failed'):
+            raise SystemExit(1)
         return
 
     if cmd == 'vectorize':

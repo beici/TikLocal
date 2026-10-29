@@ -3,6 +3,7 @@
 import io
 import locale
 import logging
+import os
 import re
 import sys
 import threading
@@ -97,7 +98,9 @@ def test_log_file_is_created_under_the_data_dir(tmp_path):
         root.handlers = []
         configure_logging(tmp_path)
         logging.getLogger('tiklocal.test').warning('hello token=abcd')
-        target = tmp_path / 'tiklocal.log'
+        # One file per process: two TikLocal processes used to share a single
+        # ``tiklocal.log`` and one of them lost its handler at the first rotation.
+        target = tmp_path / f'tiklocal.{os.getpid()}.log'
         assert target.exists()
         assert 'token=***' in target.read_text(encoding='utf-8')
     finally:

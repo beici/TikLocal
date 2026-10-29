@@ -12,15 +12,21 @@ its default handler (``has_level_handler`` sees ours) and makes waitress' late
 """
 
 import logging
+import os
 import re
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 _LOG_FORMAT = '[%(asctime)s] %(levelname)s in %(name)s: %(message)s'
 _CONFIGURED_FLAG = '_tiklocal_logging_configured'
-LOG_FILE_NAME = 'tiklocal.log'
+# One file per process. A single fixed name meant the server and `tiklocal thumbs`
+# rotated the same file: one of them won the rename and the other's records landed in
+# `tiklocal.log.1`, or the rotation failed on every record and the log died quietly.
+LOG_FILE_NAME = f'tiklocal.{os.getpid()}.log'
 MAX_LOG_BYTES = 2 * 1024 * 1024
 BACKUP_COUNT = 3
+# Process files kept on disk (each with its .1-.3 rotations).
+KEEP_LOG_FILES = 4
 
 # Credentials reach the log through exception messages and request dumps far too
 # easily (e.g. a failing provider call echoes the URL with its key in the query).
@@ -93,6 +99,29 @@ class _SharedRotatingFileHandler(RotatingFileHandler):
                     self.stream = None
 
 
+def _prune_old_log_files(log_dir: Path) -> None:
+    """Keep only the newest per-process log files.
+
+    Naming the log after the pid keeps two processes from rotating the same file, but
+    every start then adds a file: without this the data directory grew by up to 8 MB
+    per run and nothing ever removed the old ones.
+    """
+    try:
+        candidates = sorted(
+            (path for path in log_dir.glob('tiklocal.*.log*') if path.is_file()),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return
+    for path in candidates[KEEP_LOG_FILES:]:
+        try:
+            path.unlink()
+        except OSError:
+            # Still open in another process: it will be pruned on a later start.
+            pass
+
+
 def configure_logging(log_dir, level: int = logging.INFO) -> logging.Logger:
     """Attach a console handler and a rotating file handler exactly once."""
     root = logging.getLogger()
@@ -111,6 +140,7 @@ def configure_logging(log_dir, level: int = logging.INFO) -> logging.Logger:
     try:
         log_dir = Path(log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
+        _prune_old_log_files(log_dir)
         file_handler = _SharedRotatingFileHandler(
             log_dir / LOG_FILE_NAME,
             maxBytes=MAX_LOG_BYTES,

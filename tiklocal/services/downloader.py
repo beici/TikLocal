@@ -466,14 +466,24 @@ class DownloadManager:
         The library scanner ignores .tiklocal-download-tmp, so leftovers were
         invisible in the UI and never freed; a restart is the only safe moment to
         clear them (no worker owns a folder yet).
+
+        "No worker owns a folder" is only true for *this* process. Two instances may
+        share a media root (that is what ``--instance`` is for), and a second
+        instance starting while the first is downloading used to delete the first
+        one's finished-but-not-yet-moved files: the download then failed with
+        "gallery-dl did not download any usable files". A live folder keeps getting
+        touched, so age is what separates it from a leftover.
         """
         root = self.media_root / DOWNLOAD_TMP_DIR
         try:
             entries = list(root.iterdir())
         except OSError:
             return
+        cutoff = time.time() - STALE_TEMP_AGE_SEC
         for entry in entries:
             try:
+                if entry.stat().st_mtime > cutoff:
+                    continue
                 if entry.is_dir():
                     shutil.rmtree(entry, ignore_errors=True)
                 else:
@@ -744,7 +754,11 @@ class DownloadManager:
             tmp_path = target.with_name(
                 f'.{target.name}.{os.getpid()}.{next(_COOKIE_TEMP_COUNTER)}.tmp')
             try:
-                with tmp_path.open("wb") as f:
+                # Create the temp file already 0600. Writing it under the umask and
+                # narrowing afterwards left the full cookie jar readable for the
+                # duration of the write.
+                fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as f:
                     f.write(bytes(content))
                 os.replace(tmp_path, target)
             finally:
@@ -1593,6 +1607,13 @@ class DownloadManager:
         copy_path = temp_dir / "cookies.txt"
         try:
             shutil.copyfile(cookie_path, copy_path)
+            # The copy holds the same login state as the original, and it sits inside
+            # the media root: narrow it before anything else can read it, and so a
+            # hard kill (which skips the rmtree) does not leave a world-readable jar.
+            try:
+                os.chmod(copy_path, 0o600)
+            except OSError:
+                pass
         except OSError as error:
             # Never hand the engine the user's original jar: yt-dlp writes the jar
             # back when it exits, so two jobs sharing it interleave and truncate it —
@@ -1882,11 +1903,27 @@ class DownloadManager:
         except OSError as error:
             LOGGER.warning('Could not reserve a target name for %s: %s', target_name, error)
             return ''
-        try:
-            source_path.replace(target)
-        except OSError:
+        # The name was just created, so a scanner, ffprobe or the antivirus can be
+        # holding it open for a few hundred milliseconds: a single replace used to
+        # fail there, fall through to a copy that also failed, and the caller's
+        # finally then deleted the finished download. Retry like every other publish
+        # in this codebase does.
+        delay = 0.05
+        moved = False
+        for attempt in range(4):
+            try:
+                source_path.replace(target)
+                moved = True
+                break
+            except OSError:
+                if attempt == 3:
+                    break
+                time.sleep(delay)
+                delay *= 2
+        if not moved:
             try:
                 shutil.move(str(source_path), str(target))
+                moved = True
             except OSError as error:
                 try:
                     target.unlink(missing_ok=True)
@@ -1895,7 +1932,10 @@ class DownloadManager:
                     # escaped into the caller's finally, which deleted the already
                     # downloaded file. A leftover 0-byte name is the lesser evil.
                     LOGGER.warning('Could not remove the reserved name %s', target_name)
-                LOGGER.warning('Could not move %s into the library: %s', target_name, error)
+                LOGGER.warning(
+                    'Could not move %s into the library: %s (the finished file is still at %s)',
+                    target_name, error, source_path,
+                )
                 return ''
         return self._to_media_relative(str(target))
 

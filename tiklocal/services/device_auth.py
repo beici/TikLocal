@@ -2,11 +2,12 @@ import datetime
 import hashlib
 import hmac
 import json
-import os
 import secrets
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+
+from tiklocal.services.json_storage import write_json_atomic
 
 
 DEVICE_AUTH_FILE_VERSION = 1
@@ -154,25 +155,17 @@ class DeviceAuthStore:
         return [device for device in devices if isinstance(device, dict)]
 
     def _save(self, devices: list[dict]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
-        temp_path.write_text(
-            json.dumps(
-                {"version": DEVICE_AUTH_FILE_VERSION, "devices": devices},
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        # Two reasons not to hand-roll this. A fixed ``device_auth.json.tmp`` is
+        # shared by every writer, so a second process (a dev reloader, a CLI) can
+        # interleave its bytes with ours and publish a file that raises on load —
+        # which makes every paired device stop working at once. And a single
+        # ``os.replace`` has no retry: an antivirus holding the file open turned
+        # pairing into a 500. write_json_atomic uses a unique temp name and retries.
+        write_json_atomic(
+            self.path,
+            {"version": DEVICE_AUTH_FILE_VERSION, "devices": devices},
+            mode=0o600,
         )
-        try:
-            os.chmod(temp_path, 0o600)
-        except OSError:
-            pass
-        os.replace(temp_path, self.path)
-        try:
-            os.chmod(self.path, 0o600)
-        except OSError:
-            pass
 
     @staticmethod
     def _token_hash(token: str) -> str:

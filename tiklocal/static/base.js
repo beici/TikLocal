@@ -158,7 +158,30 @@ window.addEventListener('pageshow', (event) => {
       const target = `${window.location.pathname}${window.location.search}`;
       if (!window.location.pathname.startsWith('/login')) {
         window.__tiklocalRedirecting = true;
+        // The latch exists to stop one redirect per request in a burst. It used to be
+        // released only by `pageshow`, so a navigation that never happened (a pending
+        // download blocking it, Esc pressed at the wrong moment) left every later 401
+        // ignored and the page silently dead. Release it on a timer too.
+        window.setTimeout(() => { window.__tiklocalRedirecting = false; }, 3000);
         window.location.href = `/login?next=${encodeURIComponent(target)}`;
+      }
+    } else if (response.status === 403) {
+      // A second tab logged in, which rotates the session's CSRF token: this tab's
+      // pages still carry the old one in their <meta>, so every write answered 403
+      // forever (and even the logout form landed on the 403 page). Reload once to
+      // pick up the new token; the storage latch keeps a broken token from looping.
+      try {
+        const payload = await response.clone().json();
+        if (payload && payload.code === 'csrf') {
+          const KEY = 'tiklocal:csrf-reloaded-at';
+          const last = Number(window.sessionStorage.getItem(KEY) || 0);
+          if (Date.now() - last > 10000) {
+            window.sessionStorage.setItem(KEY, String(Date.now()));
+            window.location.reload();
+          }
+        }
+      } catch (error) {
+        // Not JSON (a proxied error page): leave the response to the caller.
       }
     }
     return response;

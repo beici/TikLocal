@@ -230,7 +230,15 @@ class ThumbnailService:
                 legacy.replace(canonical)
                 return canonical
             except OSError:
-                return legacy
+                # The file is still there (only the move failed), but another process
+                # may have moved it a moment earlier; hand back the canonical path we
+                # just failed to create only if it now exists, else nothing.
+                try:
+                    if canonical.is_file():
+                        return canonical
+                except OSError:
+                    pass
+                return None
         return canonical
 
     def _claim_legacy_adoption(self) -> bool:
@@ -248,9 +256,30 @@ class ThumbnailService:
             owner = ''
         if owner and owner != self._root_key:
             return False
-        if not owner:
+        if owner:
+            return True
+        # Create the claim exclusively: read-empty-then-write let two processes (the
+        # server and `tiklocal thumbs`) both "claim" the legacy cache, then both move
+        # the same file -- the loser ended up serving a path that no longer existed.
+        try:
+            fd = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
             try:
-                marker.write_text(self._root_key, encoding='utf-8')
+                winner = marker.read_text(encoding='utf-8').strip()
+            except OSError:
+                return False
+            return winner == self._root_key
+        except OSError:
+            # Cannot record the claim (read-only cache dir): keep the old behaviour and
+            # let this library adopt, since it cannot do worse than a duplicate file.
+            return True
+        try:
+            os.write(fd, self._root_key.encode('utf-8'))
+        except OSError:
+            pass
+        finally:
+            try:
+                os.close(fd)
             except OSError:
                 pass
         return True
@@ -469,6 +498,15 @@ class ThumbnailService:
                     if _replace_with_retry(temporary, output):
                         self._clear_failure(uri)
                         return output
+                    # The replace lost to a reader holding the old file open (the
+                    # server streaming a poster while `thumbs --overwrite` runs).
+                    # The old cache is still a valid image, so report success rather
+                    # than "failed" for a tile that is on disk and being served.
+                    try:
+                        if output.is_file() and output.stat().st_size > 0:
+                            return output
+                    except OSError:
+                        pass
             except OSError:
                 return None
             finally:

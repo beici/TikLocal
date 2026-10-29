@@ -1023,22 +1023,38 @@
           // the server kept creating jobs.
           signal: tikTimeoutSignal(180000),
         });
-        const failed = Array.isArray(data.failed) ? data.failed.length : 0;
+        // `failed`/`skipped` are lists in the payload: `Number(list)` is NaN, so the
+        // "already queued" branch could never fire.
+        const failedItems = Array.isArray(data.failed) ? data.failed : [];
+        const skippedItems = Array.isArray(data.skipped) ? data.skipped : [];
+        const queuedItems = Array.isArray(data.items) ? data.items : [];
+        const failed = failedItems.length;
         const queued = Number(data.queued) || 0;
-        const skipped = Number(data.skipped) || 0;
+        const skipped = skippedItems.length;
+        // Only the URLs this page turned into jobs may leave the list: `clear` wiped
+        // links another tab or a phone had imported a second earlier, and
+        // `replace(failed)` overwrote the whole table with this page's leftovers.
+        const consumedUrls = queuedItems
+          .concat(skippedItems)
+          .map((item) => String((item && item.url) || ''))
+          .filter(Boolean);
+        const dropConsumed = async () => {
+          if (!consumedUrls.length) return;
+          try {
+            renderUrlList(await api('/api/download/urls', {
+              method: 'POST',
+              body: JSON.stringify({ action: 'remove', lines: consumedUrls }),
+            }));
+          } catch (error) {
+            // Keep the list as it is; the next queue call still dedupes on the server.
+          }
+        };
         if (!queued && !failed && skipped) {
           // Every link was already queued (a second click, or a list that was not
           // cleared): reporting "the list is empty" over a full list left the user
           // with nothing to do.
           TikLocalUI.toast(T('download.urls.already_queued'));
-          try {
-            renderUrlList(await api('/api/download/urls', {
-              method: 'POST',
-              body: JSON.stringify({ action: 'clear' }),
-            }));
-          } catch (error) {
-            renderUrlList({ lines: [] });
-          }
+          await dropConsumed();
           return;
         }
         if (!queued && !failed) {
@@ -1050,34 +1066,9 @@
         TikLocalUI.toast(failed
           ? T('download.urls.queued_partial', { count: queued, failed })
           : T('download.urls.queued', { count: queued }));
-        if (queued && !failed) {
-          // The list became jobs; keeping it around let a second click queue every
-          // URL again (six jobs for three links).
-          try {
-            renderUrlList(await api('/api/download/urls', {
-              method: 'POST',
-              body: JSON.stringify({ action: 'clear' }),
-            }));
-          } catch (error) {
-            renderUrlList({ lines: [] });
-          }
-        } else if (failed) {
-          // A partial run left the whole list in place, so retrying the failures
-          // re-queued the URLs that had already become jobs. Keep only the failures.
-          const failedUrls = (Array.isArray(data.failed) ? data.failed : [])
-            .map((item) => String((item && item.url) || ''))
-            .filter(Boolean);
-          if (failedUrls.length) {
-            try {
-              renderUrlList(await api('/api/download/urls', {
-                method: 'POST',
-                body: JSON.stringify({ action: 'replace', lines: failedUrls }),
-              }));
-            } catch (error) {
-              // The list stays as it was; the next queue call still dedupes.
-            }
-          }
-        }
+        // Successes leave the list whether or not the batch was partial; the failures
+        // stay so the user can retry them.
+        await dropConsumed();
         lastJobsSignature = '';
         await refreshJobs({ force: true });
       } catch (error) {

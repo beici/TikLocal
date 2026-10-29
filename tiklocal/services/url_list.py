@@ -161,6 +161,21 @@ class UrlListStore:
         with _LIST_LOCK:
             return self._write(lines, backup=True)
 
+    def remove_many(self, lines: list[str]) -> list[str]:
+        """Remove the given URLs, leaving everything else alone.
+
+        The download page used ``clear`` after queueing and ``replace(failed)`` after a
+        partial failure. Both are whole-table operations, so a second tab (or a phone)
+        that had just imported twenty links lost them to the first tab's cleanup.
+        """
+        with _LIST_LOCK:
+            doomed = {normalize_url(raw) for raw in lines if isinstance(raw, str)}
+            doomed.discard('')
+            if not doomed:
+                return list(self.lines())
+            kept = [url for url in self.lines() if url not in doomed]
+            return self._write(kept)
+
     def add(self, lines: list[str]) -> list[str]:
         with _LIST_LOCK:
             merged = list(self.lines())
@@ -255,21 +270,21 @@ class UrlListStore:
     def pull(self) -> dict:
         """Read the server file into the local list."""
         target = self._sync_target()
-        try:
-            size = target.stat().st_size
-        except OSError as exc:
-            raise ValueError(f'Unable to read {target}: {exc.strerror or exc}') from exc
-        if size > MAX_FILE_BYTES:
-            raise ValueError('The server file is too large to import.')
-        try:
-            text = target.read_text(encoding='utf-8', errors='replace')
-        except OSError as exc:
-            raise ValueError(f'Unable to read {target}: {exc.strerror or exc}') from exc
-        imported = parse_text(text)
-        # Hold the lock the other writers use: _write() replaces the whole list, so
-        # an add() that ran between its read and its write would be merged into
-        # nothing and silently dropped.
+        # The read and the whole-list replace must be one critical section. Reading
+        # outside the lock (a network share can take hundreds of milliseconds) let an
+        # add() land in between and then be overwritten by the imported list.
         with _LIST_LOCK:
+            try:
+                size = target.stat().st_size
+            except OSError as exc:
+                raise ValueError(f'Unable to read {target}: {exc.strerror or exc}') from exc
+            if size > MAX_FILE_BYTES:
+                raise ValueError('The server file is too large to import.')
+            try:
+                text = target.read_text(encoding='utf-8', errors='replace')
+            except OSError as exc:
+                raise ValueError(f'Unable to read {target}: {exc.strerror or exc}') from exc
+            imported = parse_text(text)
             lines = self._write(imported, backup=True)
         return {'direction': 'pull', 'lines': lines, 'path': str(target)}
 

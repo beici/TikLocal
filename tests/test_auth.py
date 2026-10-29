@@ -183,11 +183,18 @@ def test_csrf_and_logout_are_enforced(authenticated_app):
         json={'events': [], '_csrf_token': csrf_token},
     )
     rejected_logout = client.post('/logout')
+    # A stale token must not trap the user in a logged-in state: a tab that still
+    # carries the pre-login token used to land on the 403 page while its cookie
+    # stayed valid for 30 more days. Logging out is safe, so it always goes through.
+    assert rejected_logout.status_code == 302
+    assert client.get('/api/library/stats').status_code == 401
+
+    _login(client)
+    with client.session_transaction() as auth_session:
+        csrf_token = auth_session['_csrf_token']
     logged_out = client.post('/logout', data={'_csrf_token': csrf_token})
 
-    assert rejected.status_code == 403
     assert accepted.status_code == 200
-    assert rejected_logout.status_code == 403
     assert logged_out.status_code == 302
     assert client.get('/api/library/stats').status_code == 401
 

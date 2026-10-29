@@ -1,6 +1,8 @@
 import datetime
 import json
+import os
 import secrets
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,21 +81,66 @@ class AuthStore:
             self._mtime_ns = None
 
     def ensure(self, initial_password: str | None = None) -> AuthBootstrap:
+        """Create the auth file on first run; returns whether this call created it.
+
+        The check-then-create used to run unguarded, so a fresh instance started by the
+        server and by `tiklocal auth status` at the same moment produced two different
+        `secret_key`s: the server kept the one it read at start-up and the loser's write
+        won on disk, invalidating every session at the next restart. A claim file with
+        ``O_EXCL`` makes exactly one of them the creator.
+        """
         if self._load() is not None:
             return AuthBootstrap(created=False)
         supplied = str(initial_password or '').strip()
         password = supplied or DEFAULT_PASSWORD
         self._validate_password(password)
-        now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
-        self._save({
-            'version': AUTH_FILE_VERSION,
-            'password_hash': generate_password_hash(password),
-            'secret_key': secrets.token_hex(32),
-            'revision': 1,
-            'created_at': now,
-            'updated_at': now,
-        })
-        return AuthBootstrap(created=True, default_password=None if supplied else password)
+        claim = self.path.with_name(self.path.name + '.claim')
+        claim.parent.mkdir(parents=True, exist_ok=True)
+        fd: int | None = None
+        for attempt in range(3):
+            try:
+                fd = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                break
+            except FileExistsError:
+                # Another process is writing it right now; wait for its atomic replace.
+                deadline = time.monotonic() + 1.0
+                while time.monotonic() < deadline:
+                    if self._load() is not None:
+                        return AuthBootstrap(created=False)
+                    time.sleep(0.05)
+                # A crashed run left the claim behind (the pid is not in the name, so it
+                # cannot be checked): take it over, but never loop forever.
+                try:
+                    claim.unlink()
+                except OSError:
+                    pass
+            except OSError:
+                # Read-only data directory: the caller's own error reporting is better
+                # than a claim-file traceback.
+                break
+        try:
+            if self._load() is not None:
+                return AuthBootstrap(created=False)
+            now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+            self._save({
+                'version': AUTH_FILE_VERSION,
+                'password_hash': generate_password_hash(password),
+                'secret_key': secrets.token_hex(32),
+                'revision': 1,
+                'created_at': now,
+                'updated_at': now,
+            })
+            return AuthBootstrap(created=True, default_password=None if supplied else password)
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            try:
+                claim.unlink()
+            except OSError:
+                pass
 
     def set_password(self, password: str) -> None:
         self._validate_password(password)

@@ -30,17 +30,18 @@ def run_vectorize(config, args, parser):
 
     library = LibraryService(media_path, media_sources=build_media_sources(media_path, media_sources or None))
     database = AppDatabase(get_database_path())
-    # A pending migration must not run under a live server: its connections keep the
-    # old schema and DDL on a WAL database either fails or leaves a half-migrated
-    # file. The server holds this lock for its whole lifetime, so the conflict shows
-    # up here as a clear message instead of a corrupted index. Only the migration is
-    # guarded — the long vectorisation pass writes short transactions that SQLite
-    # serialises on its own, and blocking it would forbid preparing vectors while the
-    # site is up.
+    # The instance lock covers the whole command, not just the migration: the server
+    # holds it for its whole lifetime, so this fails immediately with "another instance
+    # is running" instead of writing vectors next to a live server. That is deliberate
+    # (the index sync and the vector pass would fight over the same rows), but it also
+    # means `tiklocal vectorize` cannot be used while the site is up -- stop the server
+    # first. The long vectorisation pass itself writes short transactions, so nothing
+    # else needs the lock once the migration is done.
     try:
         migrate_lock = acquire_instance_lock(get_database_path().parent)
     except InstanceLockError as exc:
         print(f'Error: {exc}', file=sys.stderr)
+        print('Stop the running TikLocal server before preparing vectors.', file=sys.stderr)
         sys.exit(1)
     try:
         database.migrate()

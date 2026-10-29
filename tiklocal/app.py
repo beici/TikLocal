@@ -84,6 +84,8 @@ def get_app_version():
 app_version = get_app_version()
 
 _logger = logging.getLogger(__name__)
+#: create_app() can run more than once in one process; the atexit hook must not.
+_PROBE_ATEXIT_REGISTERED = False
 
 _DAMAGED_DATABASE_MARKERS = (
     'malformed',
@@ -120,33 +122,78 @@ def _quarantine_database(db_path: Path) -> Path | None:
     """
     suffix = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     backup = db_path.with_name(f'{db_path.name}.{suffix}.corrupt')
-    for attempt in range(3):
-        try:
-            db_path.replace(backup)
-            break
-        except OSError as error:
-            # Windows keeps the file locked until the last handle is closed; the
-            # failing sqlite connection is usually released by the next GC pass.
-            if attempt == 2:
-                _logger.error('Unable to quarantine damaged database %s: %s', db_path, error)
-                return None
-            gc.collect()
-            time.sleep(0.05)
+    moved: list[tuple[Path, Path]] = []
+    # Sidecars first, main file last. The other order had a hole with no race window
+    # needed: another process (a `vectorize` connection, DB Browser, an indexer) holds
+    # `-wal` open, the rename fails with WinError 32, and the function returned None
+    # with the main file already gone -- the next start then created an empty database
+    # next to that stale WAL and replayed it, which is the permanent breakage this
+    # function exists to prevent. Each step is rolled back if a later one fails.
     for extra in ('-wal', '-shm'):
         sidecar = db_path.with_name(db_path.name + extra)
         if not sidecar.exists():
             continue
-        try:
-            sidecar.replace(backup.with_name(backup.name + extra))
-        except OSError as error:
-            # A leftover WAL next to a brand-new database replays transactions that
-            # belong to the damaged file: migrate() then reads the old
-            # schema_migrations, skips every migration and the instance stays broken
-            # for good. Moving it aside keeps those bytes with the backup instead of
-            # deleting them, and refusing to rebuild beats starting on top of them.
-            _logger.error('Unable to move %s aside with the damaged database: %s', sidecar, error)
+        sidecar_backup = backup.with_name(backup.name + extra)
+        if not _move_with_retry(sidecar, sidecar_backup):
+            _restore_moved(moved)
             return None
+        moved.append((sidecar, sidecar_backup))
+    if not _move_with_retry(db_path, backup):
+        _restore_moved(moved)
+        return None
     return backup
+
+
+def _move_with_retry(source: Path, target: Path) -> bool:
+    for attempt in range(3):
+        try:
+            source.replace(target)
+            return True
+        except OSError as error:
+            # Windows keeps the file locked until the last handle is closed; the
+            # failing sqlite connection is usually released by the next GC pass.
+            if attempt == 2:
+                _logger.error('Unable to quarantine %s: %s', source, error)
+                return False
+            gc.collect()
+            time.sleep(0.05)
+    return False
+
+
+def _restore_moved(moved: list[tuple[Path, Path]]) -> None:
+    """Put back the files moved before the failing step, best effort."""
+    for original, backup in reversed(moved):
+        try:
+            backup.replace(original)
+        except OSError as error:
+            _logger.error('Could not move %s back: %s', backup, error)
+
+
+def _migrate_with_busy_retry(database: AppDatabase, attempts: int = 3) -> None:
+    """Run migrate(), retrying while another program holds the write lock.
+
+    ``busy_timeout`` covers a slow writer, but a backup tool, DB Browser or a second
+    TikLocal can hold the lock longer than that. The failure surfaced as "Cannot open
+    the instance data under ..." -- pointing at the folder instead of at the lock -- and
+    the only cure was to guess and retry.
+    """
+    delay = 0.5
+    for attempt in range(attempts):
+        try:
+            database.migrate()
+            return
+        except sqlite3.OperationalError as error:
+            text = str(error).lower()
+            busy = 'locked' in text or 'busy' in text
+            if not busy:
+                raise
+            if attempt == attempts - 1:
+                raise sqlite3.OperationalError(
+                    'The database is in use by another program (a backup tool, DB Browser '
+                    'or another TikLocal). Close it and start again.'
+                ) from error
+            time.sleep(delay)
+            delay *= 2
 
 
 def _open_database(db_path: Path) -> AppDatabase:
@@ -159,7 +206,7 @@ def _open_database(db_path: Path) -> AppDatabase:
     """
     database = AppDatabase(db_path)
     try:
-        database.migrate()
+        _migrate_with_busy_retry(database)
         # migrate() only reads schema_migrations (pages 1-2), so a file whose data
         # pages are destroyed still migrates cleanly and then blows up in the first
         # index sync -- after the app has started serving. quick_check walks the
@@ -507,7 +554,12 @@ def create_app(test_config=None):
         media_probe.start()
         # A probe pass can be inside an ffprobe child when the server exits; stopping
         # the thread first keeps the child from outliving us and holding media handles.
-        atexit.register(media_probe.stop)
+        # Register once per process: create_app runs again in tests and in `--dev`, and
+        # the chain would otherwise grow by one join per build.
+        global _PROBE_ATEXIT_REGISTERED
+        if not _PROBE_ATEXIT_REGISTERED:
+            atexit.register(media_probe.stop)
+            _PROBE_ATEXIT_REGISTERED = True
     if index_sync_result["unavailable_sources"]:
         app.logger.warning(
             "Media source unavailable; preserving its existing index: %s",

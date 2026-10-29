@@ -7,6 +7,8 @@ import secrets
 import shutil
 from pathlib import Path
 
+from tiklocal.services.json_storage import write_json_atomic
+
 TRASH_DIR = '.tiklocal-trash'
 RETENTION_DAYS = 30
 
@@ -80,7 +82,7 @@ class TrashService:
             entry['state'] = state
         # Write the metadata first: a file that moved while its entry.json failed to
         # write would sit in the trash unreachable, unlisted and never expired.
-        (folder / 'entry.json').write_text(json.dumps(entry, ensure_ascii=False), encoding='utf-8')
+        write_json_atomic(folder / 'entry.json', entry)
         try:
             # Same filesystem as the source, so this is a rename rather than a copy.
             shutil.move(str(target), str(folder / target.name))
@@ -99,7 +101,7 @@ class TrashService:
             moved.append(path.name)
         if moved != entry['sidecars']:
             entry['sidecars'] = moved
-            (folder / 'entry.json').write_text(json.dumps(entry, ensure_ascii=False), encoding='utf-8')
+            write_json_atomic(folder / 'entry.json', entry)
         return {**entry, 'id': f"{source.id}.{folder.name}"}
 
     def restore(self, entry_id: str) -> tuple[str, dict]:

@@ -2,6 +2,7 @@ import hashlib
 import os
 import sys
 from pathlib import Path
+from tiklocal.paths import DOWNLOAD_TMP_DIR
 from tiklocal.services.library import VIDEO_EXTENSIONS, IMAGE_EXTENSIONS
 from tiklocal.services.trash import TRASH_DIR
 
@@ -47,7 +48,10 @@ def _scan_files(root: Path, extensions: set[str]) -> list[Path]:
                     continue
                 seen.add(key)
                 files.append(path)
-    return [f for f in files if TRASH_DIR not in f.parts]
+    # The scanner skips both hidden work folders; dedupe only skipped the trash, so
+    # it hashed (and could delete) half-finished downloads that another instance was
+    # still writing -- a 2 GB partial download read end to end for nothing.
+    return [f for f in files if not ({TRASH_DIR, DOWNLOAD_TMP_DIR} & set(f.parts))]
 
 
 def _print_progress(current: int, total: int, prefix: str = '') -> None:
@@ -243,10 +247,15 @@ def run_dedupe(
     else:
         if not auto_confirm:
             print(f"\nWarning: {len(to_delete)} files are about to be deleted!")
-            confirm = input("Continue? (yes/no): ").strip().lower()
+            try:
+                confirm = input("Continue? (yes/no): ").strip().lower()
+            except EOFError:
+                # No stdin (Task Scheduler, a service, a closed pipe): that is a
+                # refusal, not a traceback. Nothing has been deleted at this point.
+                confirm = ''
             if confirm not in ('yes', 'y'):
                 print("Operation canceled")
-                return {'duplicates': total_duplicates, 'deleted': 0}
+                return {'duplicates': total_duplicates, 'deleted': 0, 'canceled': True}
 
         stats = delete_files(to_delete, dry_run=False, show_progress=True)
         print(f"\n✓ Deleted {stats['deleted']} files and freed {format_size(stats['size_freed'])}")
