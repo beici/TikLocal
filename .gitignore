@@ -206,6 +206,8 @@ tl-*/
 tl_bounds*/
 tmp??????/
 .probe/
+.probe*/
+.probe-*.py
 probe-media-*/
 tiklocal-probe-*/
 
