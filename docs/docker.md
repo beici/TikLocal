@@ -17,7 +17,7 @@ docker run -d --name tiklocal --restart unless-stopped --init \
   --user "$(id -u):$(id -g)" -p 8000:8000 -e TZ=Asia/Shanghai \
   -v ~/Videos:/media -v "$PWD/tiklocal-data:/data" \
   tiklocal:latest
-docker logs tiklocal                      # sign in with the default password admin666
+docker logs tiklocal                      # first start prints the generated password
 ```
 
 Or use [`compose.yaml`](../compose.yaml) from the checkout: edit the media path
@@ -38,10 +38,16 @@ host folder, it belongs to root and TikLocal cannot write to it.
 
 ## Password
 
-A fresh `/data` starts with the access password `admin666`; change it before
-exposing the container. To start with your own password instead, set
+A fresh `/data` gets a random password on its first start. It is printed once in
+the container log, under `Access password (generated, save it)`:
+
+```bash
+docker logs tiklocal 2>&1 | grep -A3 'Access password'
+```
+
+Copy it, sign in, then change it. To skip the generated step entirely, set
 `TIKLOCAL_AUTH_PASSWORD` before the first start; it is ignored once
-`/data/auth.json` exists. Change it later with:
+`/data/auth.json` exists. Change the password later with:
 
 ```bash
 docker exec -it tiklocal tiklocal auth set-password

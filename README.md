@@ -32,8 +32,8 @@ tiklocal ~/Videos
 ```
 
 Open `http://<your-computer>:8000` on any phone, tablet, or browser on the same
-network and sign in with the default access password `admin666`. Change it
-before you expose the server to anyone else.
+network. The first start generates an access password and prints it in the
+terminal; sign in with it, then change it in **Settings → Access password**.
 
 ## What it does
 
@@ -115,9 +115,17 @@ tiklocal --help
 
 Sign-in is on by default. Every page, API and media file requires it.
 
-A new instance starts with the access password `admin666`, so the first sign-in
-needs no lookup. It is public knowledge: set your own before anyone else can
-reach the server.
+A new instance gets a random access password on its first start, printed once in
+the terminal under `Access password (generated, save it)`. Nothing predictable is
+installed, so a fresh install is not open to the network while you get around to
+changing it. Set your own before the first start instead if you prefer:
+
+```bash
+TIKLOCAL_AUTH_PASSWORD='a-long-private-password' tiklocal ~/Videos
+```
+
+Instances created by an earlier release still answer to the published `admin666`
+until you change it; start-up says so.
 
 ```bash
 tiklocal auth status          # status and storage path

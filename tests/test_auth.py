@@ -7,7 +7,7 @@ import pytest
 
 from tiklocal.app import create_app
 from tiklocal.i18n import t
-from tiklocal.services.auth import DEFAULT_PASSWORD, MIN_PASSWORD_LENGTH, AuthStore
+from tiklocal.services.auth import LEGACY_DEFAULT_PASSWORD, MIN_PASSWORD_LENGTH, AuthStore
 
 
 PASSWORD = 'private-screening-room'
@@ -54,7 +54,7 @@ def test_auth_store_hashes_password_and_increments_revision(tmp_path):
     data = json.loads(auth_path.read_text(encoding='utf-8'))
 
     assert bootstrap.created is True
-    assert bootstrap.default_password is None
+    assert bootstrap.generated_password is None
     assert PASSWORD not in auth_path.read_text(encoding='utf-8')
     assert data['password_hash'].startswith('scrypt:')
     assert data['created_at'].endswith('+00:00')
@@ -72,28 +72,49 @@ def test_auth_store_hashes_password_and_increments_revision(tmp_path):
     assert store.verify('another-private-password')
 
 
-def test_first_start_uses_the_default_password(tmp_path):
+def test_first_start_generates_a_password_instead_of_the_published_default(tmp_path):
     store = AuthStore(tmp_path / 'auth.json')
     bootstrap = store.ensure()
 
     assert bootstrap.created is True
-    assert bootstrap.default_password == DEFAULT_PASSWORD
-    assert len(DEFAULT_PASSWORD) >= MIN_PASSWORD_LENGTH
-    assert store.verify(DEFAULT_PASSWORD)
+    password = bootstrap.generated_password
+    assert password is not None
+    assert len(password) >= MIN_PASSWORD_LENGTH
+    assert store.verify(password)
+    # The constant every earlier release installed must no longer work.
+    assert not store.verify(LEGACY_DEFAULT_PASSWORD)
     assert not store.verify(PASSWORD)
 
 
-def test_supplied_first_start_password_wins_over_the_default(tmp_path):
+def test_each_fresh_instance_gets_a_different_password(tmp_path):
+    first = AuthStore(tmp_path / 'a' / 'auth.json').ensure().generated_password
+    second = AuthStore(tmp_path / 'b' / 'auth.json').ensure().generated_password
+
+    assert first and second and first != second
+
+
+def test_uses_published_default_flags_an_install_from_before_the_change(tmp_path):
+    store = AuthStore(tmp_path / 'auth.json')
+
+    assert store.ensure().generated_password is not None
+    assert store.uses_published_default() is False
+
+    # What the old first start wrote: the hash of the constant from the docs.
+    store.set_password(LEGACY_DEFAULT_PASSWORD)
+    assert store.uses_published_default() is True
+
+
+def test_supplied_first_start_password_wins_over_the_generated_one(tmp_path):
     store = AuthStore(tmp_path / 'auth.json')
     bootstrap = store.ensure(PASSWORD)
 
     assert bootstrap.created is True
-    assert bootstrap.default_password is None
+    assert bootstrap.generated_password is None
     assert store.verify(PASSWORD)
-    assert not store.verify(DEFAULT_PASSWORD)
+    assert not store.verify(LEGACY_DEFAULT_PASSWORD)
 
 
-def test_fresh_instance_signs_in_with_the_default_password(tmp_path, monkeypatch):
+def test_fresh_instance_signs_in_with_the_generated_password(tmp_path, monkeypatch):
     monkeypatch.delenv('TIKLOCAL_AUTH_PASSWORD', raising=False)
     media_root = tmp_path / 'media'
     media_root.mkdir()
@@ -106,8 +127,11 @@ def test_fresh_instance_signs_in_with_the_default_password(tmp_path, monkeypatch
     })
     client = app.test_client()
 
-    assert _login(client, DEFAULT_PASSWORD).status_code == 302
+    generated = app.extensions['auth_bootstrap'].generated_password
+    assert generated
+    assert _login(client, generated).status_code == 302
     assert client.get('/').status_code == 200
+    assert _login(app.test_client(), LEGACY_DEFAULT_PASSWORD).status_code == 401
     assert _login(app.test_client(), PASSWORD).status_code == 401
 
 

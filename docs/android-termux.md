@@ -28,8 +28,8 @@ tiklocal ~/storage/shared/Movies --name Pixel
 ```
 
 Add more folders with `--media-source`, for example
-`--media-source camera=~/storage/shared/DCIM/Camera`. The first start uses the
-default access password `admin666`; change it with
+`--media-source camera=~/storage/shared/DCIM/Camera`. The first start generates
+an access password and prints it in the terminal; change it with
 `tiklocal auth set-password` or from **Settings → Access password → Change** in
 the web UI.
 

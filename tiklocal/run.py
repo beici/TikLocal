@@ -567,8 +567,18 @@ Examples:
                 parser.error(str(exc))
             print("Authentication: enabled")
             print(f"Authentication file: {auth_store.path}")
-            if bootstrap.default_password:
-                print(f"Access password: {bootstrap.default_password} (default; change it with tiklocal auth set-password)")
+            if bootstrap.generated_password:
+                print(f"Access password: {bootstrap.generated_password} (generated on first start)")
+                print("Change it: tiklocal auth set-password")
+            elif not bootstrap.created and auth_store.uses_published_default():
+                print("Access password: still the published default; "
+                      "change it with `tiklocal auth set-password`")
+            elif auth_store.password_was_generated():
+                # Generated at an earlier start and shown once then. Only the hash is
+                # stored, so it cannot be printed again; a lost one is one command away.
+                print("Access password: generated at first start and shown once; "
+                      "it cannot be printed again.")
+                print("Forgot it? Set a new one: tiklocal auth set-password")
             return
 
         env_password = str(os.environ.get('TIKLOCAL_AUTH_PASSWORD') or '')
@@ -745,21 +755,21 @@ Examples:
                 print("Trust: your browser warns once about the self-signed certificate; "
                       "install it on the device to stop that (see `tiklocal tls status`).")
         print(f"Access authentication: {'enabled' if app.extensions.get('auth_enabled') else 'disabled'}")
-        if bootstrap and bootstrap.default_password:
+        if bootstrap and bootstrap.generated_password:
             # Plain ASCII: a redirected stdout uses the locale encoding (cp1252 has no
             # box-drawing characters), and an UnicodeEncodeError here would abort the
             # first start right after the password was chosen but before it printed.
             print("+--------------------------------------------+")
-            print("| Access password (default)                  |")
-            print(f"| {bootstrap.default_password:<42} |")
+            print("| Access password (generated, save it)       |")
+            print(f"| {bootstrap.generated_password:<42} |")
             print("| Change it: tiklocal auth set-password      |")
             print("+--------------------------------------------+")
-            if not is_loopback_bind(host):
-                # The password is a published constant, so every device that can
-                # reach this port can sign in until it is changed. The default bind
-                # is 0.0.0.0, so this is the common first-run case, not an edge one.
-                print(f"WARNING: the default password is still in use while listening on {display_host}.")
-                print("         Anyone who can reach this port can browse and delete the library.")
+        elif app.extensions.get('auth_legacy_default'):
+            # Installed before first-start passwords were generated: the password is
+            # the constant from the install docs, so it protects nothing.
+            print(f"WARNING: the access password is still the published default, on {display_host}.")
+            print("         Anyone who can reach this port can browse and delete the library.")
+            print("         Change it: tiklocal auth set-password")
         # A log file behind a pipe is block-buffered, and the banner is the only
         # place that says which URL this run serves; flush it before blocking in
         # the server loop instead of showing it on exit.

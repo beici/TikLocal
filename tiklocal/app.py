@@ -295,14 +295,23 @@ def create_app(test_config=None):
         ttl_seconds=int(app.config.get('RADIO_PAIRING_GRANT_TTL') or 120),
     )
     bootstrap = None
+    legacy_default_password = False
     if auth_enabled:
         bootstrap = auth_store.ensure(os.environ.get('TIKLOCAL_AUTH_PASSWORD'))
-        if bootstrap.default_password:
-            # A known default only keeps strangers out until the owner changes it, and
-            # the banner that shows it is missed by anyone running as a service.
+        if bootstrap.generated_password:
+            # The password itself goes to the banner only: a log line is the first
+            # thing pasted into a bug report, and this one is the account's key.
             app.logger.warning(
-                'Access password is the default %s; change it with `tiklocal auth set-password`',
-                bootstrap.default_password,
+                'Generated the first access password; it is printed in the start-up banner'
+            )
+        elif not bootstrap.created and auth_store.uses_published_default():
+            # An install from before first-start passwords were generated still
+            # answers to the published constant. Only the hash is stored, so no
+            # migration can change it: say so instead of leaving it silently open.
+            legacy_default_password = True
+            app.logger.warning(
+                'The access password is still the published default; change it with '
+                '`tiklocal auth set-password`'
             )
     configure_auth(
         app,
@@ -311,6 +320,7 @@ def create_app(test_config=None):
         device_auth_store=device_auth_store,
     )
     app.extensions['auth_bootstrap'] = bootstrap
+    app.extensions['auth_legacy_default'] = legacy_default_password
     app.extensions['radio_pairing_grants'] = pairing_grant_store
 
     @app.template_global()
