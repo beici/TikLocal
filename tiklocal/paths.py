@@ -108,3 +108,21 @@ def get_auth_path() -> Path:
 
 def get_device_auth_path() -> Path:
     return get_data_dir() / 'radio_devices.json'
+
+
+def is_in_data_dir(path) -> bool:
+    """True when *path* is the data directory or lives inside it.
+
+    The data directory is not media: `auth.json` holds the password hash and the
+    Flask `secret_key`, `radio_devices.json` holds every paired device's bearer
+    token, and the TLS private key and cookie jar sit next to them. A media source
+    that covers this directory would hand all of that out through /media, which is
+    enough to sign a session cookie and stay logged in after a password change.
+    """
+    try:
+        candidate = Path(path).expanduser().resolve()
+        data_dir = get_data_dir().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return candidate == data_dir or data_dir in candidate.parents
+

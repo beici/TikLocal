@@ -163,15 +163,23 @@ window.addEventListener('pageshow', (event) => {
     }
     return response;
   };
+  // The latch stops a burst of 401s from firing one redirect per request, but nothing
+  // ever released it: when the navigation did not happen (offline, blocked, a download
+  // took over), every later 401 was ignored and the page sat on empty states until a
+  // manual refresh. A bfcache restore means the page is live again, so release it.
+  window.addEventListener('pageshow', () => {
+    window.__tiklocalRedirecting = false;
+  });
 })();
 
-// 退出登录只清了服务端 cookie，浏览器里还留着上一个账号的收听记录与最近曲目
-// （`radio_position` / `radio_recent_tracks` 存的是媒体库里的文件名，也就是私有路径）。
-// 同一浏览器换个账号登录后，首页「继续收听」会显示上一个人的文件，电台还会把这些
-// 名字拼进 `?exclude=` 发给服务端。两个退出入口（停靠栏与抽屉菜单）都是普通表单提交，
-// 在提交前清掉即可；主题/语言/抖音模式是这台设备的偏好，与账号无关，保留。
+// 退出登录只清了服务端 cookie，浏览器里还留着上一个账号的收听记录、最近曲目与上次
+// 播放的电台（`radio_position` / `radio_recent_tracks` / `radio_station` 存的是媒体库
+// 里的文件名与站名，也就是私有路径与收听偏好）。同一浏览器换个账号登录后，首页
+// 「继续收听」会显示上一个人的文件，电台还会把这些名字拼进 `?exclude=` 发给服务端。
+// 两个退出入口（停靠栏与抽屉菜单）都是普通表单提交，在提交前清掉即可；
+// 主题/语言/抖音模式是这台设备的偏好，与账号无关，保留。
 (() => {
-  const ACCOUNT_KEYS = ['radio_position', 'radio_recent_tracks'];
+  const ACCOUNT_KEYS = ['radio_position', 'radio_recent_tracks', 'radio_station'];
   document.querySelectorAll('form[action$="/logout"]').forEach((form) => {
     form.addEventListener('submit', () => {
       ACCOUNT_KEYS.forEach((key) => {

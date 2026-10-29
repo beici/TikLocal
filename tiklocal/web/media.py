@@ -341,7 +341,15 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             return render_template('delete_confirm.html', file=name)
         wants_json = request.accept_mimetypes.best == 'application/json'
         try:
-            entry = trash_service.move(name)
+            # Snapshot before the move: delete() drops the resume point, the affinity
+            # weight and the events in the same transaction, so without this the
+            # thirty-day undo only brought back the pixels.
+            state = media_index.snapshot_state(library_service.canonicalize_uri(name))
+        except Exception:  # noqa: BLE001 - a snapshot must never block the delete itself
+            app.logger.warning('state snapshot failed for %s', name, exc_info=True)
+            state = None
+        try:
+            entry = trash_service.move(name, state=state)
         except FileNotFoundError:
             # The row is dropped so the ghost tile stops being served; logging it
             # keeps "the file vanished between the index scan and my click" visible.
@@ -383,7 +391,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
     @app.route('/api/trash/<entry_id>/restore', methods=['POST'])
     def api_trash_restore(entry_id):
         try:
-            uri = trash_service.restore(entry_id)
+            uri, state = trash_service.restore(entry_id)
         except KeyError:
             return {'success': False, 'error': t('detail.error.not_in_trash')}, 404
         except FileExistsError:
@@ -393,6 +401,13 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             # recreated (a locked directory on Windows): a conflict the user can
             # clear, not a 500 with a raw path in the message.
             return {'error': t('detail.error.trash_restore_failed')}, 409
+        if state:
+            try:
+                media_index.restore_state(uri, state)
+            except Exception:  # noqa: BLE001
+                # The file is back; a failed history restore is a loss of convenience,
+                # not of the media, so it is logged and the restore still reports ok.
+                app.logger.warning('state restore failed for %s', uri, exc_info=True)
         try:
             library_indexer.register_uris([uri])
         except Exception:  # noqa: BLE001
@@ -664,7 +679,10 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             'success': True,
             'data': {
                 'name': canonical,
-                'path': str(target),
+                # The folder name, not the absolute path: /api/media/info answers a
+                # LAN visitor, and `C:\Users\<name>\Videos\...` is the host's own
+                # business (the settings API drops the data path for the same reason).
+                'path': target.name,
                 'file_name': target.name,
                 'suffix': target.suffix.lower().lstrip('.'),
                 'size_bytes': size_bytes,

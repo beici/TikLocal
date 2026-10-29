@@ -263,6 +263,78 @@ class MediaIndexStore:
                 removed += conn.execute(f"DELETE FROM {table} WHERE uri = ?", (uri,)).rowcount
         return removed
 
+    # A trash entry is a small JSON file, not a second event log: a hundred rows is
+    # enough to keep a resume point and the "you watched this" signal meaningful.
+    _EVENT_SNAPSHOT_LIMIT = 100
+
+    def snapshot_state(self, uri: str) -> dict:
+        """Return the per-file state that ``delete()`` is about to drop.
+
+        Deleting through the app is reversible for thirty days, but only the file
+        came back: the resume point, the affinity weight and the viewing events went
+        with the index row, so a restored clip looked like it had never been watched.
+        The trash entry carries this snapshot instead.
+        """
+        with self.database.connect() as conn:
+            position = conn.execute(
+                "SELECT position, duration, updated_at FROM playback_positions WHERE uri = ?",
+                (uri,),
+            ).fetchone()
+            affinity = conn.execute(
+                "SELECT media_type, impressions, completes, skips, favorites, replays,"
+                " total_visible_ms, affinity_score, last_shown_at FROM media_affinity WHERE uri = ?",
+                (uri,),
+            ).fetchone()
+            events = conn.execute(
+                "SELECT session_id, media_type, surface, event_type, consumed_ratio,"
+                " visible_ms, metadata_json, created_at FROM media_events WHERE uri = ?"
+                " ORDER BY id DESC LIMIT ?",
+                (uri, self._EVENT_SNAPSHOT_LIMIT),
+            ).fetchall()
+        state: dict = {}
+        if position:
+            state['position'] = list(position)
+        if affinity:
+            state['affinity'] = list(affinity)
+        if events:
+            state['events'] = [list(row) for row in events]
+        return state
+
+    def restore_state(self, uri: str, state: dict) -> None:
+        """Put back what ``snapshot_state()`` saved; ignore anything malformed.
+
+        The snapshot comes from a JSON file on disk, so every list is checked for
+        the exact column count: a hand-edited or half-written entry must not turn a
+        restore into a 500 after the file is already back in place.
+        """
+        if not isinstance(state, dict):
+            return
+        with self.database.connect() as conn:
+            position = state.get('position')
+            if isinstance(position, (list, tuple)) and len(position) == 3:
+                conn.execute(
+                    "INSERT OR REPLACE INTO playback_positions(uri, position, duration, updated_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    (uri, *position),
+                )
+            affinity = state.get('affinity')
+            if isinstance(affinity, (list, tuple)) and len(affinity) == 9:
+                conn.execute(
+                    "INSERT OR REPLACE INTO media_affinity(uri, media_type, impressions, completes,"
+                    " skips, favorites, replays, total_visible_ms, affinity_score, last_shown_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (uri, *affinity),
+                )
+            for event in state.get('events') or ():
+                if not isinstance(event, (list, tuple)) or len(event) != 8:
+                    continue
+                conn.execute(
+                    "INSERT INTO media_events(session_id, uri, media_type, surface, event_type,"
+                    " consumed_ratio, visible_ms, metadata_json, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (event[0], uri, *event[1:]),
+                )
+
     def unprobed(self, limit: int = 50, exclude: tuple[str, ...] = ()) -> list[dict]:
         """Media whose dimensions were never read, or were read before the file changed.
 

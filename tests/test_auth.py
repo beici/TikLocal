@@ -153,7 +153,10 @@ def test_login_creates_a_secure_session(authenticated_app):
     for url in ('/', '/settings/'):
         response = client.get(url)
         assert response.status_code == 200
-        assert response.headers['Cache-Control'] == 'private, no-cache'
+        # no-store, not no-cache: Chrome and Safari keep no-cache pages in the
+        # back/forward cache, and a bfcache restore never asks the server, so after
+        # logging out on a shared machine Back showed the previous user's library.
+        assert response.headers['Cache-Control'] == 'private, no-store'
     assert client.get('/media/clip.mp4').data == b'private-video'
 
 
@@ -211,7 +214,10 @@ def test_cli_password_change_invalidates_running_sessions(authenticated_app):
     for url in ('/', '/settings/'):
         response = client.get(url)
         assert response.status_code == 200
-        assert response.headers['Cache-Control'] == 'private, no-cache'
+        # no-store, not no-cache: Chrome and Safari keep no-cache pages in the
+        # back/forward cache, and a bfcache restore never asks the server, so after
+        # logging out on a shared machine Back showed the previous user's library.
+        assert response.headers['Cache-Control'] == 'private, no-store'
 
     AuthStore(auth_path).set_password('replacement-private-password')
 

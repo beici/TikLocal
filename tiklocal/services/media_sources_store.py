@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from tiklocal.paths import is_in_data_dir
 from tiklocal.services.json_storage import read_json_file, write_json_atomic
 from tiklocal.services.library import MediaSource, normalize_source_id
 
@@ -173,6 +174,12 @@ def validate_folder(raw_path: Any) -> Path:
         raise MediaSourceError('missing', path=str(path))
     if not path.is_dir():
         raise MediaSourceError('not_dir', path=str(path))
+    if is_in_data_dir(path):
+        # The data directory holds auth.json (password hash + Flask secret_key),
+        # the paired-device tokens and the TLS key. Accepting it as a library made
+        # /media serve those files, so the folder is refused with a reason the
+        # settings page can show instead of a silent 404 later.
+        raise MediaSourceError('data_dir', path=str(path))
     try:
         with os.scandir(path) as entries:
             next(entries, None)
@@ -332,6 +339,11 @@ def apply_sources(library_service: Any, sources: Iterable[MediaSource]) -> list[
     )
     library_service.media_root = library_service.sources_by_id[library_service.default_source_id].path
     library_service._resolved_roots = resolved_roots
+    # The URI parser resolves each source against this map, not against the list
+    # above: a source whose folder was edited in settings kept its old root here,
+    # so `relative_to(root)` rejected every file under the new path and /media,
+    # /thumb and /detail answered 404 until the next restart.
+    library_service._resolved_root_by_id = {source.id: root for source, root in resolved_roots}
     library_service._warn_overlapping_sources()
     return installed
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tiklocal.paths import DOWNLOAD_TMP_DIR
+from tiklocal.paths import DOWNLOAD_TMP_DIR, is_in_data_dir
 from tiklocal.services.trash import TRASH_DIR
 
 logger = logging.getLogger(__name__)
@@ -349,6 +349,14 @@ class LibraryService:
             target = (source.path / rel_path).resolve()
             target.relative_to(root)
         except Exception:
+            return None
+        if is_in_data_dir(target):
+            # A source may legitimately contain the data directory (`tiklocal ~`
+            # makes ~/.tiklocal a child of the media root). Serving it would hand
+            # out auth.json -- the password hash and Flask's secret_key -- through
+            # /media, which is a permanent session forgery. The settings page
+            # refuses such a folder, but a hand-edited config or MEDIA_ROOT can
+            # still produce one, so the resolver refuses too.
             return None
         return target
 

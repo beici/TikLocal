@@ -105,10 +105,19 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
         return str(token)
 
     def is_authenticated() -> bool:
-        return bool(
-            session.get('authenticated') is True
-            and int(session.get('auth_revision') or 0) == auth_store.revision
-        )
+        if session.get('authenticated') is not True:
+            return False
+        try:
+            revision = auth_store.revision
+        except RuntimeError:
+            # auth.json is unreadable: locked by a virus scanner, half-written by a
+            # crash, or a permissions mistake. Reading the revision used to raise on
+            # every route, so the whole instance answered 500 and the login page was
+            # unreachable too. Treating the session as signed out sends the user to a
+            # page that explains the problem instead.
+            _LOGGER.error('authentication store is unreadable; treating the session as signed out')
+            return False
+        return int(session.get('auth_revision') or 0) == revision
 
     def safe_next(value: str | None) -> str:
         candidate = str(value or '').strip()
@@ -235,7 +244,18 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
         error = ''
         status = 200
         retry_after = 0
-        if request.method == 'POST':
+        try:
+            auth_store.revision
+        except RuntimeError:
+            # A POST here would call verify() and raise the same error out of the view,
+            # turning "your auth.json is unreadable" into a 500 traceback with no hint.
+            _LOGGER.error('authentication store is unreadable; refusing the login')
+            error = t('login.error_store_unreadable')
+            status = 503
+            store_unreadable = True
+        else:
+            store_unreadable = False
+        if request.method == 'POST' and not store_unreadable:
             client_key = request.remote_addr or 'unknown'
             retry_after = limiter.retry_after(client_key)
             if retry_after:
@@ -280,4 +300,9 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
         # session.clear() drops the server-side payload but leaves the cookie in the
         # browser; clearing it keeps a stale session id from being replayed.
         response.delete_cookie(app.config.get('SESSION_COOKIE_NAME') or 'session')
+        # Clearing the cookie is not enough: the pages already in the back/forward
+        # cache still hold this user's library. no-store keeps new pages out of it,
+        # and this asks the browser to drop what it already cached (ignored where
+        # unsupported).
+        response.headers['Clear-Site-Data'] = '"cache"'
         return response

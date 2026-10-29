@@ -243,6 +243,20 @@ def _run_cli(monkeypatch, argv, config=None, material=None):
     return main
 
 
+def _free_port():
+    """Ask the OS for a port instead of hard-coding one.
+
+    The CLI probes the port before serving, so a literal 8828 is only as stable
+    as the machine's dynamic port range: on Windows it starts at 1024, and an
+    outbound connection that happens to use 8828 as its source port leaves a
+    TIME_WAIT entry that makes the probe answer `cannot listen` (WinError 10013)
+    on an otherwise healthy machine.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(('127.0.0.1', 0))
+        return probe.getsockname()[1]
+
+
 @pytest.fixture(name='fake_material')
 def fixture_fake_material(tmp_path):
     return _material(tmp_path / 'tls')
@@ -258,15 +272,16 @@ def test_tls_serve_uses_werkzeug_server_with_secure_cookie(
     tmp_path, monkeypatch, capsys, fake_material
 ):
     calls = _serve_stub(monkeypatch, raises=RuntimeError('test server stopped'))
+    port = _free_port()
     main = _run_cli(
         monkeypatch,
-        [str(tmp_path), '--host', '127.0.0.1', '--port', '8825', '--tls'],
+        [str(tmp_path), '--host', '127.0.0.1', '--port', str(port), '--tls'],
         material=fake_material,
     )
     with pytest.raises(RuntimeError, match='test server stopped'):
         main()
     out = capsys.readouterr().out
-    assert 'Open: https://127.0.0.1:8825' in out
+    assert f'Open: https://127.0.0.1:{port}' in out
     assert 'Server: Werkzeug threaded server (TLS)' in out
     assert 'Trust: your browser warns once about the self-signed certificate' in out
     assert len(calls) == 1
@@ -289,13 +304,14 @@ def test_plain_serve_still_uses_waitress_and_http(tmp_path, monkeypatch, capsys)
             raise RuntimeError('test server stopped')
 
     monkeypatch.setattr('tiklocal.run.create_waitress_server', lambda app, **kwargs: FakeWaitress(app, **kwargs))
-    main = _run_cli(monkeypatch, [str(tmp_path), '--host', '127.0.0.1', '--port', '8826'])
+    port = _free_port()
+    main = _run_cli(monkeypatch, [str(tmp_path), '--host', '127.0.0.1', '--port', str(port)])
     with pytest.raises(RuntimeError, match='test server stopped'):
         main()
     out = capsys.readouterr().out
-    assert 'Open: http://127.0.0.1:8826' in out
+    assert f'Open: http://127.0.0.1:{port}' in out
     assert 'Server: Waitress (HTTP)' in out
-    assert calls == [{'host': '127.0.0.1', 'port': 8826, 'threads': 8}]
+    assert calls == [{'host': '127.0.0.1', 'port': port, 'threads': 8}]
 
 
 def test_tls_defaults_to_https_port(tmp_path, monkeypatch, capsys, fake_material):
@@ -313,15 +329,16 @@ def test_tls_defaults_to_https_port(tmp_path, monkeypatch, capsys, fake_material
 
 def test_legacy_https_config_starts_https(tmp_path, monkeypatch, capsys, fake_material):
     calls = _serve_stub(monkeypatch, raises=RuntimeError('test server stopped'))
+    port = _free_port()
     main = _run_cli(
         monkeypatch,
-        [str(tmp_path), '--host', '127.0.0.1', '--port', '8827'],
+        [str(tmp_path), '--host', '127.0.0.1', '--port', str(port)],
         config={'https': True, 'hostnames': ['studio.local']},
         material=fake_material,
     )
     with pytest.raises(RuntimeError, match='test server stopped'):
         main()
-    assert 'Open: https://127.0.0.1:8827' in capsys.readouterr().out
+    assert f'Open: https://127.0.0.1:{port}' in capsys.readouterr().out
     assert len(calls) == 1
 
 
@@ -330,7 +347,7 @@ def test_custom_pair_is_used_and_never_generated(tmp_path, monkeypatch, capsys, 
     main = _run_cli(
         monkeypatch,
         [
-            str(tmp_path), '--host', '127.0.0.1', '--port', '8828', '--tls',
+            str(tmp_path), '--host', '127.0.0.1', '--port', str(_free_port()), '--tls',
             '--tls-cert', str(fake_material.cert_path),
             '--tls-key', str(fake_material.key_path),
         ],
@@ -346,10 +363,11 @@ def test_custom_pair_is_used_and_never_generated(tmp_path, monkeypatch, capsys, 
 def test_custom_pair_alone_enables_https(tmp_path, monkeypatch, capsys, fake_material):
     """Passing a pair without --tls is intent enough; the config file behaves the same."""
     calls = _serve_stub(monkeypatch, raises=RuntimeError('test server stopped'))
+    port = _free_port()
     main = _run_cli(
         monkeypatch,
         [
-            str(tmp_path), '--host', '127.0.0.1', '--port', '8830',
+            str(tmp_path), '--host', '127.0.0.1', '--port', str(port),
             '--tls-cert', str(fake_material.cert_path),
             '--tls-key', str(fake_material.key_path),
         ],
@@ -358,7 +376,7 @@ def test_custom_pair_alone_enables_https(tmp_path, monkeypatch, capsys, fake_mat
     with pytest.raises(RuntimeError, match='test server stopped'):
         main()
     out = capsys.readouterr().out
-    assert 'Open: https://127.0.0.1:8830' in out
+    assert f'Open: https://127.0.0.1:{port}' in out
     assert len(calls) == 1
 
 
@@ -384,7 +402,7 @@ def test_tls_error_is_reported_without_traceback(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr('tiklocal.run.load_config', lambda: {})
     monkeypatch.setattr('tiklocal.run.ensure_self_signed_certificate', broken)
-    monkeypatch.setattr(sys, 'argv', ['tiklocal', str(tmp_path), '--tls', '--port', '8829'])
+    monkeypatch.setattr(sys, 'argv', ['tiklocal', str(tmp_path), '--tls', '--port', str(_free_port())])
     with pytest.raises(SystemExit) as stopped:
         main()
     assert stopped.value.code == 1
@@ -476,7 +494,7 @@ def test_dev_reloader_child_does_not_take_the_instance_lock(tmp_path, monkeypatc
     monkeypatch.setattr('flask.Flask.run', lambda self, **kwargs: served.append(kwargs))
     main = _run_cli(
         monkeypatch,
-        [str(tmp_path), '--host', '127.0.0.1', '--port', '8831', '--dev'],
+        [str(tmp_path), '--host', '127.0.0.1', '--port', str(_free_port()), '--dev'],
     )
     holder = acquire_instance_lock(instance)  # what the parent already owns
     try:
@@ -492,7 +510,7 @@ def test_a_second_serve_on_the_same_instance_is_refused(tmp_path, monkeypatch, c
 
     instance = tmp_path / 'instance'
     monkeypatch.setenv('TIKLOCAL_INSTANCE', str(instance))
-    main = _run_cli(monkeypatch, [str(tmp_path), '--host', '127.0.0.1', '--port', '8832'])
+    main = _run_cli(monkeypatch, [str(tmp_path), '--host', '127.0.0.1', '--port', str(_free_port())])
 
     holder = acquire_instance_lock(instance)  # a server that is already running
     try:

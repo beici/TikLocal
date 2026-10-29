@@ -31,8 +31,13 @@ class TrashService:
         self.library = library_service
         self.retention = datetime.timedelta(days=retention_days)
 
-    def move(self, uri: str) -> dict:
-        """Move a media file into its source's trash and return the new entry."""
+    def move(self, uri: str, state: dict | None = None) -> dict:
+        """Move a media file into its source's trash and return the new entry.
+
+        *state* is the per-file history the index is about to delete (resume point,
+        affinity, recent events). It rides along in the manifest so restoring the
+        file restores what the user had done with it.
+        """
         resolved = self.library.resolve_source_relative_path(uri)
         target = self.library.resolve_path(uri)
         if not resolved or not target or not target.is_file():
@@ -49,6 +54,8 @@ class TrashService:
             'deleted_at': now.isoformat(timespec='seconds'),
             'sidecars': [path.name for path in sidecars],
         }
+        if state:
+            entry['state'] = state
         # Write the metadata first: a file that moved while its entry.json failed to
         # write would sit in the trash unreachable, unlisted and never expired.
         (folder / 'entry.json').write_text(json.dumps(entry, ensure_ascii=False), encoding='utf-8')
@@ -73,8 +80,13 @@ class TrashService:
             (folder / 'entry.json').write_text(json.dumps(entry, ensure_ascii=False), encoding='utf-8')
         return {**entry, 'id': f"{source.id}.{folder.name}"}
 
-    def restore(self, entry_id: str) -> str:
-        """Put a trashed file back at its original path and return its URI."""
+    def restore(self, entry_id: str) -> tuple[str, dict]:
+        """Put a trashed file back at its original path.
+
+        Returns ``(uri, state)``: the per-file history saved when it was deleted, so
+        the caller can hand it back to the index. Older entries have no snapshot and
+        return an empty dict.
+        """
         folder, entry = self._entry(entry_id)
         # The file lives in the trash right now, so the target must resolve without
         # requiring an existing file at that path.
@@ -98,7 +110,8 @@ class TrashService:
                 except OSError:
                     pass
         shutil.rmtree(folder, ignore_errors=True)
-        return entry['uri']
+        state = entry.get('state')
+        return entry['uri'], state if isinstance(state, dict) else {}
 
     def purge(self, entry_id: str) -> str:
         """Permanently delete one entry and return the URI it came from."""

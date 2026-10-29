@@ -214,6 +214,12 @@ def create_app(test_config=None):
     )
     app.config.from_pyfile('config.py', silent=True)
     app.config.from_prefixed_env()
+    if 'FLASK_TESTING' in os.environ:
+        # FLASK_TESTING=1 in the environment turns TESTING on, which disables the
+        # access password and the media probe. A stray variable from a dev shell must
+        # not silently open a real instance, so only test_config may set it.
+        app.config['TESTING'] = False
+        app.logger.warning('Ignoring FLASK_TESTING from the environment; pass test_config= to create_app()')
     if test_config is not None:
         app.config.update(test_config)
 
@@ -346,7 +352,12 @@ def create_app(test_config=None):
             if response.status_code < 400 and 'no-store' not in cache_control and 'no-cache' not in cache_control:
                 response.headers['Cache-Control'] = 'private, max-age=3600, must-revalidate'
         elif response.mimetype == 'text/html':
-            response.headers['Cache-Control'] = 'private, no-cache'
+            # no-cache alone still lets Chrome and Safari park the page in the
+            # back/forward cache, and a bfcache restore never asks the server: after
+            # logging out on a shared machine, Back showed the previous user's library
+            # with the cookie already gone. no-store is the only header both engines
+            # honour as "do not keep this page".
+            response.headers['Cache-Control'] = 'private, no-store'
         return response
 
     # Everything the app serves used to go out uncompressed: the HTML pages inline

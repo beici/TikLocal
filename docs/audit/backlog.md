@@ -640,3 +640,30 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] README 未写最低 SQLite 版本 | `README.md` | 与 `MINIMUM_SQLITE` 需同步维护 |
 | [P3] `probe_binary` 的 60 s TTL 让「刚装完工具」最长 1 分钟不可见 | `tiklocal/services/download_tools.py:203` | 有 `refresh=True` 参数 |
 | [P3] `output.css` 需手工重建，容易忘记 | `package.json` | AGENTS.md 已写明流程 |
+
+### 第 38 轮新增（22 条）
+
+| 描述 | 位置 | 为什么暂不修 |
+| --- | --- | --- |
+| [P1] 设置页首屏 6 个请求跑在 401 包装器安装之前，会话过期时被当空态并可能写回 | `tiklocal/static/settings_page_controller.js`、`base.html` | 需 9 个控制器统一「先装包装器再发请求」的约定，超出最小 diff |
+| [P2] `cookie_dir` 可指向任意绝对路径，可覆盖任意 `*.txt`/`*.cookies` | `tiklocal/web/downloads.py`、`tiklocal/services/downloader.py:734` | 需先定「允许哪些目录」的产品语义（数据目录内？任意可写？） |
+| [P2] 关闭认证后安全响应头一起消失，且仍可绑 `0.0.0.0` | `tiklocal/app.py` | 安全头应无条件添加，但要先确认不影响 `--dev` 下的调试体验 |
+| [P2] 限流键用 `remote_addr`，反代后所有请求共用一个桶 | `tiklocal/auth.py` | 需信任代理配置（`ProxyFix` 或白名单），否则可被 `X-Forwarded-For` 绕过 |
+| [P2] 默认口令 `admin666` + 默认 `0.0.0.0` 仅告警不阻断 | `tiklocal/run.py` | 属产品策略：阻断会改变首次启动体验 |
+| [P2] `/media`、`/thumb` 的 401 纯文本不经 `fetch` 包装，被当「缺图」渲染成灰底 | `tiklocal/web/media.py`、`static/base.js` | 需要统一的「媒体加载失败」占位与重试，涉及多个页面 |
+| [P2] CSRF 令牌只读一次、全站无 403 处理 | `tiklocal/static/base.js` | 403 目前只在会话过期时出现，与 401 处理合并更合适 |
+| [P2] 已配对设备 token 在注销后仍有效 180 天 | `tiklocal/services/pairing.py` | 需服务端会话/设备表，属架构变更 |
+| [P2] 退出登录后旧 cookie 在 30 天内仍可重放（服务端不吊销） | `tiklocal/auth.py` | 同上；改密码会递增 `auth_revision` 已能吊销 |
+| [P2] 回收站快照只存内存中的条目，重启后条目仍在但无跨重启用例 | `tiklocal/services/trash.py` | 已有实现，缺测试；补用例成本低但本轮时间用尽 |
+| [P3] 注销不清 `sessionStorage['tiklocal:vt-from']` | `tiklocal/static/base.js` | 只影响返回定位，不泄漏媒体内容 |
+| [P3] 绝对路径仍出现在 `/api/library` 的 `source` 字段 | `tiklocal/web/library.py` | 该字段用于设置页展示源名，需同时改前端 |
+| [P3] `/api/v1/server` 的 `data_dir` 字段返回绝对路径 | `tiklocal/web/radio.py` | 配对流程需要它，改为相对/占位需同步改配对端 |
+| [P3] 下载历史持久化原始 URL（含 token 类查询串） | `tiklocal/services/downloader.py` | 用户需要「重新下载」，去参数会破坏该功能 |
+| [P3] `logging_setup` 的脱敏正则不覆盖 dict 形态 | `tiklocal/logging_setup.py` | 现有日志均为字符串形态 |
+| [P3] 删源后作者档案残留（`author_profiles.json` 无引用计数） | `tiklocal/services/author_profiles.py` | 本轮已修「删源时清理」，但跨源同名作者仍会残留 |
+| [P3] `trash` 条目 `deleted_at` 未校验，排序依赖字符串 | `tiklocal/services/trash.py` | 写入方唯一，风险低 |
+| [P3] `settings.library.source_error_data_dir` 只在新增源时触发，既有源需重启提示 | `tiklocal/web/settings.py` | 启动 warning 已覆盖 |
+| [P3] `is_in_data_dir` 用 `resolve()`，符号链接指向数据目录的媒体源仍可通过 | `tiklocal/paths.py` | `resolve()` 已解引用符号链接，实际不可绕过；留作注释 |
+| [P3] 登录页 503 未提供「重置密码」的一键入口 | `tiklocal/templates/login.html` | 需写文件操作，风险高于收益 |
+| [P3] `auth_revision` 单调递增无上限校验 | `tiklocal/auth.py` | 每次改密 +1，整数溢出不现实 |
+| [P3] 配对端 `/api/v1/pair` 与登录共用限流桶，可能互相挤占 | `tiklocal/web/radio.py` | 同一密码，共用是合理的 |

@@ -1,3 +1,5 @@
+import os
+
 from flask import render_template, request
 
 from tiklocal.i18n import t
@@ -60,7 +62,10 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             # The configured download_source may be a typo or a removed source;
             # surface where files actually land so the UI can show it.
             'output_source_id': getattr(download_manager, 'output_source_id', ''),
-            'output_source_path': str(getattr(download_manager, 'media_root', '') or ''),
+            # The folder name, not the host path: this payload is served to every
+            # signed-in browser on the LAN, and the absolute path carries the
+            # Windows user name (the settings API drops the data path for this reason).
+            'output_source_path': os.path.basename(str(getattr(download_manager, 'media_root', '') or '')),
         }
         return payload
 
