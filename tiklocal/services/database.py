@@ -356,6 +356,23 @@ def _migrate_014_index_media_items_mtime(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_016_index_page_order(conn: sqlite3.Connection) -> None:
+    """Covering indexes for the paged orders that had to sort a whole partition.
+
+    idx_media_items_type_mtime covers (media_type, mtime DESC) but not the uri
+    tie-breaker, so every video/image page built a temporary B-tree over the whole
+    media type; size_bytes had no index at all, so "big files" sorted the library.
+    """
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_media_items_type_mtime_uri '
+        'ON media_items(media_type, mtime DESC, uri)'
+    )
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_media_items_size '
+        'ON media_items(size_bytes DESC, mtime DESC, uri)'
+    )
+
+
 def _migrate_015_add_search_text(conn: sqlite3.Connection) -> None:
     """Store a case/Unicode folded copy of the name for search.
 
@@ -390,6 +407,7 @@ MIGRATIONS = [
     Migration(13, "douyin_media_groups", _migrate_013_douyin_media_groups),
     Migration(14, "index_media_items_mtime", _migrate_014_index_media_items_mtime),
     Migration(15, "add_search_text", _migrate_015_add_search_text),
+    Migration(16, "index_page_order", _migrate_016_index_page_order),
 ]
 
 

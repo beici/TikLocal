@@ -124,6 +124,7 @@ class LibraryService:
         # Resolving a source root costs a syscall (two on Windows) and the indexer
         # calls ref_for_path() once per file: resolve each root exactly once.
         self._resolved_roots = [(source, source.path.resolve()) for source in self.sources]
+        self._resolved_root_by_id = {source.id: root for source, root in self._resolved_roots}
         self._warn_overlapping_sources()
 
     def _warn_overlapping_sources(self) -> None:
@@ -328,9 +329,19 @@ class LibraryService:
         if not resolved:
             return None
         source, rel_path = resolved
+        root = self._resolved_root_by_id.get(source.id)
+        if root is None:
+            # Sources can be added while the app runs (the settings page scans the
+            # new folder in the same request that saves it), so a missing id is not
+            # an error: resolve the root once and remember it.
+            try:
+                root = source.path.resolve()
+            except OSError:
+                return None
+            self._resolved_root_by_id[source.id] = root
         try:
             target = (source.path / rel_path).resolve()
-            target.relative_to(source.path.resolve())
+            target.relative_to(root)
         except Exception:
             return None
         return target
@@ -344,6 +355,28 @@ class LibraryService:
         # exists() is true for both, so /detail and /api/playback accepted them and
         # rendered a 200 page around target.stat(). Only regular files are media.
         return target if target.is_file() else None
+
+    def existing_media_path(self, uri: str) -> Path | None:
+        """Cheap existence probe: the lexical path, without resolve().
+
+        resolve() costs ~275µs per file on Windows and the radio queue ran it for
+        every audio track on every refill (10k tracks ≈ 8s). Bulk callers only need
+        "is this still a file". The resolve() based containment check stays on the
+        serving path (:meth:`resolve_path`), so this cannot become a way to read
+        outside a source.
+        """
+        resolved = self.resolve_source_relative_path(uri)
+        if not resolved:
+            return None
+        source, rel_path = resolved
+        parts = Path(rel_path).parts
+        if not parts or Path(rel_path).is_absolute() or '..' in parts:
+            return None
+        candidate = source.path / rel_path
+        try:
+            return candidate if candidate.is_file() else None
+        except OSError:
+            return None
 
     def find_existing_uri(self, uri: str) -> str:
         for candidate in self.legacy_candidates(uri):

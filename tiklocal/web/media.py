@@ -691,17 +691,29 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         # the cache file open makes the next regeneration fail to replace it.
         try:
             stat = path.stat()
+        except OSError:
+            return _placeholder_response()
+        # max-age without a validator means "must-revalidate" never actually
+        # revalidates; the cache file identity is the cheapest correct validator.
+        etag = f'{stat.st_mtime_ns:x}-{stat.st_size:x}'
+        # 换封面后列表里的缩略图要能立刻更新：一小时 max-age 会让浏览器完全不发请求，
+        # 改成 no-cache 后每次用 ETag 条件请求（未变则是 304，几乎零成本）。
+        if_none_match = request.headers.get('If-None-Match', '')
+        if if_none_match.strip() == '*' or etag in if_none_match:
+            # Reading the file before deciding threw a full thumbnail away per 304,
+            # and a scrolling grid sends one conditional request per tile.
+            not_modified = Response(status=304)
+            not_modified.set_etag(etag)
+            not_modified.headers['Cache-Control'] = 'private, no-cache'
+            return not_modified
+        try:
             payload = path.read_bytes()
         except OSError:
             return _placeholder_response()
         response = send_file(io.BytesIO(payload), mimetype=mimetype, max_age=0)
-        # max-age without a validator means "must-revalidate" never actually
-        # revalidates; the cache file identity is the cheapest correct validator.
-        response.set_etag(f'{stat.st_mtime_ns:x}-{stat.st_size:x}')
-        # 换封面后列表里的缩略图要能立刻更新：一小时 max-age 会让浏览器完全不发请求，
-        # 改成 no-cache 后每次用 ETag 条件请求（未变则是 304，几乎零成本）。
+        response.set_etag(etag)
         response.headers['Cache-Control'] = 'private, no-cache'
-        return response.make_conditional(request.environ)
+        return response
 
     @app.route('/api/image/embedded-metadata')
     def api_image_embedded_metadata():

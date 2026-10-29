@@ -315,6 +315,9 @@
       img.src = item.thumb_url;
       img.alt = '';
       img.loading = 'lazy';
+      // Video posters are full-size JPEGs too; without async decoding a screenful
+      // competes with the main thread while the grid scrolls.
+      img.decoding = 'async';
       img.style.aspectRatio = ratio;
       tile.appendChild(img);
 

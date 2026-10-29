@@ -80,7 +80,7 @@ class CollectionStore:
         except OSError:
             pass
 
-    def _read(self, *, strict: bool = False) -> dict[str, Any]:
+    def _read(self, *, strict: bool = False, normalize_items: bool = True) -> dict[str, Any]:
         if not self.store_path.exists():
             return self._empty_payload()
         try:
@@ -99,15 +99,15 @@ class CollectionStore:
             # the file kept a healthy copy under the ".corrupt" name for good. Let
             # the route answer 503 ("try again") instead of 200 with nothing.
             raise
-        return self._normalize_payload(payload)
+        return self._normalize_payload(payload, normalize_items=normalize_items)
 
-    def _normalize_payload(self, payload: Any) -> dict[str, Any]:
+    def _normalize_payload(self, payload: Any, *, normalize_items: bool = True) -> dict[str, Any]:
         data = payload if isinstance(payload, dict) else {}
         raw_collections = data.get("collections")
         collections: list[dict[str, Any]] = []
         if isinstance(raw_collections, list):
             for item in raw_collections:
-                normalized = self._normalize_collection(item)
+                normalized = self._normalize_collection(item, normalize_items=normalize_items)
                 if normalized:
                     collections.append(normalized)
 
@@ -118,7 +118,7 @@ class CollectionStore:
             "collections": collections,
         }
 
-    def _normalize_collection(self, raw: Any) -> dict[str, Any] | None:
+    def _normalize_collection(self, raw: Any, *, normalize_items: bool = True) -> dict[str, Any] | None:
         if not isinstance(raw, dict):
             return None
         collection_id = _normalize_text(raw.get("id"))
@@ -136,6 +136,7 @@ class CollectionStore:
         items_raw = raw.get("items")
         items: list[dict[str, str]] = []
         seen: set[str] = set()
+        last_uri = ""
         if isinstance(items_raw, list):
             for item in items_raw:
                 if not isinstance(item, dict):
@@ -144,31 +145,38 @@ class CollectionStore:
                 if not uri or uri in seen:
                     continue
                 seen.add(uri)
-                added_at = _normalize_text(item.get("added_at")) or created_at
-                items.append({"uri": uri, "added_at": added_at})
+                last_uri = uri
+                if normalize_items:
+                    added_at = _normalize_text(item.get("added_at")) or created_at
+                    items.append({"uri": uri, "added_at": added_at})
 
-        if cover_uri and all(entry["uri"] != cover_uri for entry in items):
+        if cover_uri and cover_uri not in seen:
             cover_uri = ""
-        if not cover_uri and items:
-            cover_uri = items[-1]["uri"]
+        if not cover_uri and last_uri:
+            cover_uri = last_uri
 
-        return {
+        collection = {
             "id": collection_id,
             "name": name,
             "description": description,
             "cover_uri": cover_uri,
             "created_at": created_at,
             "updated_at": updated_at,
-            "item_count": len(items),
-            "items": items,
+            "item_count": len(seen),
         }
+        if normalize_items:
+            collection["items"] = items
+        return collection
 
     def _write(self, payload: dict[str, Any]) -> None:
         write_json_atomic(self.store_path, payload)
 
     def list(self) -> list[dict[str, Any]]:
         with self._lock:
-            payload = self._read()
+            # Chips only need id/name/count: building the item dicts for every
+            # collection made every /library render allocate tens of thousands of
+            # short-lived dicts (50 collections x 400 items) for nothing.
+            payload = self._read(normalize_items=False)
             return [self._collection_copy(item, include_items=False) for item in payload["collections"]]
 
     def list_with_items(self) -> list[dict[str, Any]]:
@@ -382,18 +390,8 @@ class CollectionStore:
             "item_count": int(item.get("item_count") or 0),
         }
         if include_items:
+            # Items reach this point already normalized by _normalize_collection;
+            # normalizing them a second time doubled the cost of every read.
             items = item.get("items")
-            normalized_items: list[dict[str, str]] = []
-            if isinstance(items, list):
-                for entry in items:
-                    if not isinstance(entry, dict):
-                        continue
-                    uri = _normalize_uri(entry.get("uri"))
-                    if not uri:
-                        continue
-                    normalized_items.append({
-                        "uri": uri,
-                        "added_at": _normalize_text(entry.get("added_at")) or data["created_at"] or _utc_now_iso(),
-                    })
-            data["items"] = normalized_items
+            data["items"] = [dict(entry) for entry in items if isinstance(entry, dict)] if isinstance(items, list) else []
         return data

@@ -6,6 +6,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from collections import OrderedDict
 from typing import Any, Callable
 
 from tiklocal.services.json_storage import read_json_file, write_json_atomic
@@ -53,6 +54,10 @@ class AudioMetadata:
 #: Guards the profile's read-modify-write; the player sends skip and play almost
 #: simultaneously and a lost update would drop whole tracks from the profile.
 _PROFILE_LOCK = threading.Lock()
+
+#: Metadata probe results are small, but the cache is keyed by absolute path: a
+#: 20k track library used to keep 20k entries for the life of the process.
+METADATA_CACHE_LIMIT = 2000
 
 
 class RadioProfileStore:
@@ -143,7 +148,9 @@ class RadioService:
         self.media_index = media_index
         self.profile_store = profile_store
         self.activity_store = activity_store
-        self._metadata_cache: dict[str, tuple[float, AudioMetadata]] = {}
+        # Bounded LRU: the key is an absolute path, so an unbounded dict kept one
+        # entry per audio file ever probed (and never released a deleted track).
+        self._metadata_cache: OrderedDict[str, tuple[float, AudioMetadata]] = OrderedDict()
 
     def list_stations(self) -> list[dict]:
         return [
@@ -205,8 +212,8 @@ class RadioService:
         for record in self.media_index.records(media_type='audio'):
             try:
                 name = record['name']
-                path = self.library.resolve_path(name)
-                if path is None or not path.is_file():
+                path = self.library.existing_media_path(name)
+                if path is None:
                     continue
                 parent = self.library.relative_path_for_uri(name).rsplit("/", 1)[0]
                 candidates.append(
@@ -241,10 +248,14 @@ class RadioService:
         cache_key = str(path)
         cached = self._metadata_cache.get(cache_key)
         if cached and cached[0] == mtime:
+            self._metadata_cache.move_to_end(cache_key)
             return cached[1]
 
         metadata = self._probe_audio_metadata(path)
         self._metadata_cache[cache_key] = (mtime, metadata)
+        self._metadata_cache.move_to_end(cache_key)
+        while len(self._metadata_cache) > METADATA_CACHE_LIMIT:
+            self._metadata_cache.popitem(last=False)
         return metadata
 
     def metadata_for_many(self, paths: list[Path]) -> list[AudioMetadata]:

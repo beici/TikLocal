@@ -425,6 +425,52 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] `instance/config.py` 的 `MEDIA_ROOT` 永远被覆盖，且语法错误静默 | `tiklocal/instance/config.py` | 属历史遗留加载顺序问题，需要先确认是否还有人用 |
 | [P3] 配置类型校验报错不含「实际读取了哪个文件」 | `tiklocal/config.py` | 与「启动日志记录配置路径」同批 |
 
+### 第 30 轮新增（45 条）
 
-
-
+| 级别 | 问题 | 位置 | 为什么暂不修 |
+| --- | --- | --- | --- |
+| [P0] `records()` 无 LIMIT 的全表 `SELECT *` + fetchall（tag feed、深链 caption feed、作者页、电台都直接用） | `tiklocal/services/library_index.py:285-298` | 需 keyset 分页（`after_uri`）；简单加 LIMIT 会让 feed 少条目 |
+| [P0] feed 每页按全库规模建两份 dict，且一次请求读三次 `favorites.json` | `tiklocal/services/recommendation.py:64-71`、`:101`、`:239` | 候选池改 tuple + favorites 提到请求级解析，需动选择算法 |
+| [P1] 每页都 `COUNT(*)`，与取行是两条独立语句 | `tiklocal/services/library_index.py:543` | 要改 `total` 语义（offset>0 时未知），前端需同步 |
+| [P1] 搜索条件 `(album_key IS NULL OR album_index = 0)` + `LIKE '%term%'` 双重不可索引 | `tiklocal/services/library_index.py:796-809` | 需 FTS5 或前缀索引方案 |
+| [P1] `/library` 每次一次全表 + 一次全索引 + 8 次整月排序 | `tiklocal/services/library_index.py:574-623` | 需拆 `capture_year` 索引与排序键 |
+| [P1] 索引重建单事务 2N 条语句 + 每 source×4 表孤儿全扫，10 万文件 20–60s | `tiklocal/services/library_index.py:42-145` | 分块提交 + 孤儿清扫移出事务 |
+| [P1] `media_vectors`/`video_frames` 在请求路径无界读 BLOB | `tiklocal/experiments/similarity/embedding.py:126-152` | 需 fetchmany 流式 top-K |
+| [P1] `download_payload` 无尺寸上限，且全量 `json.dumps` 发生在全局锁内 | `tiklocal/services/downloader.py:603`、`:1528-1545` | 入队白名单裁剪 + 锁内取快照、锁外序列化 |
+| [P1] `/thumb` 在请求线程排队生成，生成槽位无超时 → 冷缓存首屏可占满 waitress 线程 | `tiklocal/services/thumbnail.py:549` | 要改占位图契约（`acquire(timeout=2)` + `Retry-After`） |
+| [P1] 启动期同步全量扫描，零变化也重写全部行 | `tiklocal/app.py:466`、`tiklocal/services/library_index.py:44-91` | 后台扫描 + `DO UPDATE ... WHERE` 条件更新 |
+| [P1] 窗口宽度变化 1px 即清空 grid 重建全部卡片 | `tiklocal/static/library_page_controller.js:399-411` | 复用已有节点重排（保留监听器与解码结果） |
+| [P1] `?focus=` 深链逐页串行拉全库（最多 200 轮 × 24 条） | `tiklocal/static/library_page_controller.js:501-521` | 生成链接时带 offset，或接口支持 `focus=` |
+| [P2] `image_random` 全量 fetchall + Python shuffle | `tiklocal/services/library_index.py:537-541` | 需 SQL 侧抽样 |
+| [P2] `OFFSET` 无上限，且 temp 表没有 `position` 索引 | `tiklocal/services/library_index.py:520-536`、`tiklocal/web/library.py:55` | 加 `maximum` 与索引 |
+| [P2] `unprobed()` 每 5s 全索引扫（`probed_mtime` 无索引） | `tiklocal/services/library_index.py:249-275` | 加索引或维护待探测队列 |
+| [P2] 每批 activity 都做 2 万行 `NOT IN` 剪枝 | `tiklocal/services/database.py:570-578` | 改按时间窗口删除 |
+| [P2] 登记 1 个文件也要全表 `time_states()` | `tiklocal/services/library_index.py:1065`、`:716-726` | 加 `time_states_for(uris)` |
+| [P2] `on_days()` 用 `substr` 包列 + 窗口函数全表扫 | `tiklocal/services/library_index.py:429-476` | 需预存 day 列 |
+| [P2] `blog_rows()` 每 source 一次封面查询（N+1），且 timeline 视图也无条件调用 | `tiklocal/services/library_index.py:682-714`、`tiklocal/services/library.py:287` | 一次查询取全部封面 + 按需调用 |
+| [P2] `/api/collections/by-media` 每张卡片整份重读 `collections.json` | `tiklocal/web/library.py:128`、`:169-171` | `list_for_media` 改 `include_items=True` |
+| [P2] `RadioProfileStore.record()` 每次播放/跳过都全量排序 + 整份写盘 | `tiklocal/services/radio.py:80-121` | 增量写或内存有序结构 |
+| [P2] `/thumb` 命中缓存仍要 2 次 `resolve()` + 3 次 stat | `tiklocal/web/media.py:684`、`tiklocal/services/thumbnail.py:257` | `get_thumbnail` 接受已解析路径 |
+| [P2] `ffmpeg_argv()` 无缓存，每张视频海报还多一次 ffprobe | `tiklocal/services/thumbnail.py:575`、`:596`、`tiklocal/services/download_tools.py:69-98` | 加 `lru_cache` + HDR 结果 sidecar |
+| [P2] 设置页 `cache_stats()` 全量 glob + stat 缩略图目录 | `tiklocal/services/thumbnail.py:394-404` | 维护计数或 60s 缓存 |
+| [P2] `clear_cache` 在请求线程同步删数十万文件，无进度 | `tiklocal/services/thumbnail.py:406-426` | 后台任务 + 进度轮询 |
+| [P2] captions `_to_data_url` 先整图解码再缩放（无 draft、不占像素配额） | `tiklocal/services/captions.py:427-443` | 复用 thumbnail 的 draft 与 200MP 守卫 |
+| [P2] flow 相册子项强制 `eager` 且建 DOM 即拉全尺寸原图 | `tiklocal/static/flow_page_controller.js:1339-1351` | 改 lazy + 首子项用缩略图 |
+| [P2] library 网格无窗口化，且每追加一页跑一次全文档 `feather.replace()` | `tiklocal/static/library_page_controller.js:478` | 删掉该调用 + 事件委托（窗口化另计） |
+| [P2] `refreshTileSelection()` 每次全表扫描 | `tiklocal/static/library_page_controller.js:1049` | 只对变化集合增量切换 |
+| [P3] 扫描期内存里同时存在 3 份记录副本 | `tiklocal/services/library_index.py:1027-1041` | 按批直接 UPSERT |
+| [P3] `metadata_json` 列只写不读（2 万行≈40MB 死重量） | `tiklocal/services/database.py:114`、`:553-564` | 确认无读取方后删列 |
+| [P3] 每请求 4 连接 × 4 PRAGMA，`journal_mode=WAL` 每次连接重设 | `tiklocal/services/database.py:420-427` | 连接池或 PRAGMA 只设一次 |
+| [P3] `records_for_names` 的 `IN(...)` 不分块 | `tiklocal/services/library_index.py:300-316` | >999 变量在旧 SQLite 直接报错 |
+| [P3] `write_json_atomic` 全局 `indent=2`，体积与写入 CPU 翻倍 | `tiklocal/services/json_storage.py:52` | 加 `compact` 参数给大文件 |
+| [P3] `read_json_file` 共享冲突时同步 sleep，最多 250ms 阻塞请求线程 | `tiklocal/services/json_storage.py:142-164` | 改指数退避或直接抛 `StoreUnreadableError` |
+| [P3] `read_text()` 整份进 str 再 `json.loads`，峰值≈3× 文件大小 | `tiklocal/services/json_storage.py:135`、`:166` | 改 `json.load(fh)` |
+| [P3] 单个 collection 的 items 总数无上限 | `tiklocal/services/collections.py` | 加 `MAX_COLLECTION_ITEMS_TOTAL` |
+| [P3] `trash.expired()` 为拿 id 再跑一遍完整 `entries()` | `tiklocal/services/trash.py:155-158` | 复用同一次扫描 |
+| [P3] `_select_weighted` 每 pick 重建整个 pool，`_spread_by_parent` 线性扫 | `tiklocal/services/radio.py:338-403` | pool 改 dict 原地 pop、`Counter` |
+| [P3] probe worker 的 `skip[:400]` 截断导致失败项被重复探测 | `tiklocal/services/library_index.py:1278-1279` | 跳过集合改全量 `set` |
+| [P3] `probe_media_dims` 解析后重复 stat；无 ffprobe 时在请求线程 spawn ffmpeg | `tiklocal/services/media_info.py:21-22`、`:117` | 删冗余 `exists()` + 缓存 banner 时长 |
+| [P3] `/thumb` 无尺寸变体，`no-cache` 强制每次条件请求 | `tiklocal/web/media_payloads.py:10`、`tiklocal/web/media.py:703` | 跨前后端的 `w` 参数方案 |
+| [P3] 集合页任一改动都整表 `innerHTML` 重建 | `tiklocal/static/collections_page_controller.js:149`、`:192` | 按 id 增量 patch |
+| [P3] flow 每次切条做一次全文档 `querySelectorAll` | `tiklocal/static/flow_page_controller.js:1884` | 只清理 `prevItem.el` |
+| [P3] `_to_library_record` 每行造 17 键 dict，无惰性、无缓存 | `tiklocal/services/library_index.py:750-768` | 大库转换成本的主要来源之一 |

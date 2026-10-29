@@ -16,6 +16,9 @@ class FavoriteService:
         self.db_path = db_path
         self.library_service = library_service
         self._lock = RLock()
+        # (mtime_ns, size) of the file the cached set was read from.
+        self._cache_stamp: tuple[int, int] | None = None
+        self._cache: set[str] = set()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _normalize(self, filename: str) -> str:
@@ -33,8 +36,12 @@ class FavoriteService:
         return self.library_service.canonicalize_many(self._read_raw(self.db_path))
 
     def save(self, favorites: set[str]) -> None:
+        # Callers hand in canonical URIs (load() canonicalizes and _save_state adds a
+        # canonical key), so normalizing every entry again only doubled the cost of
+        # each star click on a large library.
         with self._lock:
-            write_json_atomic(self.db_path, sorted(self._normalize(item) for item in favorites if normalize_media_uri(item)))
+            write_json_atomic(self.db_path, sorted(item for item in favorites if normalize_media_uri(item)))
+            self._cache_stamp = None
 
     def toggle(self, filename: str) -> bool:
         """Toggle and persist within one read-modify-write critical section."""
@@ -57,4 +64,26 @@ class FavoriteService:
         return is_favorite
 
     def is_favorite(self, filename: str) -> bool:
-        return self._normalize(filename) in self.load()
+        return self._normalize(filename) in self._load_cached()
+
+    def _load_cached(self) -> set[str]:
+        """Canonical favorites, reused until favorites.json changes.
+
+        is_favorite() asked for one boolean and paid for a full read plus a
+        canonicalize of every entry; the library page asked once per card, so a
+        10k-favorite library ran 10k URI parses to draw one page.
+
+        The returned set is read-only: callers must not mutate it.
+        """
+        try:
+            stat = self.db_path.stat()
+        except OSError:
+            return self.load()
+        stamp = (stat.st_mtime_ns, stat.st_size)
+        with self._lock:
+            if self._cache_stamp == stamp:
+                return self._cache
+        loaded = self.load()
+        with self._lock:
+            self._cache_stamp, self._cache = stamp, loaded
+        return loaded
