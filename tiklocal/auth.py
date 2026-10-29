@@ -1,4 +1,5 @@
 import datetime
+import logging
 import secrets
 import threading
 import time
@@ -11,6 +12,11 @@ from tiklocal.i18n import t
 
 
 UNSAFE_METHODS = {'POST', 'PUT', 'PATCH', 'DELETE'}
+
+# Access control used to be the one subsystem with no log lines at all: a user
+# locked out by the rate limiter, a stale CSRF token and a password typo all
+# looked identical from the outside, and an exposed instance had no login audit.
+_LOGGER = logging.getLogger(__name__)
 
 
 class LoginAttemptLimiter:
@@ -140,6 +146,10 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
         )
 
     def unauthorized_response():
+        # A stale session (server restarted, password changed) lands here on every
+        # request; logging it at info is what makes "it keeps asking me to log in"
+        # answerable from the log instead of by guesswork.
+        _LOGGER.info('unauthorized %s %s from %s', request.method, request.path, request.remote_addr or 'unknown')
         if request.path.startswith('/api/'):
             return {'success': False, 'error': t('auth.error.required')}, 401
         if request.path.startswith('/media') or request.path == '/thumb':
@@ -148,6 +158,13 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
         return redirect(url_for('login_view', next=target))
 
     def csrf_error_response():
+        # A rejected token used to answer 403 with no trace at all: the browser
+        # showed "your request expired" and the log could not confirm whether the
+        # user had a stale tab or a script was posting without the header.
+        _LOGGER.warning(
+            'CSRF token rejected for %s %s from %s',
+            request.method, request.path, request.remote_addr or 'unknown',
+        )
         if request.path.startswith('/api/'):
             return {'success': False, 'error': t('auth.error.csrf')}, 403
         # A bare string rendered as an unstyled <html lang="en"> page: after a second
@@ -225,10 +242,14 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
                 minutes = max(1, (retry_after + 59) // 60)
                 error = t('login.error_too_many', minutes=minutes)
                 status = 429
+                # Every device behind one proxy shares remote_addr, so a lockout
+                # here can mean "someone else on the network guessed wrong".
+                _LOGGER.warning('login blocked by the rate limit for %s (%ss left)', client_key, retry_after)
             elif not auth_store.verify(request.form.get('password', '')):
                 limiter.record_failure(client_key)
                 error = t('login.error_wrong_password')
                 status = 401
+                _LOGGER.warning('login failed for %s', client_key)
             else:
                 limiter.clear(client_key)
                 remember = request.form.get('remember') == '1'
@@ -237,6 +258,7 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
                 session['auth_revision'] = auth_store.revision
                 session.permanent = remember
                 ensure_csrf_token()
+                _LOGGER.info('login succeeded for %s', client_key)
                 return redirect(next_url)
 
         response = make_response(render_template(

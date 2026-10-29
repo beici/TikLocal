@@ -388,6 +388,43 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 
 本轮修掉的 2 条 P3 未进表：队头阻塞（`_dispatch_locked` 遇重试 job 时 `break` 挡住后续可派发任务，改为旋转到队尾）与 `_terminate_process()` 末尾无超时 `wait()`（改为 `wait(timeout=5)` + 捕 `OSError`/`TimeoutExpired`），详见 `round-28.md` 第四节。
 
+### 第 29 轮新增（29 条）
+
+本轮视角是可观测性与故障诊断，五域 + 自查上报 51 条（P1 4 / P2 21 / P3 19），3 条是跨域同一根因（索引同步结果无人读、缩略图失败无日志、500 无关联 ID），去重后 43 条；修 14 条（P1 4 + P2 9 + 顺带 1 条 P3），余下 29 条登记在此。
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| **[P2] 优先** 回收站/收藏/AI 配置的写入类 `OSError` 一律静默（`except OSError: pass`），与下载页 `downloads.py:401` 记日志的做法不一致 | `tiklocal/web/media.py`、`tiklocal/services/favorites.py`、`tiklocal/web/settings.py` | 同一产品内需要统一的「写失败」上报层；逐点补日志会散在十几处，先定一个 helper 再批量替换 |
+| **[P2] 优先** 生产模式无请求级日志：慢请求只覆盖 >2 s，正常请求与 4xx 无痕，排查「用户说打不开」只能靠猜 | `tiklocal/app.py` | 全量 access log 会被缩略图请求淹没（单页几十条），需要先做采样与容量上限，属日志策略而非单点修复 |
+| [P2] 英文原始异常直出中文界面（`signal timed out`、`Failed to fetch`、`HTTP 500`） | `tiklocal/static/*.js` 多处 `error.message` | 需要一个统一 `describeError(err)` 把超时/离线/HTTP 状态翻成用户语言，牵动十余处 catch |
+| [P2] 离线事件几乎没接线：`tiklocal:offline` 全库零监听，恢复网络后首页仍停在空库态 | `tiklocal/static/base.js`、`home_page_controller.js` | 与「首页错误条」同批做更划算，本轮先保证失败可见，恢复后的自动重取留给下一轮 |
+| [P2] flow 丢弃服务端错误体：`throw new Error('HTTP ' + status)` 让「媒体文件已损坏」这类具体原因永远看不到 | `tiklocal/static/flow_page_controller.js` | 需要先统一 flow 的错误对象形状（`{code, message, retryable}`），牵动错误气泡与重试逻辑 |
+| [P2] flow 字幕失败只闪红灯 1.4 s，`flow.error.title_load`/`title_generate` 是死文案 | `tiklocal/static/flow_page_controller.js` | 需要设计字幕区的持久错误态（带重试按钮），属交互改版 |
+| [P2] 删除/恢复请求无超时，服务端卡住时 Promise 永不 settle，撤销条一直转圈 | `tiklocal/static/ui_feedback.js` | 要区分「删除中」与「删除失败」两个态，与 toast 互斥逻辑一起改 |
+| [P2] 撤销窗口仅 10 s 且只在落地页首载给一次，切页回来就没有 | `tiklocal/static/ui_feedback.js` | 需要持久化最近删除（sessionStorage）并跨页重建撤销条，属功能增强 |
+| [P2] 库页不告知「来源离线」：幽灵行照常渲染、可点、点开才 404 | `tiklocal/static/library_page_controller.js` | 需要索引层暴露来源可用性（`unavailable_sources`）并在卡片上打标，牵动渲染契约 |
+| [P2] `skipped_prefixes` 不落盘、不展示，全仓无消费者：忽略目录的配置错误永远不报 | `tiklocal/services/library_index.py` | 要先定「忽略规则」的用户可见位置（设置页列表），否则只是换个地方存 |
+| [P2] 数据库损坏被隔离重建后应用内无告知（日志有、界面无），用户看到库突然变小 | `tiklocal/services/database.py`、`tiklocal/app.py` | 需要启动期把「重建过」写进 `app.extensions` 并由首页展示，与错误条同批 |
+| [P2] `/api/search` 无法区分「索引为空」与「没有匹配」 | `tiklocal/web/search.py` | 需要索引层提供 `total_indexed`，且前端空态文案要分三态，属文案 + 契约改动 |
+| [P3] 内部英文异常绕过 `t()` 直接进用户文案（如 `f"ffprobe failed: {err}"`） | `tiklocal/web/media.py` 等多处 | 需要错误码化；当前多数是兜底分支，用户很少见到 |
+| [P3] 静默降级/丢条目：个别文件解析失败时整批跳过而不计数 | `tiklocal/services/library_index.py`、`metadata.py` | 与「跳过计数」同类，等索引层统一加 `skipped` 统计后一起补 |
+| [P3] 日志格式无线程标识，容量会被客户端错误淹没 | `tiklocal/logging_setup.py` | 加 `%(threadName)s` 会改变既有日志格式；客户端错误已由 client-log 限流 |
+| [P3] 日志写入本机绝对路径（含用户名），贴日志到公开 issue 会泄露路径 | `tiklocal/logging_setup.py`、各处 `LOGGER.info(str(path))` | 需要统一的路径脱敏 helper，牵动日志点较多 |
+| [P3] `requestJson/requestForm` 裸 `response.json()`：非法 JSON 抛 `SyntaxError` 而非可读文案 | `tiklocal/static/base.js` | 与 `describeError` 同批；当前多数端点不会返回非 JSON |
+| [P3] 并发保存 `catch(_)` 吞原因，两个标签同时改设置时后者只看到「保存失败」 | `tiklocal/static/settings_page_controller.js` | 设置页错误呈现整体要重做（多来源编辑），属下一轮候选 |
+| [P3] client-log 每页只报前 5 条且无截断标记 | `tiklocal/static/base.js` | 有意限流避免刷屏；要加「还有 N 条」需服务端支持计数 |
+| [P3] 搜索失败不区分原因，重试按钮文案复用 `search.submit` | `tiklocal/static/search_page_controller.js` | 与 `/api/search` 三态改造同批 |
+| [P3] toast 互斥覆盖：连续失败只留最后一条 | `tiklocal/static/ui_feedback.js` | 需要队列或堆叠，属 UI 组件改造 |
+| [P3] 扫描状态三元组不完整：扫描中不可见，`last_synced_at` 在零成功时也刷新 | `tiklocal/services/library_index.py`、`web/library.py` | 需要区分「扫描完成」与「扫描完成但全失败」，与 J3-P2-2 同批 |
+| [P3] 缩略图失败只留 `.jpg.fail` 标记，无计数、无单条查询端点 | `tiklocal/services/thumbnail.py` | 本轮已加失败日志；计数与端点属诊断功能扩展 |
+| [P3] 回收站静默丢弃读不出的条目，恢复时反报「不在回收站」 | `tiklocal/services/trash.py:128-147` | 需要 `entries()` 返回 `unreadable` 计数并在界面提示 |
+| [P3] 未捕获异常永远不进 `tiklocal.log`（无 `sys.excepthook`/`threading.excepthook`） | `tiklocal/logging_setup.py` | 与 J5-b 前端上报互补；服务端崩溃多在 Flask 内，已由 500 handler 覆盖 |
+| [P3] `InstanceLockError` 文案指向不存在的 `--instance` 参数 | `tiklocal/services/instance_lock.py` | 文案修正即可，但需与 `run.py` 的 `--instance-dir` 对齐 |
+| [P3] 启动日志不记录实际生效的配置文件路径 | `tiklocal/run.py:750-761` | 需要把 `load_config()` 的结果带回启动日志，属小改 |
+| [P3] `thumbs`/`dedupe` 丢弃统计、失败也返回 0 | `tiklocal/run.py`、`tiklocal/dedupe.py` | CLI 输出契约变更，需要同步改文档与脚本 |
+| [P3] `instance/config.py` 的 `MEDIA_ROOT` 永远被覆盖，且语法错误静默 | `tiklocal/instance/config.py` | 属历史遗留加载顺序问题，需要先确认是否还有人用 |
+| [P3] 配置类型校验报错不含「实际读取了哪个文件」 | `tiklocal/config.py` | 与「启动日志记录配置路径」同批 |
+
 
 
 

@@ -233,3 +233,46 @@ document.addEventListener(
   true,
 );
 
+// 控制器抛出的异常原本只留在浏览器控制台：页面半初始化、服务端日志干干净净，
+// 故障报告只能写「页面空白」。这里把首批未捕获错误送到 /api/client-log，
+// 让它落在 tiklocal.log 里、与提供该页面的那次请求相邻。
+(() => {
+  const MAX_REPORTS = 5;
+  let sent = 0;
+  const report = (message, source, line, stack) => {
+    if (sent >= MAX_REPORTS) return;
+    sent += 1;
+    try {
+      // csrf_fetch.js 会给同源 POST 补上 X-CSRF-Token，所以这里直接用 fetch。
+      fetch('/api/client-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: String(message || ''),
+          source: String(source || ''),
+          line: Number(line) || 0,
+          stack: String(stack || ''),
+          url: location.href,
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch (error) {
+      // 上报失败不能再制造一个错误。
+    }
+  };
+  window.addEventListener('error', (event) => {
+    // 资源加载失败由上面那对 capture 监听处理，这里只收脚本异常。
+    if (event.target && event.target !== window) return;
+    report(event.message, event.filename, event.lineno, event.error && event.error.stack);
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason;
+    report(
+      reason && reason.message ? reason.message : String(reason),
+      '',
+      0,
+      reason && reason.stack,
+    );
+  });
+})();
+

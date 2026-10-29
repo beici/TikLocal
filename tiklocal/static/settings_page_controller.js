@@ -653,8 +653,9 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path, name }),
       // A folder added for the first time is scanned before the response, so the
-      // default 20 s budget is too small for a large library.
-      signal: AbortSignal.timeout(120000),
+      // default 20 s budget is too small for a large library; a cold NAS scan can
+      // outlast even this, hence the timeout-specific message below.
+      signal: AbortSignal.timeout(180000),
     };
     const url = editing
       ? '/api/library/sources/' + encodeURIComponent(editingSourceId)
@@ -666,6 +667,10 @@
         closeMediaSourceDialog();
       });
     } catch (error) {
+      if (error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+        mediaSourceHint.textContent = T('settings.library.source_timeout');
+        return;
+      }
       mediaSourceHint.textContent = error instanceof Error && error.message
         ? error.message
         : T('settings.library.source_error_generic');
@@ -708,7 +713,13 @@
   refreshButton.addEventListener('click', () => {
     confirmAction(T('settings.scan.confirm_title'), T('settings.scan.confirm_copy'), T('settings.scan.action'), 'primary', () => {
       runButton(refreshButton, T('settings.scan.busy'), async () => {
-        const payload = await requestJson('/api/library/sync', { method: 'POST' });
+        // A cold scan of a large NAS folder outlives the 20 s default, and a
+        // concurrent scan answers 409 with a reason; both used to collapse into
+        // "scan failed" because the catch threw the error away.
+        const payload = await requestJson('/api/library/sync', {
+          method: 'POST',
+          signal: AbortSignal.timeout(180000),
+        });
         await loadStats();
         const data = payload.data || {};
         const unavailable = Array.isArray(data.unavailable_sources) ? data.unavailable_sources : [];
@@ -728,7 +739,13 @@
           return;
         }
         TikLocalUI.toast(T('settings.scan.done', { count: Number(data.indexed || 0) }));
-      }).catch(() => TikLocalUI.toast(T('settings.scan.failed'), 'error'));
+      }).catch((error) => {
+        if (error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+          TikLocalUI.toast(T('settings.scan.timeout'), 'error');
+          return;
+        }
+        TikLocalUI.toast((error && error.message) || T('settings.scan.failed'), 'error');
+      });
     });
   });
 

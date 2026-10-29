@@ -10,7 +10,7 @@ import time
 from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, send_file, url_for
+from flask import Flask, g, jsonify, render_template, request, send_file, url_for
 
 # Service Imports
 from tiklocal.logging_setup import configure_logging
@@ -25,6 +25,7 @@ from tiklocal.web.captions import register_caption_routes
 from tiklocal.web.author import register_author_routes
 from tiklocal.web.downloads import register_download_routes
 from tiklocal.web.library import register_library_routes
+from tiklocal.web.client_log import register_client_log_routes
 from tiklocal.services.database import AppDatabase, MediaActivityStore
 from tiklocal.services.library_index import LibraryIndexer, MediaIndexStore, MediaProbeWorker
 from tiklocal.services.trash import TrashService
@@ -315,6 +316,31 @@ def create_app(test_config=None):
             return f"{moment.strftime('%b')} {day}, {moment.strftime('%Y %H:%M:%S')}"
         return moment.strftime('%Y-%m-%d %H:%M:%S')
 
+    #: A request slower than this leaves no trace today: waitress only logs
+    #: errors, so "the page hung for a minute" can be neither confirmed nor
+    #: attributed from the log afterwards. Media bytes are excluded on purpose —
+    #: a large video is slow by definition and would drown the signal.
+    SLOW_REQUEST_SEC = 2.0
+
+    @app.before_request
+    def start_request_timer():
+        g.request_started_at = time.monotonic()
+
+    @app.after_request
+    def report_slow_request(response):
+        started = getattr(g, 'request_started_at', None)
+        if started is None:
+            return response
+        elapsed = time.monotonic() - started
+        path = request.path
+        if elapsed < SLOW_REQUEST_SEC or path.startswith(('/static/', '/media', '/thumb')):
+            return response
+        app.logger.warning(
+            'slow request: %s %s took %.2fs (%s)',
+            request.method, path, elapsed, response.status_code,
+        )
+        return response
+
     @app.after_request
     def apply_cache_policy(response):
         endpoint = request.endpoint or ''
@@ -439,6 +465,21 @@ def create_app(test_config=None):
     library_indexer = LibraryIndexer(library_service, media_index)
     index_sync_result = library_indexer.sync()
     app.extensions["media_index_sync"] = index_sync_result
+    # The result was stored and never read: an unreadable source, an empty folder
+    # and a wrong path all looked the same in the log (one INFO line, then "Serving
+    # on"), which is the hardest kind of startup failure to diagnose remotely.
+    _unavailable = index_sync_result.get('unavailable_sources') or []
+    if _unavailable:
+        app.logger.warning(
+            'index sync: indexed=%s deleted=%s unavailable=%s errors=%s',
+            index_sync_result.get('indexed'), index_sync_result.get('deleted'),
+            ', '.join(str(item) for item in _unavailable),
+            index_sync_result.get('source_errors') or {},
+        )
+    else:
+        app.logger.info(
+            'index sync: indexed=%s deleted=%s', index_sync_result.get('indexed'), index_sync_result.get('deleted'),
+        )
     media_probe = MediaProbeWorker(library_service, media_index)
     library_indexer.on_change = media_probe.wake
     app.extensions["media_probe"] = media_probe
@@ -550,6 +591,7 @@ def create_app(test_config=None):
         library_service=library_service,
         library_indexer=library_indexer,
     )
+    register_client_log_routes(app)
 
     # --- Template Filters ---
     @app.template_filter('filesizeformat')
@@ -621,12 +663,19 @@ def create_app(test_config=None):
         # Flask already logged the traceback (log_exception) before calling this
         # handler: a second exception() entry doubled every 500 in the log and
         # halved the effective retention of the 2 MB x 3 rotation.
+        # The reference ties the user's screenshot to the log line: "it said 500"
+        # used to be unanswerable in a log with dozens of warnings.
+        reference = hashlib.sha1(f'{time.time()}:{os.urandom(8)!r}'.encode()).hexdigest()[:8]
         app.logger.warning(
-            'Unhandled error on %s %s from %s',
+            'Unhandled error [%s] on %s %s from %s',
+            reference,
             request.method,
             request.full_path if request.query_string else request.path,
             request.remote_addr,
         )
-        return _api_error(500, t('common.error.internal'), error)
+        message = t('common.error.internal')
+        if request.path.startswith('/api/'):
+            return {'success': False, 'error': message, 'reference': reference}, 500
+        return render_template('error.html', status=500, message=f'{message} · {reference}'), 500
 
     return app

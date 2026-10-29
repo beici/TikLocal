@@ -1030,6 +1030,10 @@ class DownloadManager:
                 index_only = job.get('failure_stage') == 'index'
                 existing_outputs = list(job['output_files_rel'])
                 self._persist_locked()
+                # The job history is in memory and the UI is the only place that
+                # showed a download starting: a background failure left the log
+                # with nothing between "POST /api/download" and the next request.
+                LOGGER.info('download %s started: %s', job_id, job.get('url'))
 
             if index_only:
                 return_code, error_message, output_rel_list = 0, '', existing_outputs
@@ -1056,6 +1060,7 @@ class DownloadManager:
                         job["output_path_rel"] = output_rel_list[0]
                         job["partial"] = True
                     self._mark_canceled_locked(job)
+                    LOGGER.info('download %s canceled (%s file(s) kept)', job_id, len(output_rel_list))
                 elif return_code == 0:
                     job["progress_percent"] = 100.0
                     job["eta_sec"] = 0
@@ -1072,6 +1077,7 @@ class DownloadManager:
                         "files": list(output_rel_list),
                     }
                     self._persist_locked()
+                    LOGGER.info('download %s finished: %s file(s)', job_id, len(output_rel_list))
                 else:
                     job["status"] = "failed"
                     job["error_message"] = error_message or "Download failed. Check the URL and network connection."
@@ -1086,6 +1092,7 @@ class DownloadManager:
                         job["partial"] = True
                     job["finished_at"] = utc_now_iso()
                     self._persist_locked()
+                    LOGGER.warning('download %s failed: %s', job_id, job["error_message"])
 
             if canceled:
                 if output_rel_list and self.on_outputs:

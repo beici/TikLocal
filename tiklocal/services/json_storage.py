@@ -1,9 +1,12 @@
 import itertools
 import json
+import logging
 import os
 import random
 import time
 from pathlib import Path
+
+_LOGGER = logging.getLogger(__name__)
 
 # A reader holding the target open (antivirus, Windows Search, another request
 # mid-read) makes `os.replace` fail with a sharing violation on Windows. Retry
@@ -98,6 +101,11 @@ def quarantine_corrupt_file(path: Path) -> Path | None:
     except OSError:
         return None
     _prune_quarantine(path)
+    # Quarantining is the right recovery, but it silently resets the store: the
+    # favourites, the collection order or the download history suddenly read as
+    # empty, and without this line the log could not tell that from "the user
+    # deleted everything".
+    _LOGGER.warning('quarantined unreadable JSON store %s -> %s', path, target)
     return target
 
 

@@ -1,4 +1,4 @@
-"""Lightweight zh/en translations for templates and client scripts.
+﻿"""Lightweight zh/en translations for templates and client scripts.
 
 Locale resolution order: ``lang`` cookie (manual selection, per device) >
 ``Accept-Language`` header > Chinese default. The settings page writes both a
@@ -141,6 +141,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.scan.busy': '正在扫描…',
         'settings.scan.done': '扫描完成，已索引 {count} 个媒体。',
         'settings.scan.failed': '扫描失败，请稍后再试。',
+        'settings.scan.timeout': '扫描超时（大目录首次扫描可能超过 3 分钟），可稍后在设置页刷新查看结果。',
         'settings.scan.busy': '正在扫描…',
         'settings.scan.running': '已有扫描在进行中，请稍候再试。',
         'settings.scan.partial': '扫描完成，但有来源不可用：{sources}。请检查这些目录是否已挂载或仍存在。',
@@ -232,6 +233,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.library.source_scan_pending': '已保存；媒体库正在扫描，稍后会显示这些文件。',
         'settings.library.source_scan_done': '已重新扫描，共 {count} 个媒体。',
         'settings.library.source_error_generic': '媒体目录操作失败，请稍后重试。',
+        'settings.library.source_timeout': '扫描超时，文件夹可能已保存；稍后刷新本页查看结果。',
         'settings.library.source_error_save': '保存媒体目录失败，请检查磁盘写入权限。',
         'settings.library.source_error_required': '请填写文件夹路径。',
         'settings.library.source_error_missing': '找不到这个文件夹：{path}',
@@ -419,6 +421,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.scan.busy': 'Scanning…',
         'settings.scan.done': 'Scan complete. Indexed {count} media items.',
         'settings.scan.failed': 'Scan failed. Please try again later.',
+        'settings.scan.timeout': 'The scan timed out (a first scan of a large folder can take minutes); reload this page later to see the result.',
         'settings.scan.running': 'A scan is already running. Please try again shortly.',
         'settings.scan.partial': 'Scan finished, but some sources are unavailable: {sources}. Check that those directories are mounted and still exist.',
         'settings.scan.unavailable': 'Some sources are unavailable: {sources}. Indexed {count} media items from the others.',
@@ -509,6 +512,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.library.source_scan_pending': 'Saved; the library is scanning and these files will show up shortly.',
         'settings.library.source_scan_done': 'Rescanned {count} items.',
         'settings.library.source_error_generic': 'Could not update the media folders. Try again.',
+        'settings.library.source_timeout': 'The scan timed out; the folder may already be saved - reload this page in a moment.',
         'settings.library.source_error_save': 'Could not save the media folders; check the disk write permissions.',
         'settings.library.source_error_required': 'Enter a folder path.',
         'settings.library.source_error_missing': 'That folder does not exist: {path}',

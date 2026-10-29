@@ -8,6 +8,12 @@
 
 {% block content %}
 <main id="main" class="home-page" aria-labelledby="home-title">
+  <div id="home-load-error" class="home-load-error" role="alert" hidden>
+    <i data-feather="alert-triangle" aria-hidden="true"></i>
+    <span id="home-load-error-message">{{ t('home.load_failed') }}</span>
+    <button type="button" id="home-load-error-retry" class="home-load-error-retry">{{ t('common.retry') }}</button>
+  </div>
+
   <div class="home-atmosphere" aria-hidden="true">
     <span class="home-glow home-glow-one"></span>
     <span class="home-glow home-glow-two"></span>

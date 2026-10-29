@@ -136,13 +136,63 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         """Previous and next items in library order (newest first)."""
         return media_index.neighbors(media_type, name)
 
+    _MISSING_MESSAGES = {
+        'trashed': 'detail.error.in_trash',
+        'source_offline': 'detail.error.source_offline',
+        'missing_on_disk': 'detail.error.missing_on_disk',
+    }
+
+    def missing_reason(canonical):
+        """Name the cause when a uri cannot be opened.
+
+        Three very different situations answered the same "file not found": the
+        file sits in the trash (restorable for N more days), the index still lists
+        it while the disk does not have it (a source went offline, or the file was
+        moved or deleted outside the app), and the index never knew it at all.
+        Telling them apart is the difference between "restore it" and "rescan".
+        """
+        try:
+            for entry in trash_service.entries():
+                if str(entry.get('uri') or '') == canonical:
+                    return {
+                        'reason': 'trashed',
+                        'trash_entry_id': str(entry.get('id') or ''),
+                        'deleted_at': str(entry.get('deleted_at') or ''),
+                    }
+        except OSError:
+            pass
+        indexed = False
+        try:
+            indexed = bool(media_index and media_index.records_for_names([canonical]))
+        except Exception:  # noqa: BLE001 - a broken index must not turn a 404 into a 500
+            indexed = False
+        if not indexed:
+            return {'reason': 'not_indexed'}
+        source = None
+        try:
+            source = library_service.source_for_uri(canonical)
+        except Exception:  # noqa: BLE001 - the reason is a nicety, never a failure path
+            source = None
+        source_id = str(getattr(source, 'id', '') or '')
+        if source is not None:
+            try:
+                if not Path(source.path).is_dir():
+                    return {'reason': 'source_offline', 'source_id': source_id}
+            except OSError:
+                pass
+        return {'reason': 'missing_on_disk', 'source_id': source_id}
+
+    def missing_message(reason, fallback):
+        return t(_MISSING_MESSAGES.get(reason, fallback))
+
     @app.route('/detail/<path:name>')
     def detail_view(name):
         name = library_service.find_existing_uri(name)
         target = library_service.resolve_path(name)
         if not target or not target.exists():
+            reason = missing_reason(name)['reason']
             return render_template('error.html', status=404,
-                                   message=t('detail.error.file_not_found')), 404
+                                   message=missing_message(reason, 'detail.error.file_not_found')), 404
 
         if target.suffix.lower() in IMAGE_EXTENSIONS:
             return redirect(f"/image?uri={quote(name)}")
@@ -196,8 +246,9 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
 
         target = library_service.resolve_path(uri)
         if not target or not target.exists():
+            reason = missing_reason(uri)['reason']
             return render_template('error.html', status=404,
-                                   message=t('image.error.file_not_found')), 404
+                                   message=missing_message(reason, 'image.error.file_not_found')), 404
         source_meta = download_manager.resolve_source_for_file(uri)
         uri_path_encoded = quote(uri, safe='/')
         uri_query_encoded = quote(uri, safe='')
@@ -279,6 +330,9 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         try:
             entry = trash_service.move(name)
         except FileNotFoundError:
+            # The row is dropped so the ghost tile stops being served; logging it
+            # keeps "the file vanished between the index scan and my click" visible.
+            app.logger.info('delete skipped for %s: no longer on disk', name)
             media_index.delete(library_service.canonicalize_uri(name))
             return ({'success': False, 'error': t('detail.error.file_not_found')}, 404) if wants_json else redirect('/library')
         except OSError as e:
@@ -288,6 +342,14 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             in_use = (
                 getattr(e, 'winerror', None) in (32, 33)
                 or e.errno in (errno.EACCES, errno.EBUSY, errno.EPERM)
+            )
+            # Returning a tuple instead of raising skips the global 500 handler, so
+            # without this line a full disk or a read-only folder left no trace at
+            # all: the user saw "delete failed, try again" and nobody could tell a
+            # locked player from an out-of-space drive afterwards.
+            app.logger.warning(
+                'delete failed for %s (winerror=%s errno=%s)',
+                name, getattr(e, 'winerror', None), e.errno, exc_info=e,
             )
             message = t('detail.error.file_in_use') if in_use else t('detail.error.delete_failed')
             return ({'error': message}, 409 if in_use else 500) if wants_json else (message, 409 if in_use else 500)
@@ -548,7 +610,20 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         canonical = library_service.find_existing_uri(uri) or uri
         target = library_service.resolve_path(canonical)
         if not target or not target.exists() or not target.is_file():
-            return {'success': False, 'error': t('image.error.file_not_found')}, 404
+            # 404 keeps the endpoint's existing contract, but the body now says
+            # *why*: the info sheet, the support thread and a curl all get the
+            # same answer instead of "file not found" for three different causes.
+            missing = missing_reason(canonical)
+            reason = str(missing.get('reason') or '')
+            return {
+                'success': False,
+                'present': False,
+                'reason': reason,
+                'trash_entry_id': missing.get('trash_entry_id', ''),
+                'deleted_at': missing.get('deleted_at', ''),
+                'source_id': missing.get('source_id', ''),
+                'error': missing_message(reason, 'image.error.file_not_found'),
+            }, 404
         try:
             size_bytes = target.stat().st_size
         except OSError:
@@ -558,6 +633,10 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             rows = media_index.records_for_names([canonical]) if media_index else []
             record = rows[0] if rows else {}
         except Exception:  # a broken index must not hide the file it points at
+            # Still worth a line: the sheet then shows no dimensions and no date,
+            # which reads as "this file has no metadata" instead of "the index is
+            # unreadable".
+            app.logger.warning('media info: index lookup failed for %s', canonical, exc_info=True)
             record = {}
         media_type = str(record.get('media_type') or '') or (
             'video' if target.suffix.lower() in VIDEO_EXTENSIONS else 'image'

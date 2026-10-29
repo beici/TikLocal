@@ -7,11 +7,28 @@
   function byId(id) { return document.getElementById(id); }
 
   function fetchJson(url) {
-    return fetch(url, { headers: { Accept: 'application/json' } })
-      .then(function (response) {
-        if (!response.ok) throw new Error(T('home.request_failed'));
-        return response.json();
+    const options = { headers: { Accept: 'application/json' } };
+    if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) options.signal = AbortSignal.timeout(15000);
+    return fetch(url, options).then(function (response) {
+      return response.json().catch(function () { return null; }).then(function (payload) {
+        // A 200 carrying {success: false} is still a failure. fetchJson used to look
+        // at response.ok only, so a refused or half-broken request rendered as an
+        // empty library and told the user to add a media source.
+        if (!response.ok || (payload && payload.success === false)) {
+          const detail = payload && (payload.error || payload.message);
+          const text = typeof detail === 'string' ? detail : (detail && detail.message) || '';
+          throw new Error(text || T('home.request_failed'));
+        }
+        return payload;
       });
+    });
+  }
+
+  function errorText(error) {
+    if (!error) return T('home.request_failed');
+    if (error.name === 'TimeoutError' || error.name === 'AbortError') return T('home.error_timeout');
+    if (error instanceof TypeError) return T('home.error_offline');
+    return error.message || T('home.request_failed');
   }
 
   function apiData(payload) {
@@ -219,35 +236,83 @@
     byId('home-title').textContent = title;
   }
 
+  function renderStatsUnavailable() {
+    var node = byId('home-library-summary');
+    // Leaving the "loading" text would read as "still counting"; an em dash says
+    // "unknown" and the banner above says why.
+    if (node) node.textContent = T('home.stats.unavailable');
+  }
+
+  function showLoadError(errors) {
+    var banner = byId('home-load-error');
+    var message = byId('home-load-error-message');
+    if (!banner || !message) return;
+    var detail = errorText(errors[0]);
+    message.textContent = errors.length > 1
+      ? T('home.load_failed_multiple', { count: errors.length, detail: detail })
+      : T('home.load_failed_detail', { detail: detail });
+    banner.hidden = false;
+  }
+
+  function hideLoadError() {
+    var banner = byId('home-load-error');
+    if (banner) banner.hidden = true;
+  }
+
+  function bindRetry() {
+    var button = byId('home-load-error-retry');
+    if (!button || button.dataset.bound === '1') return;
+    button.dataset.bound = '1';
+    button.addEventListener('click', function () { init(); });
+  }
+
   function init() {
     updateGreeting();
     hydrateRadio();
+    bindRetry();
+    hideLoadError();
 
-    var statsRequest = fetchJson('/api/library/stats').catch(function () { return {}; });
-    var recentRequest = fetchJson('/api/library/items?scope=all&mode=all&offset=0&limit=12').catch(function () { return { data: { items: [] } }; });
-    var forgottenRequest = fetchJson('/api/feed/mix?mode=forgotten&size=8&snapshot=1').catch(function () { return { items: [] }; });
-    var collectionsRequest = fetchJson('/api/collections').catch(function () { return { data: { items: [] } }; });
     var now = new Date();
     var today = [now.getFullYear(), now.getMonth() + 1, now.getDate()].map(function (n) { return String(n).padStart(2, '0'); }).join('-');
-    fetchJson('/api/library/on-this-day?date=' + today).then(function (payload) {
-      renderMemories(apiData(payload));
-      if (window.feather) window.feather.replace();
-    }).catch(function () {});
+    var requests = [
+      fetchJson('/api/library/stats'),
+      fetchJson('/api/library/items?scope=all&mode=all&offset=0&limit=12'),
+      fetchJson('/api/feed/mix?mode=forgotten&size=8&snapshot=1'),
+      fetchJson('/api/collections'),
+      fetchJson('/api/library/on-this-day?date=' + today),
+    ];
 
-    Promise.all([statsRequest, recentRequest, forgottenRequest, collectionsRequest]).then(function (results) {
-      var stats = apiData(results[0]) || {};
-      var recent = ((apiData(results[1]) || {}).items || []).filter(function (item) {
-        return item.type === 'image' || item.type === 'video';
-      });
-      var rediscover = (apiData(results[2]) || {}).items || [];
-      var collections = (apiData(results[3]) || {}).items || [];
+    // allSettled instead of four `.catch(() => empty)` fallbacks: a failed request
+    // used to be indistinguishable from an empty library, so the page said
+    // "add a media source" to someone with ten thousand items.
+    Promise.allSettled(requests).then(function (results) {
+      var failures = results.filter(function (result) {
+        return result.status === 'rejected';
+      }).map(function (result) { return result.reason; });
 
-      renderStats(stats);
-      renderFlow(recent, stats);
-      renderRibbon('home-recent', recent.slice(0, 8), '');
-      renderRibbon('home-rediscover', (rediscover.length ? rediscover : recent.slice().reverse()).slice(0, 3), 'rediscover-tile');
-      renderCollections(collections);
+      var stats = results[0].status === 'fulfilled' ? (apiData(results[0].value) || {}) : null;
+      if (stats) renderStats(stats);
+      else renderStatsUnavailable();
+
+      if (results[1].status === 'fulfilled') {
+        var recent = ((apiData(results[1].value) || {}).items || []).filter(function (item) {
+          return item.type === 'image' || item.type === 'video';
+        });
+        var rediscover = results[2].status === 'fulfilled'
+          ? ((apiData(results[2].value) || {}).items || [])
+          : [];
+        renderFlow(recent, stats || {});
+        renderRibbon('home-recent', recent.slice(0, 8), '');
+        renderRibbon('home-rediscover', (rediscover.length ? rediscover : recent.slice().reverse()).slice(0, 3), 'rediscover-tile');
+      }
+      if (results[3].status === 'fulfilled') {
+        renderCollections((apiData(results[3].value) || {}).items || []);
+      }
+      if (results[4].status === 'fulfilled') {
+        renderMemories(apiData(results[4].value));
+      }
       if (window.feather) window.feather.replace();
+      if (failures.length) showLoadError(failures);
     });
   }
 

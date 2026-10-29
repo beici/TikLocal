@@ -7,6 +7,7 @@ bodies and out-of-range pagination arguments.
 """
 
 import json
+import logging
 
 import pytest
 
@@ -66,3 +67,33 @@ def test_library_stats_counts_favorites(client, tmp_path):
     # favorite_service.load() returns a set; the set-vs-list mismatch reported
     # "0 favorites" for every user while the field went unread.
     assert client.get('/api/library/stats').get_json()['favorites'] == 2
+
+
+def test_client_error_reports_reach_the_server_log(client, caplog):
+    # A controller that throws used to leave the page half-initialised and the
+    # server log empty, so a bug report could only say "the page is blank".
+    payload = {
+        'message': 'x is undefined',
+        'source': 'flow_page_controller.js',
+        'line': 42,
+        'stack': 'TypeError\n    at boot (flow.js:1:2)',
+        'url': 'http://localhost/flow',
+    }
+    with caplog.at_level(logging.WARNING):
+        response = client.post('/api/client-log', json=payload)
+    assert response.status_code == 200
+    assert response.get_json()['success'] is True
+    entries = [record.getMessage() for record in caplog.records if 'client error:' in record.getMessage()]
+    assert entries, 'the report must land in the log'
+    line = entries[0]
+    assert 'x is undefined' in line
+    assert 'flow_page_controller.js:42' in line
+    assert 'http://localhost/flow' in line
+    # A newline in the stack must not let a crafted report forge extra log lines.
+    assert '\n' not in line
+
+
+def test_client_error_report_rejects_non_object_body(client):
+    assert client.post('/api/client-log', json=['nope']).status_code == 400
+    assert client.post('/api/client-log', data='not json', content_type='text/plain').status_code == 400
+

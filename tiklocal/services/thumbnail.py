@@ -19,6 +19,12 @@ from tiklocal.services.library import LibraryService, AUDIO_EXTENSIONS, IMAGE_EX
 
 logger = logging.getLogger(__name__)
 
+# Thumbnail failures used to be completely silent. These bound the new warning to
+# the first few distinct files instead of one line per broken tile.
+_FAILURE_LOG_SEEN: set[str] = set()
+_FAILURE_LOG_LOCK = threading.Lock()
+_FAILURE_LOG_LIMIT = 20
+
 #: How long a video frame extraction may take before the request gives up.
 FFMPEG_TIMEOUT_SEC = 30
 # One poster may need a duration probe, a colour-transfer probe and up to four
@@ -340,7 +346,25 @@ class ThumbnailService:
             marker.write_text(str(int(time.time())), encoding='utf-8')
         except OSError:
             pass
+        self._log_generation_failure(uri)
 
+    def _log_generation_failure(self, uri: str) -> None:
+        """Say *once* per file why a thumbnail never appeared.
+
+        The grid used to answer 200 + a grey placeholder with no log line at all,
+        so "every video is a grey box" looked like a media problem rather than a
+        missing ffmpeg. Bounded to the first few distinct files: a library of
+        broken files should produce a handful of warnings, not one per tile.
+        """
+        key = self.library.canonicalize_uri(uri)
+        with _FAILURE_LOG_LOCK:
+            if key in _FAILURE_LOG_SEEN or len(_FAILURE_LOG_SEEN) >= _FAILURE_LOG_LIMIT:
+                return
+            _FAILURE_LOG_SEEN.add(key)
+        logger.warning(
+            'thumbnail generation failed for %s (ffmpeg=%s, ffprobe=%s)',
+            key, resolve_tool('ffmpeg') or 'MISSING', resolve_tool('ffprobe') or 'MISSING',
+        )
     def _clear_failure(self, uri: str) -> None:
         """A successful generation invalidates an earlier failure marker.
 
