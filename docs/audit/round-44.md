@@ -141,7 +141,7 @@
 
 ## 十、收尾后的分诊：16 条历史 P0/P1 结清（未开第 45 轮）
 
-用户问「这 16 条有必要修复吗」。答案先摆证据：**0 条已修、16 条仍存在（3 条部分修复）、无真 P0**（第 432/433 行原标的 `[P0]` 按当前影响降为 P1）。逐条核查表见 `总结-44轮.md` 5.1，处置结果见 `backlog.md` 顶部「分诊」一节。判断标准是一句话：**单用户的本地媒体服务器，不是公网 SaaS**——值得修的只有安全边界，和「一次交互就卡住」；十万文件规模下的慢、默认关闭的实验特性、1px 的视觉抖动都不值得修。
+用户问「这 16 条有必要修复吗」。答案先摆证据：**0 条已修、16 条仍存在（3 条部分修复）、无真 P0**（原标 `[P0]` 的两条按当前影响降为 P1）。逐条核查表见 `总结-44轮.md` 5.1，处置结果见 `backlog.md` 顶部「分诊」一节（那一节插在文件开头后，backlog 的行号整体下移了，别拿旧行号去对）。判断标准是一句话：**单用户的本地媒体服务器，不是公网 SaaS**——值得修的只有安全边界，和「一次交互就卡住」；十万文件规模下的慢、默认关闭的实验特性、1px 的视觉抖动都不值得修。
 
 分诊结果：**修 2 条、关闭 7 条、转成规矩 3 条、留 4 条**。留下的 4 条是 `records()` 无 LIMIT（第 432/702 行，同一根因）、feed 每页建全库 dict + 每请求三次读 `favorites.json`（第 433 行）、设置页 6 个请求跑在 401 包装器之前（第 648 行）。
 
@@ -162,7 +162,7 @@ password = supplied or generate_password()
 
 **`/thumb` 槽位超时。** 原状：`with _GENERATE_SLOTS:` 无超时，waitress 8 个线程、槽位最多 4 个，冷缓存首屏 8 个瓦片就能把每条请求线程（包括和缩略图无关的 JSON 接口）按在信号量上。改成 `acquire(timeout=5.0)` 超时抛 `ThumbnailBusy`，`/thumb` 返回占位图、`/api/thumbnail/frame` 返回 503 + 可读文案（`detail.error.thumbnail_busy`）。
 
-关键约束是**不能写失败标记**：原实现在大图槽位超时后 `return False`，调用方当成「这个文件坏了」，写一次失败标记就把它藏一小时——一次赶巧的排队能把一张好图藏起来。所以 `ThumbnailBusy` 刻意不继承任何既有失败类型，并且在 `_generate_image` 的 `except Exception` 之前单独 `raise`（否则会被当成解码失败）。日志按 30 s 一次汇总（带同一波被吞掉的条数），因为冷缓存时它是常态而不是故障；`similarity` 的批量索引遇到它就 `continue`，让文件留在 pending，而不是记成「损坏文件」或「embedding 服务挂了」。
+关键约束是**不能写失败标记**：原实现在大图槽位超时后 `return False`，调用方当成「这个文件坏了」，写一次失败标记就把它藏一小时——一次赶巧的排队能把一张好图藏起来。所以 `ThumbnailBusy` 是一个独立的 `Exception` 子类（不复用任何既有失败类型），并且在 `_generate_image` 的宽 `except Exception` **之前**单独 `raise`——否则宽分支会把它当成解码失败，绕过这整套设计。日志按 30 s 一次汇总（带同一波被吞掉的条数），因为冷缓存时它是常态而不是故障；`similarity` 的批量索引遇到它就 `continue`，让文件留在 pending，而不是记成「损坏文件」或「embedding 服务挂了」。
 
 ### 10.2 为什么另外七条不再修
 
@@ -174,7 +174,7 @@ password = supplied or generate_password()
 
 ### 10.4 验证
 
-`pytest -q` = **688 passed / 8 skipped / 0 failed**（237.59s；收尾时是 684P，新增 4 条）。真实进程实测：`tiklocal serve` 首次启动打印 `Access password (generated, save it)` + 12 位口令，用它对 `/login` POST 得 200，用 `admin666` 得 401；重启后 `auth status` 只说「已生成且只显示过一次」而不再打印；把口令改回 `admin666` 后 `uses_published_default()` 为真、banner 恢复 WARNING。缩略图侧新增两条用例：占满槽位后 `generate_thumbnail` 抛 `ThumbnailBusy` 且**不产生失败标记**，图片路径的宽 `except Exception` 不吃掉它。
+`pytest -q` = **688 passed / 8 skipped / 0 failed**（提交树上实测三次：237.59s / 209.41s；收尾时是 684P，分诊补了 4 条）。真实进程实测：`tiklocal serve` 首次启动打印 `Access password (generated, save it)` + 12 位口令，用它对 `/login` POST 得 200，用 `admin666` 得 401；重启后 `auth status` 只说「已生成且只显示过一次」而不再打印；把口令改回 `admin666` 后 `uses_published_default()` 为真、banner 恢复 WARNING。八个页面（`/`、`/flow`、`/library`、`/favorite`、`/collections`、`/radio`、`/download`、`/settings/`）登录后全 200，`/thumb?uri=photo.jpg` 出真图（`image/jpeg`）、坏文件的 `/thumb` 仍走占位图。缩略图侧新增两条用例：占满槽位后 `generate_thumbnail` 抛 `ThumbnailBusy` 且**不产生失败标记**，图片路径的宽 `except Exception` 不吃掉它。
 
 ### 10.5 记一条
 
