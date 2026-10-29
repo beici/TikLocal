@@ -634,6 +634,14 @@
         ? payload.message
         : T('settings.library.source_scan_done', { count: Number(scan.indexed) || 0 }));
     }
+    // A folder that could not be reached (unplugged drive, wrong path) used to be
+    // reported as "rescanned 0 items", which reads like success.
+    const unavailable = Array.isArray(scan.unavailable_sources) ? scan.unavailable_sources : [];
+    const sourceErrors = scan.source_errors && typeof scan.source_errors === 'object' ? scan.source_errors : {};
+    const failedNames = unavailable.length ? unavailable : Object.keys(sourceErrors);
+    if (failedNames.length) {
+      TikLocalUI.toast(T('settings.library.source_scan_unavailable', { names: failedNames.join(', ') }), 'warning');
+    }
     return data;
   }
 

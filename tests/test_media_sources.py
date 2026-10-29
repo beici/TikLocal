@@ -8,6 +8,7 @@ to the launch configuration instead of starting with an empty library.
 """
 
 import json
+import logging
 
 import pytest
 
@@ -203,6 +204,48 @@ def test_saved_folders_win_over_the_launch_configuration(tmp_path):
     assert [source.path for source in resolved] == [saved.resolve()]
 
 
+def test_ignoring_a_different_launch_folder_is_logged(tmp_path, caplog):
+    # The settings page has to keep winning (a folder removed there must not come
+    # back), but a start that names another directory cannot be dropped without a
+    # word: downloads and deletions keep landing in the saved folder while the
+    # banner shows the one from the command line.
+    saved = make_library(tmp_path / 'saved')
+    launch = make_library(tmp_path / 'launch')
+    stored = StoredMediaSources((MediaSource('default', 'Default', saved),))
+
+    with caplog.at_level(logging.WARNING, logger='tiklocal.services.media_sources_store'):
+        resolved = resolve_startup_sources(stored, build_media_sources(launch))
+
+    assert [source.path for source in resolved] == [saved.resolve()]
+    assert 'wins over the launch directory' in caplog.text
+    assert str(saved.resolve()) in caplog.text and str(launch.resolve()) in caplog.text
+
+
+def test_the_same_folder_named_twice_does_not_warn(tmp_path, caplog):
+    # Starting with the folder the settings page already saved is the normal case;
+    # warning there would train people to ignore the message.
+    saved = make_library(tmp_path / 'saved')
+    stored = StoredMediaSources((MediaSource('default', 'Default', saved),))
+
+    with caplog.at_level(logging.WARNING, logger='tiklocal.services.media_sources_store'):
+        resolved = resolve_startup_sources(stored, build_media_sources(saved))
+
+    assert [source.path for source in resolved] == [saved.resolve()]
+    assert 'wins over the launch directory' not in caplog.text
+
+
+def test_a_folder_removed_in_settings_is_not_reused_silently(tmp_path, caplog):
+    extra = make_library(tmp_path / 'extra')
+    launch = make_library(tmp_path / 'launch')
+    stored = StoredMediaSources((MediaSource('default', 'Default', launch),), frozenset({'extra'}))
+
+    with caplog.at_level(logging.WARNING, logger='tiklocal.services.media_sources_store'):
+        resolved = resolve_startup_sources(stored, build_media_sources(launch, {'extra': str(extra)}))
+
+    assert [source.id for source in resolved] == ['default']
+    assert "removed in settings" in caplog.text and 'extra' in caplog.text
+
+
 def test_removed_launch_folders_do_not_come_back_and_launch_extras_still_work(tmp_path):
     saved = make_library(tmp_path / 'saved')
     extra = make_library(tmp_path / 'extra')
@@ -284,6 +327,25 @@ def test_adding_a_folder_is_live_and_persisted(tmp_path):
     assert client.get('/media/@extra/second.jpg').status_code == 200
     counts = {row['id']: row['item_count'] for row in client.get('/api/library/sources').get_json()['data']['sources']}
     assert counts == {'default': 1, 'extra': 2}
+
+
+def test_the_scan_result_uses_the_keys_the_page_reads(tmp_path):
+    # The settings page reported "rescanned 0 items" for an unreachable folder
+    # because this payload named the failures 'unavailable' while every reader
+    # (and /api/library/sync) uses 'unavailable_sources'. It also used to hand the
+    # absolute path of the folder list file to every LAN visitor.
+    media = make_library(tmp_path / 'media')
+    extra = make_library(tmp_path / 'extra')
+    client = client_for(media)
+
+    payload = client.post('/api/library/sources', json={'path': str(extra), 'name': 'Extra'}).get_json()
+
+    data = payload['data']
+    assert 'store_path' not in data
+    scan = data['scan']
+    assert scan['unavailable_sources'] == []
+    assert scan['source_errors'] == {}
+    assert 'unavailable' not in scan
 
 
 def test_a_saved_folder_survives_a_restart(tmp_path):

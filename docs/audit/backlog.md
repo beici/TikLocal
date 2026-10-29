@@ -552,3 +552,26 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] 合集选择器 `create()` 在 `!loaded` 时 `await load()`，但失败后仍会写回 | `tiklocal/static/collection_picker.js` | 失败路径已有 toast |
 | [P3] 下载页重试按钮的可用性判断分散在三处 | `tiklocal/static/download_page_controller.js` | 本轮新增 `canRetry` 后仍需收敛 |
 
+### 第 34 轮新增（18 条）
+
+| 描述 | 位置 | 为什么暂不修 |
+| --- | --- | --- |
+| [P2] `media.py` 同模块 6 种成功信封 / 4 种失败信封 | `tiklocal/web/media.py:237,367,372,395,406,422` | 统一要改全部客户端解析器，属于跨轮重构 |
+| [P2] `/delete` 响应类型由 `Accept` 决定，`fetch()` 的 `*/*` 落到 HTML | `tiklocal/web/media.py:333` | 仓库内无触发方，外部脚本才踩 |
+| [P2] 搜索结果 `counts`/`truncated` 零消费方，作者数被报成截断值 | `tiklocal/web/search.py:354,411` | 需要先定 UI 口径（总数还是已取数） |
+| [P2] collections `version` 只写不校验、写回按 v1 白名单重建 | `tiklocal/services/collections.py:116` | 需要引入 `StoreVersionError` + 503 语义，涉及四个 store |
+| [P2] `download_sources` 的 `items` 非 dict 时静默变 `{}` 后写回 | `tiklocal/services/download_sources.py:170-183` | 与上一条同批处理 |
+| [P2] 两条错误路径只有 `ok` 没有 `success` | `tiklocal/web/author.py:423,464` | 客户端当前只读 `ok` |
+| [P2] 四处 body/element 状态类无对应 CSS 选择器（死类） | `radio_controller.js:1069`、`library_page_controller.js:1082`、`download_page_controller.js:500,507` | 只是冗余 class，无功能影响 |
+| [P2] 两个 data 属性只写不读 | `settings_page_controller.js:526`、`templates/search.html:13` | 无行为影响 |
+| [P2] 16 个 i18n 键全仓库无引用 | `i18n.py:68,85-87`、`i18n_pages_sync.py:30,33,34` 等 | 改名残留，清理会碰模板历史 |
+| [P2] legacy 缩略图认领绕过 `THUMB_VERSION` | `tiklocal/services/thumbnail.py:203-231` | 一次性重算成本换正确性，留待专项 |
+| [P2] 损坏库隔离会丢 `playback_positions`/`media_events`/`media_affinity` | `tiklocal/app.py:170-206` | 需要设计 JSON 备份与回灌 |
+| [P2] `download_config.json` 无版本号，降级保存会丢新键 | `tiklocal/services/downloader.py:356-367` | 与 O3-2 同批 |
+| [P2] `--dev` 改写绑定地址后 banner 仍打印原地址 | `tiklocal/run.py:637` vs `:750` | 仅影响 `--dev` 日志 |
+| [P2] `media_sources` 类型写错时整段静默消失 | `tiklocal/config.py:4-21` | 需要警告通道（与 O4-8 同批） |
+| [P2] 旧 `media_root` 静默覆盖 `media_sources` 的 default | `tiklocal/config.py:37-48` | 改动会改变现有配置语义 |
+| [P2] 实例目录 config 是「第一个存在即独占」，文档写成「优先读取」 | `tiklocal/run.py:68-78` | 文档与实现二选一，需用户确认 |
+| [P2] 设置页删过的源 id 会吞掉同名 `--media-source` | `media_sources_store.py:282-285` | 本轮已加 warning，语义改动待定 |
+| [P3] `TIKLOCAL_HOST=` 空串被 `or` 链吞成 `0.0.0.0` | `tiklocal/run.py:539` | 空串与未设置难以区分 |
+| [P3] 死端点 `/api/library/blogs`、分页参数静默改写且各端点不一致 | `tiklocal/web/library.py:405,55` | 无消费方，清理留待路由收敛 |

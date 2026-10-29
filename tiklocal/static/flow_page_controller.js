@@ -466,9 +466,9 @@
       // A group's own kind comes from the server; a plain work derives it from its type.
       if (entry && entry.kind_label) return entry.kind_label;
       const type = String(entry?.type || '');
-      if (type === 'video') return T('flow.kind.video');
-      if (type === 'live') return T('flow.kind.live');
-      return T('flow.kind.image');
+      if (type === 'video') return T('flow.post.kind_video');
+      if (type === 'live') return T('flow.post.kind_live');
+      return T('flow.post.kind_image');
     }
 
     function syncDouyinChrome(item) {

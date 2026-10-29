@@ -140,11 +140,12 @@ def register_settings_routes(
 
     def _source_payload() -> dict:
         counts = item_counts(media_index, logger=app.logger)
+        # The store path is server-side detail: no client reads it, and handing an
+        # absolute path to every LAN visitor is not worth the convenience.
         return {
             'sources': describe_sources(
                 _media_sources(), counts=counts, download_source_id=_download_target_id(),
             ),
-            'store_path': str(media_source_store.store_path) if media_source_store else '',
         }
 
     def _reason(error: MediaSourceError) -> str:
@@ -240,7 +241,11 @@ def register_settings_routes(
                 'indexed': int(result.get('indexed') or 0),
                 'deleted': int(result.get('deleted') or 0),
                 'busy': bool(result.get('busy')),
-                'unavailable': list(result.get('unavailable_sources') or []),
+                # Same names the scan button reads from /api/library/sync: the settings
+                # page used to get 'unavailable' here and report "rescanned 0 items" for
+                # a folder that could not be reached at all.
+                'unavailable_sources': list(result.get('unavailable_sources') or []),
+                'source_errors': dict(result.get('source_errors') or {}),
                 'error': str(result.get('error') or ''),
             }
         app.logger.info(

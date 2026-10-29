@@ -142,7 +142,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.scan.done': '扫描完成，已索引 {count} 个媒体。',
         'settings.scan.failed': '扫描失败，请稍后再试。',
         'settings.scan.timeout': '扫描超时（大目录首次扫描可能超过 3 分钟），可稍后在设置页刷新查看结果。',
-        'settings.scan.busy': '正在扫描…',
         'settings.scan.running': '已有扫描在进行中，请稍候再试。',
         'settings.scan.partial': '扫描完成，但有来源不可用：{sources}。请检查这些目录是否已挂载或仍存在。',
         'settings.scan.unavailable': '有来源不可用：{sources}。已索引其他来源的 {count} 个媒体。',
@@ -233,6 +232,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.library.source_trash_not_empty': '这个目录的回收站里还有文件，请先清空回收站再移除目录。',
         'settings.library.source_scan_pending': '已保存；媒体库正在扫描，稍后会显示这些文件。',
         'settings.library.source_scan_done': '已重新扫描，共 {count} 个媒体。',
+        'settings.library.source_scan_unavailable': '这些文件夹这次没能扫描到：{names}',
         'settings.library.source_error_generic': '媒体目录操作失败，请稍后重试。',
         'settings.library.source_timeout': '扫描超时，文件夹可能已保存；稍后刷新本页查看结果。',
         'settings.library.source_error_save': '保存媒体目录失败，请检查磁盘写入权限。',
@@ -513,6 +513,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.library.source_trash_not_empty': 'This folder still has files in its trash; empty the trash before removing it.',
         'settings.library.source_scan_pending': 'Saved; the library is scanning and these files will show up shortly.',
         'settings.library.source_scan_done': 'Rescanned {count} items.',
+        'settings.library.source_scan_unavailable': 'These folders could not be scanned: {names}',
         'settings.library.source_error_generic': 'Could not update the media folders. Try again.',
         'settings.library.source_timeout': 'The scan timed out; the folder may already be saved - reload this page in a moment.',
         'settings.library.source_error_save': 'Could not save the media folders; check the disk write permissions.',
@@ -676,9 +677,16 @@ def translate(locale: str, key: str, **params: object) -> str:
 
 
 def js_catalog(locale: str) -> dict[str, str]:
-    """Full table for the active locale; client scripts share the same keys."""
-    table = TRANSLATIONS.get(locale) or TRANSLATIONS[DEFAULT_LOCALE]
-    return dict(table)
+    """Full table for the active locale; client scripts share the same keys.
+
+    Missing keys fall back to the default locale, the same way translate() does.
+    Shipping only the active table meant a string that exists in one language
+    only rendered as its raw key in the browser while the server-rendered page
+    showed the fallback text.
+    """
+    merged = dict(TRANSLATIONS[DEFAULT_LOCALE])
+    merged.update(TRANSLATIONS.get(locale) or {})
+    return merged
 
 
 def js_catalog_script(locale: str) -> str:

@@ -1016,6 +1016,13 @@ class DownloadManager:
                     "cookie_file": str(item.get("cookie_file") or ""),
                     "cookie_match_mode": str(item.get("cookie_match_mode") or "none"),
                     "retry_of": str(item.get("retry_of") or ""),
+                    # _persist_locked() writes the whole job dict, so a field missing
+                    # from this whitelist is erased from disk on the next save. Losing
+                    # retried_by brought the retry button back after a restart (same URL
+                    # downloaded twice) and losing locale reset the job's messages.
+                    "retried_by": str(item.get("retried_by") or ""),
+                    "locale": str(item.get("locale") or DEFAULT_LOCALE),
+                    "partial": bool(item.get("partial")),
                     "output_token": str(
                         item.get("output_token")
                         or str(item.get("created_at") or now).replace(":", "").replace("-", "").replace("Z", "")

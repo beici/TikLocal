@@ -186,6 +186,21 @@ def config_tls_hosts(config):
     return [str(item) for item in value if str(item).strip()]
 
 
+def _configured_media_root(config, args) -> str:
+    """The folder a single-directory subcommand should work on.
+
+    ``thumbs`` and ``dedupe`` used to accept only an argument or ``MEDIA_ROOT``
+    while ``vectorize`` already understood ``media_sources``: the same config.yaml
+    worked for one command and exited with "Specify a media directory" for the
+    others. Prefer the default source, then the first configured one.
+    """
+    configured = normalize_media_sources(config, getattr(args, 'media_source', None))
+    if not configured:
+        return ''
+    chosen = next((item for item in configured if item.get('id') == 'default'), configured[0])
+    return str(chosen.get('path') or '')
+
+
 def _fatal(message):
     """Report one fatal startup problem and exit without a traceback.
 
@@ -420,7 +435,14 @@ Examples:
     if cmd == 'thumbs':
         media_root = args.media_root or os.environ.get('MEDIA_ROOT') or config.get('media_root')
         if not media_root:
-            parser.error('Specify a media directory:\n  - tiklocal thumbs /path/to/media\n  - or set MEDIA_ROOT=/path/to/media')
+            media_root = _configured_media_root(config, args)
+        if not media_root:
+            parser.error(
+                'Specify a media directory:\n'
+                '  - tiklocal thumbs /path/to/media\n'
+                '  - or set MEDIA_ROOT=/path/to/media\n'
+                '  - or configure media_root / media_sources in config.yaml'
+            )
         media_path = Path(media_root).expanduser()
         if not media_path.exists() or not media_path.is_dir():
             _fatal(f"Media directory is unavailable: {media_root}")
@@ -434,7 +456,14 @@ Examples:
 
         media_root = args.media_root or os.environ.get('MEDIA_ROOT') or config.get('media_root')
         if not media_root:
-            parser.error('Specify a media directory:\n  - tiklocal dedupe /path/to/media\n  - or set MEDIA_ROOT=/path/to/media')
+            media_root = _configured_media_root(config, args)
+        if not media_root:
+            parser.error(
+                'Specify a media directory:\n'
+                '  - tiklocal dedupe /path/to/media\n'
+                '  - or set MEDIA_ROOT=/path/to/media\n'
+                '  - or configure media_root / media_sources in config.yaml'
+            )
 
         media_path = Path(media_root).expanduser()
         if not media_path.exists() or not media_path.is_dir():

@@ -278,11 +278,34 @@ def resolve_startup_sources(
             if source.id == DEFAULT_SOURCE_ID else source
             for source in saved
         ]
+    elif (
+        saved_default is not None
+        and startup_default is not None
+        and saved_default.path.is_dir()
+        and startup_default.path.is_dir()
+        and _path_key(saved_default.path) != _path_key(startup_default.path)
+    ):
+        # The settings page owns the folder list and has to keep winning, otherwise a
+        # folder the user removed there comes back on the next start. Silently ignoring
+        # the launch directory is the part that hurts: downloads and deletions keep
+        # landing in the saved folder while the banner and the log show the new one.
+        logger.warning(
+            'Media folder %s from settings wins over the launch directory %s; '
+            'change it under Settings -> Media folders',
+            saved_default.path, startup_default.path,
+        )
     known_ids = {source.id for source in saved}
-    extras = [
-        source for source in startup_sources
-        if source.id not in known_ids and source.id not in stored.removed_ids
-    ]
+    extras = []
+    for source in startup_sources:
+        if source.id in known_ids:
+            continue
+        if source.id in stored.removed_ids:
+            logger.warning(
+                'Media folder %r was removed in settings; ignoring the same id from this start',
+                source.id,
+            )
+            continue
+        extras.append(source)
     return [*saved, *extras]
 
 

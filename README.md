@@ -287,9 +287,8 @@ Vectors are built from the command line and stored in
 
 ```bash
 tiklocal vectorize ~/Videos --dry-run                  # see what would be sent
-tiklocal vectorize ~/Videos --limit 200 --order latest
-tiklocal vectorize ~/Videos --source photos --cleanup
-tiklocal analyze-similar ~/Videos --limit 500 --yes
+tiklocal vectorize ~/Videos --limit 200 --yes          # send 200 files without asking
+tiklocal vectorize --media-source photos=~/Pictures    # one configured folder only
 ```
 
 Only missing or stale images are uploaded, resized and re-encoded without their

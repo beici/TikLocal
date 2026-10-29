@@ -292,13 +292,13 @@ def post_kind_label(name: str, media_type: str = '', album_size: int = 0) -> str
     stem = str(name or '').rsplit('/', 1)[-1].rsplit('.', 1)[0]
     if album_size > 1 or media_naming.album_member(str(name).rsplit('/', 1)[-1]):
         if media_naming.is_live_stem(stem) or media_type == 'live':
-            return t('flow.kind.live')
-        return t('flow.kind.album')
+            return t('flow.post.kind_live')
+        return t('flow.post.kind_album')
     if media_type == 'video':
-        return t('flow.kind.video')
+        return t('flow.post.kind_video')
     if media_type == 'live':
-        return t('flow.kind.live')
-    return t('flow.kind.image')
+        return t('flow.post.kind_live')
+    return t('flow.post.kind_image')
 
 
 def collapse_media_entries(
