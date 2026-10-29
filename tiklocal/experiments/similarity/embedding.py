@@ -17,6 +17,10 @@ DIMENSIONS = 768
 IMAGE_MAX_SIZE = 512
 IMAGE_QUALITY = 82
 REQUEST_TIMEOUT = 180
+# A search is answered inside the request that asked for it, so it cannot use
+# the batch timeout: an embedding service that accepts the connection and then
+# stalls would hold one waitress worker for three minutes per search.
+SEARCH_TIMEOUT = 15.0
 VIDEO_SHORTLIST = 48
 EMBEDDINGGEMMA_MODELS = ('embeddinggemma-2', 'google/embeddinggemma-2')
 
@@ -31,15 +35,16 @@ class EmbeddingClient:
         data_url = 'data:image/jpeg;base64,' + base64.b64encode(encode_image(path)).decode('ascii')
         return self._request([{'content': [{'type': 'image_url', 'image_url': {'url': data_url}}]}])
 
-    def embed_text(self, query: str) -> list[float]:
+    def embed_text(self, query: str, *, timeout: float | None = None) -> list[float]:
         if self.model in EMBEDDINGGEMMA_MODELS:
             query = 'task: search result | query: ' + query
-        return self._request([query])
+        return self._request([query], timeout=timeout)
 
-    def _request(self, input_items: list) -> list[float]:
+    def _request(self, input_items: list, *, timeout: float | None = None) -> list[float]:
         headers = {'Authorization': f'Bearer {self.api_key}'} if self.api_key else {}
         try:
-            response = requests.post(f'{self.base_url}/embeddings', headers=headers, timeout=REQUEST_TIMEOUT,
+            response = requests.post(f'{self.base_url}/embeddings', headers=headers,
+                                     timeout=(5, timeout or REQUEST_TIMEOUT),
                                      json={'model': self.model, 'input': input_items,
                                            'encoding_format': 'float', 'dimensions': DIMENSIONS})
             data = response.json() if response.content else {}
@@ -64,7 +69,13 @@ class EmbeddingClient:
 def encode_image(path: Path) -> bytes:
     """Return a small JPEG of the pixels only; EXIF, GPS and other metadata are dropped."""
     with Image.open(path) as source:
-        image = ImageOps.exif_transpose(source)
+        # draft() asks the JPEG decoder for a smaller raster, so a 100 MP photo
+        # is never fully materialised on the way to a 512 px thumbnail. PNG and
+        # WebP ignore the hint and still decode in full; this runs in the
+        # vectorizer, which walks a library, not in a request.
+        source.draft('RGB', (IMAGE_MAX_SIZE * 2, IMAGE_MAX_SIZE * 2))
+        ImageOps.exif_transpose(source, in_place=True)
+        image = source
         image.thumbnail((IMAGE_MAX_SIZE, IMAGE_MAX_SIZE), Image.Resampling.LANCZOS)
         if 'A' in image.getbands():
             rgba = image.convert('RGBA')

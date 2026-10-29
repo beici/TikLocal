@@ -6,7 +6,7 @@ from tiklocal.web import read_int_arg
 from tiklocal.services.library import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from tiklocal.web.media_payloads import build_feed_media_item
 from .config import load_embedding_config
-from .embedding import EmbeddingClient
+from .embedding import EmbeddingClient, SEARCH_TIMEOUT
 from .groups import read_photo_groups
 from .indexing import IndexJob, MediaIndexer
 
@@ -83,7 +83,7 @@ def register_similarity_routes(app, library_service, thumbnail_service, app_data
             return {'success': False, 'error': f'No media is prepared for {config["model"]} yet. '
                     'Prepare media in Similar Images first.'}, 409
         try:
-            vector = EmbeddingClient(config).embed_text(query.strip())
+            vector = EmbeddingClient(config).embed_text(query.strip(), timeout=SEARCH_TIMEOUT)
         except RuntimeError as exc:
             return {'success': False, 'error': f'The embedding service could not encode this search: {exc}'}, 503
         return {'success': True, 'data': {

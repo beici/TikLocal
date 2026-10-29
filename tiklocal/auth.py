@@ -106,10 +106,15 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
 
     def safe_next(value: str | None) -> str:
         candidate = str(value or '').strip()
-        parsed = urlsplit(candidate)
-        if not candidate.startswith('/') or candidate.startswith('//') or parsed.scheme or parsed.netloc:
+        # Browsers read a backslash as a slash, so "/\evil.com" leaves the site
+        # (it becomes "//evil.com") even though the value starts with "/".
+        normalized = candidate.replace('\\', '/')
+        if any(ch in candidate for ch in '\r\n\t') or normalized.startswith('//'):
             return '/'
-        return candidate
+        parsed = urlsplit(normalized)
+        if not normalized.startswith('/') or parsed.scheme or parsed.netloc:
+            return '/'
+        return normalized
 
     def csrf_value_from_request() -> str:
         value = request.headers.get('X-CSRF-Token') or request.form.get('_csrf_token')

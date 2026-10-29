@@ -129,7 +129,15 @@
     avatar.alt = '';
     avatar.loading = 'lazy';
     avatar.decoding = 'async';
-    if (candidate.avatar) {
+    // The candidate list carries the remote avatar URL straight from the site, so
+    // the browser would send this page as Referer; and a URL that fails used to
+    // leave a broken-image icon in the picker.
+    avatar.referrerPolicy = 'no-referrer';
+    avatar.addEventListener('error', () => {
+      avatar.src = '/static/default-avatar.jpg';
+      avatar.classList.add('is-empty');
+    }, { once: true });
+    if (candidate.avatar && /^https?:\/\//i.test(String(candidate.avatar))) {
       avatar.src = candidate.avatar;
     } else {
       avatar.classList.add('is-empty');

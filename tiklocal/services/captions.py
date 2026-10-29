@@ -477,8 +477,11 @@ class CaptionService:
             ],
         }
         # No redirects: a 302 to a private address would replay the API key and the
-        # image bytes somewhere the base_url check never looked at.
-        response = requests.post(url, headers=headers, json=payload, timeout=60, allow_redirects=False)
+        # image bytes somewhere the base_url check never looked at. The connect
+        # budget is short so an unreachable host fails while the user is still
+        # looking at the button; the read budget stays long enough for a local
+        # vision model to answer.
+        response = requests.post(url, headers=headers, json=payload, timeout=(10, 60), allow_redirects=False)
         text = response.text or ""
         if 300 <= response.status_code < 400:
             raise RuntimeError(t('image.error.provider_failed'))

@@ -35,8 +35,8 @@ class FakeResponse:
         self._stream = io.BytesIO(json.dumps(payload).encode("utf-8"))
         self.status = status
 
-    def read(self) -> bytes:
-        return self._stream.read()
+    def read(self, size: int = -1) -> bytes:
+        return self._stream.read(size)
 
     def __enter__(self):
         return self
@@ -355,6 +355,20 @@ class FakeMediaResponse:
         return False
 
 
+class _FakeOpener:
+    """Stands in for ``downloader._DIRECT_OPENER``, which checks redirect hops.
+
+    Each ``open`` returns a fresh response: one album downloads several files and a
+    shared stream would look truncated on the second one.
+    """
+
+    def __init__(self, factory):
+        self._factory = factory
+
+    def open(self, request, timeout=None):
+        return self._factory()
+
+
 @pytest.fixture
 def tiktok_client(tmp_path, monkeypatch):
     media_root = tmp_path / "media"
@@ -425,7 +439,8 @@ def test_tiktok_status_and_probe_report_sidecar_state(tiktok_client, monkeypatch
 def test_tiktok_enqueue_downloads_album_into_library(tiktok_client, monkeypatch):
     _mock_account_items(monkeypatch, count=2)
     monkeypatch.setattr(
-        urllib.request, "urlopen", lambda request, timeout=None: FakeMediaResponse(b"image-bytes")
+        "tiklocal.services.downloader._DIRECT_OPENER",
+        _FakeOpener(lambda: FakeMediaResponse(b"image-bytes")),
     )
 
     res = tiktok_client.post(

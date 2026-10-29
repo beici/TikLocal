@@ -36,6 +36,10 @@ TIKTOK_DOWNLOADER_TABS = {"post", "favorite", "collection"}
 # routinely takes well over a minute, so that single hop gets its own budget.
 AUTHOR_ACCOUNT_TIMEOUT_SEC = 150
 
+#: A sidecar response is JSON, so a few MB is generous; without a ceiling a broken
+#: or hostile sidecar could make the app buffer an arbitrary amount of memory.
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
 # Keys that mark a single-object response as one work item (the sidecar answers
 # ``/douyin/detail`` with an object, but every other endpoint with a list).
 _WORK_ITEM_KEYS = frozenset({"aweme_id", "id", "desc", "downloads", "author", "video", "images"})
@@ -298,9 +302,26 @@ class TikTokDownloaderClient:
             headers["token"] = self.token
         body = json.dumps(payload or {}).encode("utf-8")
         request = urllib.request.Request(self.base_url + path, data=body, headers=headers, method=method)
+        budget = float(timeout or self.timeout_sec)
+        # A per-socket timeout does not bound the whole exchange: a peer that sends
+        # one byte per interval keeps a worker busy indefinitely, and a peer that
+        # sends a huge body exhausts memory because read() has no ceiling.
+        deadline = time.monotonic() + max(budget, 1.0) * 4
         try:
-            with urllib.request.urlopen(request, timeout=timeout or self.timeout_sec) as response:
-                raw = response.read().decode("utf-8", errors="replace")
+            with urllib.request.urlopen(request, timeout=budget) as response:
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    if time.monotonic() > deadline:
+                        raise TikTokDownloaderError("TikTokDownloader did not answer in time.")
+                    chunk = response.read(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_RESPONSE_BYTES:
+                        raise TikTokDownloaderError("TikTokDownloader returned a response that is too large.")
+                    chunks.append(chunk)
+                raw = b"".join(chunks).decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             if exc.code == 403:
                 raise TikTokDownloaderError("TikTokDownloader rejected the request token.") from exc

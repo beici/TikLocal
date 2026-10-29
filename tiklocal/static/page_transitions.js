@@ -41,7 +41,12 @@
     nameHero(null);
     clicked = null;
     var from = '';
-    try { from = sessionStorage.getItem('tiklocal:vt-from') || ''; } catch (_) {}
+    // The key is written on every swap, so a page that never reveals a matching
+    // hero would keep handing the previous origin to the next navigation.
+    try {
+      from = sessionStorage.getItem('tiklocal:vt-from') || '';
+      sessionStorage.removeItem('tiklocal:vt-from');
+    } catch (_) {}
     var key = from && mediaKey(from);
     if (!event.viewTransition || !key || document.querySelector('.detail-hero')) return;
     var match = Array.prototype.find.call(document.querySelectorAll('a[href]'), function (link) {

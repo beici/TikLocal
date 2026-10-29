@@ -313,4 +313,27 @@ P3：17 条（R1 3 / R2 3 / R3 1 / R4 3 / R5 2 / R6 1 / R7 4）。值得留意�
 
 复审给出的其余 8 条已在当轮补修（槽位顺序、draft 后判定、`acquire` 超时、批量 `get_many`、trash mtime 兜底、`_prune_quarantine` 的 `stat` 守卫、`wsgi.file_wrapper` 回退、超长 uri 前缀+哈希），详见 `round-25.md` 第十三节。
 
+### 第 26 轮新增（13 条）
+
+本轮视角是外部依赖与网络边界，多数条目卡在「要么改契约、要么改产品行为」，因此只登记不修。
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| **[P1] 优先** 首次启动默认口令 `admin666` + 默认绑 `0.0.0.0`：同网段任何人可登录、删媒体、改口令把主人锁在外面。本轮只在非回环绑定且仍用默认口令时打印警告 | `tiklocal/services/auth.py:17`、`tiklocal/run.py:637-646` | 改随机口令会改变每个老用户的首次启动行为，且 `tests/test_auth.py:75-109` 明确锁定该契约 → 属产品决策（随机口令 + 首启打印到控制台？还是强制首次登录改密？） |
+| **[P2] 优先** `OUTPUT_ENCODINGS` 把系统首选编码（zh-CN=cp936）排在 UTF-8 之前，而 cp936 解 UTF-8 字节几乎不抛错 → 中文媒体目录下 yt-dlp 的 `Destination:` 行 mojibake，已成功的下载被判无输出 | `tiklocal/services/downloader.py:78-97` | 两种顺序都有反例（cp936 控制台 vs UTF-8 子进程）。正确修法是「解出的路径不存在时换编码重试」，属结构性改动，需连带测试下载状态机 |
+| [P2] 反代部署下 `remote_addr` 恒为 127.0.0.1：登录限流退化为单桶（一人失败全站被锁）、审计日志无真实来源 | `tiklocal/services/auth.py:222` | 需要 `ProxyFix` 或显式的可信代理白名单配置；默认信任 `X-Forwarded-For` 会让直连场景可被伪造，必须先定部署契约 |
+| [P2] 一次 `POST /api/author/sync` 最多 200 条、逐条串行且每条最长 150 s → 单请求可占一个 waitress 线程数小时 | `tiklocal/web/author.py:431-444` | 要改成后台任务 + 进度轮询，牵动作者页前端与 `author_sync` 的既有同步语义 |
+| [P3] `yt_dlp` 只展示 `--version`、无最低版本门禁；`error_line` 把含 `error:` 的行原样回显，老版本缺 `-S`/`--file-access-retries` 时报错不可诊断 | `tiklocal/services/download_tools.py:192-213` | 需要维护一张「最低版本」表并决定是拒绝还是警告；版本号解析在 nightly/master 上不稳定 |
+| [P3] 模板字段上限 24+80+80 字符 + temp 路径 + media_root 可越 260 字符，落盘以 WinError 206 失败 | `tiklocal/services/download_tools.py:41-43`、`:125-131` | 要按 `media_root` 实际长度动态收缩标题预算，会让「同名文件」判定随目录深度变化，需先补长路径测试 |
+| [P3] 域名先解析为公网、校验后再解析为 127.0.0.1 的 DNS rebinding TOCTOU；`is_local_host` 与 yt-dlp 各自独立解析、无绑定 | `tiklocal/services/downloader.py:253` | 彻底修法是把解析结果钉进连接（自定义 `HTTPConnection` 或 `--resolve`），yt-dlp 侧无法传递；收益低于改动面 |
+| [P3] 作者作品更新逐个作品 N+1 请求，无批量端点 | `tiklocal/services/tiktok_downloader.py`（作者作品更新） | 取决于上游是否有批量接口；当前请求量（每作者每页 20 条）在限流预算内 |
+| [P3] `--dev` 直接 `app.run(host=host)` 且默认 host 为 `0.0.0.0`。本轮已改为非回环时绑 `127.0.0.1` | `tiklocal/run.py:759-763` | 已缓解；彻底做法是 `--dev` 强制忽略 `--host`，但那会让「手机调试」场景不可用 |
+| [P3] 未校验 `Host` 头；当前无 `url_for(_external=True)` 用于邮件/回调，影响面为零 | `tiklocal/web/*.py` 绝对 URL 生成 | 等真的引入外发链接（分享/回调）时再一起做，现在加白名单只会增加配置负担 |
+| [P3] 无全局 `MAX_CONTENT_LENGTH`，上限由各端点自限（cookie 1 MB） | 全局配置 | 当前无大体积上传端点；加了反而会误伤未来的导入功能，等有上传需求时定 |
+| [P3] vendor 资源（feather/hammer）无版本登记与升级记录，本地文件、无 CDN、无 SRI 需求 | `tiklocal/static/vendor/` | 需要在 `static/vendor/README` 记版本与来源；属文档债而非缺陷 |
+| [P3] `author_page_controller.js:15` 裸 `localStorage.getItem` 在 IIFE 里抛出会让整页只剩静态内容 | `tiklocal/static/author_page_controller.js:15` | 沿用第 23 轮登记（同条），修复需统一 `safeStorage` 工具并在全站替换裸调用 |
+
+驳回 1 条：`embedding.base_url` 的 302 跟随（`tiklocal/experiments/similarity/embedding.py:46`）——端点是用户自己在 `config.yaml` 里配的，与已驳回的「yt-dlp 重定向内网」同类；真正要防的是「响应内容决定 URL」，本轮已修那两条。
+
+
 

@@ -1,4 +1,3 @@
-import ipaddress
 import locale
 import logging
 import os
@@ -7,7 +6,6 @@ from collections import deque
 import shutil
 import signal
 import subprocess as sp
-import socket
 import threading
 import time
 import urllib.error
@@ -31,6 +29,7 @@ from tiklocal.services.download_sources import (
     utc_now_iso,
 )
 from tiklocal.services.download_tools import (
+    NO_WINDOW_KWARGS,
     claim_available_path,
     collect_gallery_outputs,
     error_line,
@@ -47,6 +46,7 @@ from tiklocal.services.tiktok_downloader import (
     guess_download_extension,
     validate_tiktok_downloader_config,
 )
+from tiklocal.services.net_guard import build_guarded_opener, is_local_host as _is_local_host
 
 
 DOWNLOAD_MAX_URL_LENGTH = 2048
@@ -60,6 +60,13 @@ USER_DOWNLOAD_ENGINES = {"yt-dlp", "gallery-dl"}
 DEFAULT_DOWNLOAD_ENGINE = "yt-dlp"
 LOGGER = logging.getLogger(__name__)
 DIRECT_DOWNLOAD_TIMEOUT_SEC = 30
+#: A sidecar response decides this URL, so the ceiling has to exist here: without
+#: it a single job can stream until the disk is full, and the only backstop is the
+#: one-hour job timeout.
+DIRECT_DOWNLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024
+#: A direct download follows redirects, so the hop itself has to be checked; see
+#: ``tiklocal.services.net_guard``.
+_DIRECT_OPENER = build_guarded_opener()
 # A tool that stalls silently (no stdout for hours) used to block the single worker
 # forever; the queue then accepted jobs that never ran. This is the wall-clock cap.
 DEFAULT_JOB_TIMEOUT_SEC = 3600
@@ -232,35 +239,6 @@ def validate_download_config(payload: Any, *, partial: bool = False) -> tuple[di
         cleaned["tiktok_downloader"] = section
 
     return cleaned, None
-
-
-def _is_local_host(url: str) -> bool:
-    """True when the URL targets this machine or a link-local/metadata address.
-
-    yt-dlp runs on the server, so accepting such a URL turns the download queue
-    into a way to reach services that only listen on localhost (including the
-    DSH GUI). Private LAN ranges stay allowed: pointing at a NAS is legitimate.
-    """
-
-    try:
-        host = (urlparse(url).hostname or "").strip().strip("[]")
-    except ValueError:
-        return True
-    if not host:
-        return True
-    candidates = [host]
-    try:
-        candidates.extend(entry[4][0] for entry in socket.getaddrinfo(host, None))
-    except OSError:
-        pass
-    for candidate in candidates:
-        try:
-            address = ipaddress.ip_address(candidate)
-        except ValueError:
-            continue
-        if address.is_loopback or address.is_link_local or address.is_unspecified or address.is_reserved:
-            return True
-    return False
 
 
 def validate_download_url(payload: Any) -> tuple[dict[str, Any] | None, str | None]:
@@ -1177,8 +1155,10 @@ class DownloadManager:
         # concurrent jobs sharing the imported file would truncate each other.
         cookie_for_job = self._private_cookie_copy(cookie_path, temp_dir)
         try:
+            ffmpeg_bin = resolve_tool("ffmpeg")
             cmd = yt_dlp_command(yt_dlp_bin, self.media_root, url, allow_playlist=allow_playlist,
-                                 cookie_path=cookie_for_job, temp_dir=temp_dir)
+                                 cookie_path=cookie_for_job, temp_dir=temp_dir,
+                                 ffmpeg_path=(ffmpeg_bin[0] if ffmpeg_bin else None))
             return_code, error_message = self._run_tool(job_id, cmd, on_line)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -1305,6 +1285,8 @@ class DownloadManager:
         parsed = urlparse(url)
         if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
             return "Only http and https media URLs can be downloaded."
+        if _is_local_host(url):
+            return "The media URL points at a local address."
         request = urllib.request.Request(
             url,
             headers={
@@ -1314,7 +1296,7 @@ class DownloadManager:
         )
         tmp_path = target.with_suffix(target.suffix + ".part")
         try:
-            with urllib.request.urlopen(request, timeout=DIRECT_DOWNLOAD_TIMEOUT_SEC) as response, tmp_path.open("wb") as fh:
+            with _DIRECT_OPENER.open(request, timeout=DIRECT_DOWNLOAD_TIMEOUT_SEC) as response, tmp_path.open("wb") as fh:
                 # A public URL may redirect to loopback or a cloud metadata endpoint.
                 # The redirect has already happened by now, but refusing to read the
                 # body keeps the response from ever reaching the library.
@@ -1331,6 +1313,9 @@ class DownloadManager:
                     # and recorded as a successful download.
                     tmp_path.unlink(missing_ok=True)
                     return "The media URL returned a web page instead of a media file."
+                if total_bytes > DIRECT_DOWNLOAD_MAX_BYTES:
+                    tmp_path.unlink(missing_ok=True)
+                    return "The media file is larger than the downloader accepts."
                 received = 0
                 while True:
                     # Cancellation used to be checked only between files, so a slow
@@ -1347,6 +1332,11 @@ class DownloadManager:
                         break
                     fh.write(chunk)
                     received += len(chunk)
+                    if received > DIRECT_DOWNLOAD_MAX_BYTES:
+                        # A host that sends no Content-Length never trips the check
+                        # above, so the ceiling has to be enforced while streaming.
+                        tmp_path.unlink(missing_ok=True)
+                        return "The media file is larger than the downloader accepts."
                     if on_progress and total_bytes > 0:
                         on_progress(received / total_bytes)
             if total_bytes and received != total_bytes:
@@ -1509,7 +1499,8 @@ class DownloadManager:
             # under PYTHONUTF8=1), and either hard-coded choice turned the other
             # case into mojibake paths whose outputs were then dropped.
             process = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT,
-                               bufsize=0, start_new_session=os.name == 'posix')
+                               bufsize=0, start_new_session=os.name == 'posix',
+                               **NO_WINDOW_KWARGS)
             self._processes[job_id] = process
             return process
 
@@ -1520,22 +1511,27 @@ class DownloadManager:
             # take an unrelated process tree (an editor, a build, another job's ffmpeg)
             # down with it.
             if process.poll() is None:
-                if os.name == 'posix':
-                    os.killpg(process.pid, signal.SIGTERM)
-                else:
-                    process.terminate()
-                try:
-                    process.wait(timeout=2)
-                except sp.TimeoutExpired:
-                    pass
-                # A downloader may leave a child (such as ffmpeg) holding stdout open.
-                if os.name == 'posix':
-                    os.killpg(process.pid, signal.SIGKILL)
-                else:
-                    # TerminateProcess only reaches the direct child; yt-dlp's ffmpeg
-                    # merger keeps writing into the job temp dir after a cancel.
+                if os.name == 'nt':
+                    # taskkill /T walks the tree, so it has to run before the direct
+                    # child is reaped. It used to run after terminate()+wait(), when
+                    # the descendants had already been reparented and could no
+                    # longer be enumerated: yt-dlp's ffmpeg merger survived the
+                    # cancel and kept burning a core inside a temp dir that was
+                    # deleted underneath it.
                     self._kill_process_tree_windows(process.pid)
-                    if process.poll() is None:
+                if process.poll() is None:
+                    if os.name == 'posix':
+                        os.killpg(process.pid, signal.SIGTERM)
+                    else:
+                        process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except sp.TimeoutExpired:
+                        pass
+                    # A downloader may leave a child (such as ffmpeg) holding stdout open.
+                    if os.name == 'posix':
+                        os.killpg(process.pid, signal.SIGKILL)
+                    elif process.poll() is None:
                         process.kill()
         except ProcessLookupError:
             pass
@@ -1547,7 +1543,7 @@ class DownloadManager:
             return
         try:
             sp.run(['taskkill', '/T', '/F', '/PID', str(pid)],
-                   stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=15)
+                   stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=15, **NO_WINDOW_KWARGS)
         except (OSError, sp.SubprocessError):
             pass
 

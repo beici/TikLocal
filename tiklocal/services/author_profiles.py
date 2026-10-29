@@ -23,6 +23,7 @@ from typing import Any
 
 from tiklocal.paths import get_data_dir
 from tiklocal.services.json_storage import write_json_atomic
+from tiklocal.services.net_guard import build_guarded_opener, is_local_host
 
 DEFAULT_AVATAR_FILENAME = 'default-avatar.jpg'
 AVATAR_USER_AGENT = (
@@ -31,6 +32,8 @@ AVATAR_USER_AGENT = (
 )
 AVATAR_REFERER = 'https://www.douyin.com/'
 MAX_AVATAR_BYTES = 4 * 1024 * 1024
+#: Redirects are checked hop by hop; see ``tiklocal.services.net_guard``.
+_AVATAR_OPENER = build_guarded_opener()
 
 #: Binding a home-page link and syncing the profile can run on two threads at
 #: once; both used one fixed ``.json.tmp`` and lost each other's fields.
@@ -184,12 +187,24 @@ def download_avatar(source_id: str, url: str, timeout: float = 10.0) -> bool:
     url = str(url or '').strip()
     if not url.lower().startswith(('http://', 'https://')):
         return False
+    # The URL comes from a sidecar response, so a rewritten payload could point it
+    # at loopback or a metadata endpoint; the bytes would then be served back by
+    # /author/<id>/avatar and the local response would be readable.
+    if is_local_host(url):
+        return False
     request = urllib.request.Request(url, headers={
         'User-Agent': AVATAR_USER_AGENT,
         'Referer': AVATAR_REFERER,
     })
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _AVATAR_OPENER.open(request, timeout=timeout) as response:
+            resolved = getattr(response, 'geturl', None)
+            final_url = resolved() if callable(resolved) else url
+            if is_local_host(final_url or url):
+                return False
+            content_type = str(response.headers.get('Content-Type') or '').lower()
+            if content_type and not content_type.startswith('image/'):
+                return False
             data = response.read(MAX_AVATAR_BYTES + 1)
     except Exception:
         return False

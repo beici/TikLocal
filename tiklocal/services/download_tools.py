@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess as sp
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -105,7 +106,8 @@ def tool_argv(binary: str | list[str] | tuple[str, ...]) -> list[str]:
 
 
 def yt_dlp_command(binary: str | list[str], media_root: Path, url: str, *, allow_playlist: bool,
-                   cookie_path: Path | None, temp_dir: Path | None = None) -> list[str]:
+                   cookie_path: Path | None, temp_dir: Path | None = None,
+                   ffmpeg_path: str | None = None) -> list[str]:
     cmd = [
         *tool_argv(binary),
         "--newline",
@@ -125,6 +127,13 @@ def yt_dlp_command(binary: str | list[str], media_root: Path, url: str, *, allow
         "-o", YT_DLP_OUTPUT_TEMPLATE,
         "-P", f"home:{media_root}",
     ]
+    if ffmpeg_path:
+        # resolve_tool() also finds ffmpeg in the venv and inside imageio-ffmpeg,
+        # which is what the install guide recommends. yt-dlp only looks at PATH on
+        # its own, so without this a video-only+audio-only site was merged by
+        # nothing and landed in the library silent (or failed as "ffmpeg missing")
+        # while the settings page still reported ffmpeg as available.
+        cmd.extend(["--ffmpeg-location", str(ffmpeg_path)])
     if temp_dir is not None:
         # Partial files (.part/.ytdl) belong in the job's private folder: a canceled
         # or timed-out download used to leave them in the library forever.
@@ -189,19 +198,38 @@ def error_line(line: str) -> str:
     return line if "error:" in line.lower() else ""
 
 
-def probe_binary(command: str) -> tuple[str | None, str]:
+#: ``probe_binary`` spawns the tool, which costs 15-20 s on the first Windows
+#: launch. A batch import asks once per line, so the answer is remembered briefly.
+_PROBE_TTL_SEC = 60.0
+_PROBE_CACHE: dict[tuple[str, str], tuple[float, str | None, str]] = {}
+
+#: A windowed launch (pythonw, a shortcut) would flash a console for every probe,
+#: every job and every taskkill; a 5000-line batch import flashed hundreds.
+NO_WINDOW_KWARGS: dict[str, int] = (
+    {'creationflags': sp.CREATE_NO_WINDOW} if os.name == 'nt' else {}
+)
+
+
+def probe_binary(command: str, *, refresh: bool = False) -> tuple[str | None, str]:
     """Return ``(path, version)`` for a tool, honouring venv and bundled installs."""
     prefix = resolve_tool(command)
     if not prefix:
         return None, ""
     display = ' '.join(prefix)
+    key = (command, display)
+    now = time.monotonic()
+    cached = _PROBE_CACHE.get(key)
+    if cached is not None and not refresh and now - cached[0] < _PROBE_TTL_SEC:
+        return cached[1], cached[2]
     # The first launch of a freshly installed tool can be slow on Windows.
     for timeout in (15, 20):
         try:
             out = sp.check_output([*prefix, "--version"], text=True, timeout=timeout,
-                                  stderr=sp.STDOUT)
+                                  stderr=sp.STDOUT, **NO_WINDOW_KWARGS)
             lines = [line for line in (out or "").strip().splitlines() if line.strip()]
-            return display, (lines[0] if lines else "")
+            result = (display, (lines[0] if lines else ""))
+            _PROBE_CACHE[key] = (now, result[0], result[1])
+            return result
         except Exception:
             continue
     # A configured path that does not exist used to be reported as "available" with
@@ -209,7 +237,9 @@ def probe_binary(command: str) -> tuple[str | None, str]:
     # died with WinError 2.
     candidate = Path(prefix[0])
     if candidate.is_absolute() and not candidate.exists():
+        _PROBE_CACHE[key] = (now, None, "")
         return None, ""
+    _PROBE_CACHE[key] = (now, display, "")
     return display, ""
 
 

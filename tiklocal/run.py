@@ -1,3 +1,4 @@
+import ipaddress
 import os
 import sys
 import signal
@@ -37,6 +38,18 @@ except ImportError:
     yaml = None
 
 LOGGER = logging.getLogger('tiklocal.run')
+
+
+def is_loopback_bind(host: str) -> bool:
+    """True when ``host`` only accepts connections from this machine."""
+    text = str(host or '').strip().strip('[]').lower()
+    if not text or text == 'localhost':
+        return True
+    try:
+        return ipaddress.ip_address(text).is_loopback
+    except ValueError:
+        # A hostname such as ``media.local`` can resolve anywhere; treat it as public.
+        return False
 
 
 def load_config():
@@ -644,6 +657,12 @@ Examples:
             print(f"| {bootstrap.default_password:<42} |")
             print("| Change it: tiklocal auth set-password      |")
             print("+--------------------------------------------+")
+            if not is_loopback_bind(host):
+                # The password is a published constant, so every device that can
+                # reach this port can sign in until it is changed. The default bind
+                # is 0.0.0.0, so this is the common first-run case, not an edge one.
+                print(f"WARNING: the default password is still in use while listening on {display_host}.")
+                print("         Anyone who can reach this port can browse and delete the library.")
         # A log file behind a pipe is block-buffered, and the banner is the only
         # place that says which URL this run serves; flush it before blocking in
         # the server loop instead of showing it on exit.
@@ -739,6 +758,12 @@ Examples:
             ssl_context = (str(tls_material.cert_path), str(tls_material.key_path))
         if getattr(args, 'dev', False):
             # Development mode uses Flask's built-in server.
+            if not is_loopback_bind(host):
+                # The Werkzeug debugger is an interactive console that runs code in
+                # this process; the default bind is 0.0.0.0, so plain ``--dev`` used
+                # to publish it to the whole network.
+                print(f"Development mode binds to 127.0.0.1 instead of {display_host}.")
+                host = '127.0.0.1'
             print_banner()
             print("⚠️  Development mode is enabled; do not use it in production")
             app.run(host=host, port=port, debug=True, use_reloader=True, ssl_context=ssl_context)
