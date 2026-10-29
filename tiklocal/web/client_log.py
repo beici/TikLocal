@@ -49,7 +49,9 @@ def register_client_log_routes(app, logger=None):
             line = payload.get('line')
             try:
                 line = int(line)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
+                # JSON allows 1e400, which Python parses as inf; int(inf) raises
+                # OverflowError, and this endpoint promises never to fail.
                 line = 0
             log.warning(
                 'client error: %s at %s:%s (page %s, ua %s)%s',

@@ -462,7 +462,10 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         except OSError:
             return None
         # Same shape as ``werkzeug.utils.send_file`` so the 200 path and the
-        # hand-built range paths answer with one identical validator.
+        # hand-built range paths answer with one identical validator. Nanoseconds
+        # would be finer, but send_file owns the 200 path (and its zero-copy
+        # wrapper), so the two would disagree and a resumed download could not
+        # revalidate; the sub-second FAT32 case stays in the backlog.
         check = zlib.adler32(str(target).encode()) & 0xFFFFFFFF
         return f'{stat.st_mtime}-{stat.st_size}-{check}', formatdate(stat.st_mtime, usegmt=True)
 

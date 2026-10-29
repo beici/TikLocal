@@ -270,8 +270,11 @@ def create_app(test_config=None):
     def static_asset(filename: str) -> str:
         # Cache-bust by the file's own mtime so edited assets reach browsers on
         # a plain refresh; the version only tags files that cannot be stat'ed.
+        # Nanoseconds: the query string is served as immutable for a year, so two
+        # writes inside the same second (a CSS watcher saving twice) used to share a
+        # stamp and leave the browser on the first build until the cache expired.
         try:
-            stamp = hex(int(os.stat(os.path.join(app.static_folder, filename)).st_mtime))
+            stamp = hex(os.stat(os.path.join(app.static_folder, filename)).st_mtime_ns)
         except OSError:
             stamp = app_version
         return url_for('static', filename=filename, v=stamp)
@@ -617,11 +620,22 @@ def create_app(test_config=None):
     @app.template_filter('filesizeformat')
     def filesizeformat(num_bytes):
         if num_bytes is None: return '0 B'
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if num_bytes < 1024.0:
-                return f"{int(num_bytes) if unit == 'B' else f'{num_bytes:.1f}'} {unit}"
-            num_bytes /= 1024.0
-        return f"{num_bytes:.1f} PB"
+        value = float(num_bytes)
+        units = ['B', 'KB', 'MB', 'GB', 'TB']
+        for index, unit in enumerate(units):
+            if value < 1024.0:
+                if unit == 'B':
+                    return f'{int(value)} B'
+                # 1048575 bytes is 1023.999 KB, which used to render as "1024.0 KB" --
+                # the same digits a 1 MB file shows, under a different label. Round
+                # first and carry into the next unit when the rounding hits 1024.
+                shown = round(value, 1)
+                if shown >= 1024.0 and index + 1 < len(units):
+                    value = 1.0
+                    continue
+                return f'{shown:.1f} {unit}'
+            value /= 1024.0
+        return f'{value:.1f} PB'
 
     @app.get('/favicon.ico')
     def favicon():

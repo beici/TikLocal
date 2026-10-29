@@ -62,6 +62,10 @@ METADATA_CACHE_LIMIT = 2000
 #: Guards the OrderedDict above; probing must happen outside it (see metadata_for).
 _METADATA_CACHE_LOCK = threading.Lock()
 
+#: The profile is capped so a 20k track library cannot grow it forever; the track
+#: that was just written is pinned past the cap (see _save).
+PROFILE_LIMIT = 1200
+
 
 class RadioProfileStore:
     """Persist light listening feedback for local radio selection."""
@@ -108,7 +112,7 @@ class RadioProfileStore:
             entry["score"] = self._next_score(float(entry.get("score") or 0.0), event, ratio)
 
             tracks[uri] = entry
-            self._save(tracks)
+            self._save(tracks, keep=uri)
         return entry
 
     def _next_score(self, current: float, event: str, ratio: float | None) -> float:
@@ -119,13 +123,25 @@ class RadioProfileStore:
             delta -= 0.05
         return max(-0.8, min(current + delta, 1.4))
 
-    def _save(self, tracks: dict[str, dict[str, Any]]) -> None:
+    def _save(self, tracks: dict[str, dict[str, Any]], keep: str | None = None) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        trimmed = dict(sorted(
+        ordered = sorted(
             tracks.items(),
             key=lambda item: str(item[1].get("last_played_at") or ""),
             reverse=True,
-        )[:1200])
+        )
+        trimmed = dict(ordered[:PROFILE_LIMIT])
+        if keep and keep not in trimmed and keep in tracks:
+            # Trimming sorts by wall clock, so a clock that moved backwards ranks the
+            # track that just played below everything else and drops it first — the
+            # one entry the write was about. Pin it and drop the oldest instead.
+            trimmed[keep] = tracks[keep]
+            while len(trimmed) > PROFILE_LIMIT:
+                oldest = min(
+                    (uri for uri in trimmed if uri != keep),
+                    key=lambda uri: str(trimmed[uri].get("last_played_at") or ""),
+                )
+                trimmed.pop(oldest, None)
         write_json_atomic(self.path, {"tracks": trimmed})
 
 

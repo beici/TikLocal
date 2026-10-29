@@ -660,9 +660,11 @@ def detect_locale(get_cookie, accept_language: str | None) -> str:
         )
         candidates.append((q, normalize_locale(tag), explicit))
     # Prefer the highest-quality tag the user explicitly asked for; an
-    # unsupported language (ja, fr, …) falls through to the default.
-    for _, locale, explicit in sorted(candidates, key=lambda row: -row[0]):
-        if explicit:
+    # unsupported language (ja, fr, …) falls through to the default. A tag sent
+    # with q=0 is a refusal, not a preference: "zh-CN;q=0, en;q=0.9" asks for
+    # English, and returning Chinese ignored the one thing the header said.
+    for q, locale, explicit in sorted(candidates, key=lambda row: -row[0]):
+        if explicit and q > 0:
             return locale
     return DEFAULT_LOCALE
 

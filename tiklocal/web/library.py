@@ -15,6 +15,10 @@ from tiklocal.services.media_naming import blogger_display_name
 from tiklocal.web.media_payloads import build_feed_media_item, media_urls, serialize_library_item
 from tiklocal.web import json_body, read_int_arg
 
+#: An offset is bound straight into a SQLite ``OFFSET``; values past int64 raise
+#: OverflowError, and no library is a million items deep.
+MAX_OFFSET = 1_000_000
+
 
 def register_library_routes(
     app, *, library_service, media_index, library_indexer, favorite_service,
@@ -52,7 +56,7 @@ def register_library_routes(
             'month': month,
             'seed': seed,
             'blog': blog,
-            'offset': read_int_arg('offset', 0, minimum=0),
+            'offset': read_int_arg('offset', 0, minimum=0, maximum=MAX_OFFSET),
             'limit': read_int_arg('limit', 24, minimum=12, maximum=96),
             'min_mb': read_int_arg('min_mb', 50, minimum=1, maximum=10240),
         }
@@ -213,9 +217,18 @@ def register_library_routes(
         items = [serialize_library_item(record) for record in records]
         positions = activity_store.positions_for([item['name'] for item in items if item['type'] == 'video'])
         for item in items:
-            if spot := positions.get(item['name']):
-                item['resume'] = spot['position']
-                item['progress'] = round(spot['position'] / spot['duration'], 3)
+            spot = positions.get(item['name'])
+            if not spot:
+                continue
+            # A restored or hand-edited position row can carry a zero duration;
+            # dividing by it would take every grid page down with a 500.
+            try:
+                duration = float(spot.get('duration') or 0)
+            except (TypeError, ValueError):
+                duration = 0.0
+            item['resume'] = spot['position']
+            if duration > 0:
+                item['progress'] = round(spot['position'] / duration, 3)
         return {
             **page,
             'items': items,
@@ -526,7 +539,7 @@ def register_library_routes(
             found = collection_store.get(collection_id)
             if not found:
                 return {'success': False, 'error': t('library.collection.not_found')}, 404
-            offset = read_int_arg('offset', 0, minimum=0)
+            offset = read_int_arg('offset', 0, minimum=0, maximum=MAX_OFFSET)
             limit = read_int_arg('limit', 24, minimum=12, maximum=96)
             page = _build_library_page(
                 offset=offset,

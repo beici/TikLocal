@@ -1231,7 +1231,15 @@ class LibraryIndexer:
             result = self._sync_locked()
             while self._rescan_requested:
                 self._rescan_requested = False
-                result = self._sync_locked()
+                again = self._sync_locked()
+                # A rescan during a cold scan used to report only the second pass,
+                # which almost always finds nothing: the settings page then said
+                # "0 indexed" for a library it had just indexed.
+                result = {
+                    'indexed': int(result.get('indexed') or 0) + int(again.get('indexed') or 0),
+                    'deleted': int(result.get('deleted') or 0) + int(again.get('deleted') or 0),
+                    'last_synced_at': again.get('last_synced_at') or result.get('last_synced_at'),
+                }
             return result
         finally:
             self._sync_lock.release()

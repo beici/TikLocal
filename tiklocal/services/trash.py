@@ -13,6 +13,28 @@ RETENTION_DAYS = 30
 logger = logging.getLogger(__name__)
 
 
+def parse_deleted_at(value: object) -> datetime.datetime | None:
+    """Parse a trash timestamp into an aware UTC datetime.
+
+    Entries are compared and sorted by this value instead of by their raw
+    strings: two rows written with different UTC offsets (an older build, a
+    hand edit, a machine that moved time zones) sort lexicographically wrong,
+    and a naive timestamp compares as if it were UTC. Returning None keeps an
+    unreadable row listed and unexpired, which is what the lenient path has
+    always done -- a broken timestamp must not silently delete a file.
+    """
+    text = str(value or '').strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.astimezone(datetime.timezone.utc)
+
+
 def sidecar_paths(target: Path) -> list[Path]:
     """Metadata files a downloader wrote next to a media file.
 
@@ -198,12 +220,21 @@ class TrashService:
                     except OSError:
                         continue
                 items.append({**entry, 'deleted_at': deleted_at, 'id': f"{source.id}.{folder.name}"})
-        return sorted(items, key=lambda item: item['deleted_at'], reverse=True)
+        return sorted(
+            items,
+            key=lambda item: parse_deleted_at(item['deleted_at']) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc),
+            reverse=True,
+        )
 
     def expired(self) -> list[str]:
         """Ids of entries older than the retention period."""
-        cutoff = (datetime.datetime.now(datetime.timezone.utc) - self.retention).isoformat(timespec='seconds')
-        return [item['id'] for item in self.entries() if item['deleted_at'] < cutoff]
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - self.retention
+        stale: list[str] = []
+        for item in self.entries():
+            deleted_at = parse_deleted_at(item['deleted_at'])
+            if deleted_at is not None and deleted_at < cutoff:
+                stale.append(item['id'])
+        return stale
 
     def _entry(self, entry_id: str) -> tuple[Path, dict]:
         source_id, _, name = str(entry_id).partition('.')

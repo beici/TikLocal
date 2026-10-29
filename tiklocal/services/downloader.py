@@ -403,7 +403,21 @@ class DownloadHistoryStore:
         return [item for item in data if isinstance(item, dict)]
 
     def save(self, jobs: list[dict[str, Any]]) -> None:
-        write_json_atomic(self.store_path, jobs[:DOWNLOAD_HISTORY_LIMIT])
+        # Truncating the tail would drop a job that has not finished yet: on the
+        # next start it is not in the history at all, so it never even becomes an
+        # "interrupted" card. Keep every unfinished job and fill the rest of the
+        # budget with the newest finished ones, preserving order.
+        pending = sum(1 for job in jobs if job.get('status') not in TERMINAL_JOB_STATUS)
+        terminal_budget = max(0, DOWNLOAD_HISTORY_LIMIT - pending)
+        kept: list[dict[str, Any]] = []
+        kept_terminal = 0
+        for job in jobs:
+            if job.get('status') in TERMINAL_JOB_STATUS:
+                if kept_terminal >= terminal_budget:
+                    continue
+                kept_terminal += 1
+            kept.append(job)
+        write_json_atomic(self.store_path, kept)
 
 
 class DownloadManager:
@@ -670,16 +684,21 @@ class DownloadManager:
             # jobs.json is trimmed to DOWNLOAD_HISTORY_LIMIT on save, but the in-memory
             # copies were not: a queue of several hundred URLs kept every job dict, and
             # every progress tick copied all of them under the lock. Trim terminal jobs
-            # past the same limit here so memory and disk agree.
-            while len(self._job_order) > DOWNLOAD_HISTORY_LIMIT:
-                stale_id = self._job_order[-1]
+            # past the same limit here so memory and disk agree. Unfinished jobs are
+            # skipped, not treated as a stop sign: a long queue is all queued at once,
+            # and stopping at the first one would let the list grow without bound.
+            index = len(self._job_order) - 1
+            while len(self._job_order) > DOWNLOAD_HISTORY_LIMIT and index >= 0:
+                stale_id = self._job_order[index]
                 stale = self._jobs.get(stale_id)
                 if stale is not None and stale.get('status') not in TERMINAL_JOB_STATUS:
-                    break
-                self._job_order.pop()
+                    index -= 1
+                    continue
+                self._job_order.pop(index)
                 self._jobs.pop(stale_id, None)
                 self._progress_persist_at.pop(stale_id, None)
                 self._cancel_events.pop(stale_id, None)
+                index -= 1
             try:
                 self._persist_locked()
             except Exception:
@@ -1495,7 +1514,12 @@ class DownloadManager:
                 if _is_local_host(final_url or url):
                     tmp_path.unlink(missing_ok=True)
                     return "The media URL redirected to a local address."
-                total_bytes = int(response.headers.get("Content-Length") or 0)
+                # A proxy can answer with "Content-Length: -1" or a non-numeric
+                # value; int() would either raise past the except clause below or
+                # turn the completeness check into "always incomplete", which
+                # deletes a file that arrived intact.
+                raw_length = str(response.headers.get("Content-Length") or "").strip()
+                total_bytes = int(raw_length) if raw_length.isdigit() else 0
                 content_type = str(response.headers.get("Content-Type") or "").lower()
                 if content_type.startswith("text/html"):
                     # A CDN that answers with a challenge page or an error document
@@ -1529,7 +1553,7 @@ class DownloadManager:
                         return "The media file is larger than the downloader accepts."
                     if on_progress and total_bytes > 0:
                         on_progress(received / total_bytes)
-            if total_bytes and received != total_bytes:
+            if total_bytes > 0 and received != total_bytes:
                 # A dropped connection used to leave a truncated file that was
                 # renamed into the library and reported as a success: the grid then
                 # showed a video that stops halfway and cannot be repaired by retry.

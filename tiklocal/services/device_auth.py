@@ -115,16 +115,26 @@ class DeviceAuthStore:
         raw = str(device.get("expires_at") or "").strip()
         if raw:
             try:
-                return datetime.datetime.fromisoformat(raw) <= current
+                expires = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
             except ValueError:
-                return False
+                # A token whose expiry cannot be read is treated as expired: the
+                # alternative is a 180 day credential that never expires because one
+                # byte in device_auth.json went missing.
+                return True
+            if expires.tzinfo is None:
+                # Same rule as ``created_at`` below: a timestamp without an offset
+                # was written by this app, which always means UTC. Comparing a
+                # naive value with an aware one raises TypeError, and that used to
+                # escape as a 500 on every paired-device check.
+                expires = expires.replace(tzinfo=datetime.timezone.utc)
+            return expires <= current
         created = str(device.get("created_at") or "").strip()
         if not created:
             return False
         try:
-            issued = datetime.datetime.fromisoformat(created)
+            issued = datetime.datetime.fromisoformat(created.replace("Z", "+00:00"))
         except ValueError:
-            return False
+            return True
         if issued.tzinfo is None:
             issued = issued.replace(tzinfo=datetime.timezone.utc)
         return issued + datetime.timedelta(days=DEVICE_TOKEN_TTL_DAYS) <= current

@@ -331,14 +331,20 @@ class ThumbnailService:
             marker_stat = marker.stat()
         except OSError:
             return False
-        if time.time() - marker_stat.st_mtime > self.FAILURE_TTL_SEC:
+        age = time.time() - marker_stat.st_mtime
+        # A negative age means the clock moved backwards after the marker was written.
+        # Treating that as "fresh" froze the grey placeholder until the clock caught up
+        # again (17 days for a 17 day rollback), so an unreadable age retries instead.
+        if age < 0 or age > self.FAILURE_TTL_SEC:
             return False
         source_path = self.library.resolve_path(uri)
         if source_path is None:
             return True
         try:
             # The file was replaced (e.g. a copy finished): give it another chance.
-            return source_path.stat().st_mtime <= marker_stat.st_mtime
+            # Compare nanoseconds: on FAT32/exFAT the second-resolution mtime put the
+            # finished copy and the marker in the same tick, which looked unchanged.
+            return source_path.stat().st_mtime_ns <= marker_stat.st_mtime_ns
         except OSError:
             return False
 

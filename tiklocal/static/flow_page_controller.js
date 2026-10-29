@@ -99,6 +99,24 @@
     const activitySessionId = globalThis.crypto?.randomUUID?.()
       || `flow-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     let activeActivity = null;
+    // performance.now() keeps ticking while the tab is hidden, so a feed left in a
+    // background tab reported hours of "watch time" for one card. Track hidden spans
+    // and subtract them; a phone that sleeps mid-scroll otherwise looks like a
+    // marathon viewer in the affinity data.
+    let hiddenSince = document.hidden ? performance.now() : 0;
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        hiddenSince = performance.now();
+        return;
+      }
+      if (!hiddenSince) return;
+      const hiddenMs = performance.now() - hiddenSince;
+      hiddenSince = 0;
+      if (activeActivity) {
+        activeActivity.hiddenMs = (activeActivity.hiddenMs || 0) + hiddenMs;
+      }
+    });
 
     function postActivity(events, useBeacon = false) {
       const valid = events.filter(Boolean);
@@ -140,10 +158,11 @@
       if (!target) return null;
       if (target.type === 'video' && target.el) {
         target.el._completedInView = false;
+        target.el._replayRecorded = false;
         target.el._activityPlayedSeconds = 0;
         target.el._activityLastPosition = null;
       }
-      activeActivity = { target, startedAt: performance.now() };
+      activeActivity = { target, startedAt: performance.now(), hiddenMs: 0 };
       return {
         session_id: activitySessionId,
         uri: target.uri,
@@ -155,9 +174,11 @@
 
     function finishActivity() {
       if (!activeActivity) return null;
-      const { target, startedAt } = activeActivity;
+      const { target, startedAt, hiddenMs } = activeActivity;
       activeActivity = null;
-      const visibleMs = Math.max(0, Math.round(performance.now() - startedAt));
+      // If the page is hidden right now, that span has not been folded into hiddenMs yet.
+      const openHidden = hiddenSince ? performance.now() - hiddenSince : 0;
+      const visibleMs = Math.max(0, Math.round(performance.now() - startedAt - (hiddenMs || 0) - openHidden));
       let ratio = null;
       if (target.type === 'video' && Number.isFinite(target.el?.duration) && target.el.duration > 0) {
         ratio = Math.max(0, Math.min(Number(target.el._activityPlayedSeconds || 0) / target.el.duration, 1));
@@ -1578,7 +1599,11 @@
             video._activityPlayedSeconds = Number(video._activityPlayedSeconds || 0) + playedDelta;
           }
           video._activityLastPosition = current;
-          if (duration > 0 && previous > duration * 0.85 && current < 1.5) {
+          if (duration > 0 && previous > duration * 0.85 && current < 1.5 && !video._replayRecorded) {
+            // Looping videos wrap every few seconds: without this latch one 10s clip
+            // posted a "replay" event on every lap, which is both a request storm and
+            // a lie about how often the user rewatched it.
+            video._replayRecorded = true;
             video._completedInView = true;
             postActivity([{
               session_id: activitySessionId,

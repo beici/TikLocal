@@ -24,6 +24,9 @@ from tiklocal.web.media_payloads import build_feed_media_item, post_date_of
 _SELECTION_CACHE: "OrderedDict[tuple, tuple[float, list[str]]]" = OrderedDict()
 _SELECTION_CACHE_LIMIT = 8
 _SELECTION_CACHE_TTL_SEC = 10.0
+#: Orders longer than this are served but not cached: a deep page asks for a window
+#: the size of the library, and eight of those are tens of megabytes of strings.
+_SELECTION_CACHE_MAX_ITEMS = 4096
 _SELECTION_LOCK = threading.Lock()
 
 
@@ -54,11 +57,15 @@ def _selection_for(select, kind: str, limit: int, seed: str, blog: str,
             # shrinking back to a small bucket and re-ranking on the next page.
             bucket = max(bucket, len(ordered))
     chosen = list(select(file_type=kind, limit=bucket, seed=seed, source_id=blog, **session_kwargs))
-    with _SELECTION_LOCK:
-        _SELECTION_CACHE[key] = (now, chosen)
-        _SELECTION_CACHE.move_to_end(key)
-        while len(_SELECTION_CACHE) > _SELECTION_CACHE_LIMIT:
-            _SELECTION_CACHE.popitem(last=False)
+    # A deep page asks for a window the size of the whole library; caching eight of
+    # those kept tens of megabytes of URI strings resident for ten seconds. Serve the
+    # page, but let oversized answers fall out of the cache.
+    if len(chosen) <= _SELECTION_CACHE_MAX_ITEMS:
+        with _SELECTION_LOCK:
+            _SELECTION_CACHE[key] = (now, chosen)
+            _SELECTION_CACHE.move_to_end(key)
+            while len(_SELECTION_CACHE) > _SELECTION_CACHE_LIMIT:
+                _SELECTION_CACHE.popitem(last=False)
     return chosen[:limit]
 
 

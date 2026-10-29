@@ -716,3 +716,21 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] 相册子视频三条移除路径只 `remove()`，不释放 src | `tiklocal/static/flow_page_controller.js:1428-1439` | 与已修的 U4-1 同源，下轮一起改 |
 | [P3] `radio_scene.destroy()` 不 `deleteProgram`/`deleteTexture`，每次文档销毁泄漏 10-40 MB GPU | `tiklocal/static/radio_scene.js:422-429` | 单页生命周期内只泄漏一次 |
 | [P3] `list_jobs` 仍把 `download_payload` 发给浏览器（本轮只改了落盘侧） | `tiklocal/web/downloads.py` | 需要在 API 层做投影，牵动下载页字段 |
+
+### 第 41 轮新增（13 条）
+
+| 问题 | 位置 | 为什么暂不修 |
+| --- | --- | --- |
+| [P3] 三处缓存有效性判据语义不一致（`<`/`>=`/`==`） | `tiklocal/services/thumbnail.py`、`tiklocal/services/radio.py` | 统一语义要重定 `THUMB_VERSION` 与波形缓存键，属设计决策；当前三种各自自洽 |
+| [P3] 子进程等待用 `monotonic`，Windows 上含休眠时间 | `tiklocal/services/downloader.py` | 这里恰好想要「真实经过时间」，换 `perf_counter` 会在休眠后误判超时 |
+| [P3] ETag 用秒级 float `st_mtime`，FAT32 同秒替换的文件共享 ETag | `tiklocal/web/media.py:455-465` | 200 路径由 `send_file` 生成同一格式的校验符，换纳秒会让两条路径不一致（已试并回退），要修得先接管整文件响应 |
+| [P3] 扫描计数口径（跳过不计数、并发删除不计 `deleted`） | `tiklocal/services/library_index.py:68-85` | 纯统计文案，改它要动扫描主循环的返回结构 |
+| [P3] 每批活动都物化 2 万 id 做反连接 | `tiklocal/services/database.py:702-711` | 20k 行时每批 1-2 ms，收益小于改动面；可改为水位删除 |
+| [P3] `total_visible_ms` 被同一段时长累加 2-3 次 | `tiklocal/services/database.py:806-838` | 该列当前只被搬运、不参与计算；接入「总观看时长」前必须修 |
+| [P3] 搜索结果里的用户计数按固定值截断 | `tiklocal/web/search.py` | 需改搜索聚合口径，与本轮视角关系弱 |
+| [P2] 下载进度 `99.5…99.99%` 四舍五入成 100%，任务仍在跑 | `tiklocal/static/download_page_controller.js:103-104`、`:294-296`、`:356`、`:406-409` | 三个显示点要共用归一化函数，牵动下载页状态机 |
+| [P3] 配对码倒计时用 `Date.now()` 折绝对时刻，NTP 校正后误判 | `tiklocal/static/settings_page_controller.js:417-431` | 改 `performance.now()` 要同步改服务端 `expires_in` 语义 |
+| [P3] 问候语与「那年今日」只在初始化时算一次，跨零点错一天 | `tiklocal/static/home_page_controller.js:253-259`、`:293`、`:298-305` | 加定时器属新行为，需与首页缓存策略一起设计 |
+| [P3] `formatBytes` 先按未舍入值选单位 → `1024.0 MB` | `tiklocal/static/settings_page_controller.js:911-914` | 与本轮 `filesizeformat` 同型，但只在设置页使用 |
+| [P3] 设置页数值拼接未做类型收敛 | `tiklocal/static/settings_page_controller.js:929`、`:934-935` | 见报告，改动面小但需先确认所有调用点 |
+| [P3] 前端格式化逻辑零散重复，缺公共函数 | `tiklocal/static/*.js` | 需一次统一重构，单独做比夹在缺陷修复里安全 |

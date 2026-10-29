@@ -193,7 +193,10 @@
       onTimeUpdate();
       updateMediaPosition();
     });
-    document.addEventListener('visibilitychange', syncAtmosphere);
+    document.addEventListener('visibilitychange', function () {
+      syncAtmosphere();
+      enforceSleepDeadline();
+    });
     // Safari only starts Web Audio from a gesture, so unlock on any tap or key press.
     document.addEventListener('pointerdown', unlockAmbience, true);
     document.addEventListener('keydown', unlockAmbience, true);
@@ -520,15 +523,23 @@
   }
 
   function tickSleep() {
-    if (!sleepEnd) return;
-    if (sleepEnd <= Date.now()) {
-      clearInterval(sleepTickId);
-      sleepEnd = null;
-      sleepIndex = 0;
-      sleepFading = true;
-      audio.pause();
-    }
+    if (enforceSleepDeadline()) return;
     updateSleep();
+  }
+
+  // The interval alone cannot stop playback: a hidden desktop tab is throttled to
+  // one tick per minute, and iOS suspends timers entirely while <audio> keeps
+  // playing, so a 30 minute timer could run all night. Media events keep firing in
+  // the background, so they get to enforce the same deadline.
+  function enforceSleepDeadline() {
+    if (!sleepEnd || sleepEnd > Date.now()) return false;
+    clearInterval(sleepTickId);
+    sleepEnd = null;
+    sleepIndex = 0;
+    sleepFading = true;
+    audio.pause();
+    updateSleep();
+    return true;
   }
 
   function updateSleep() {
@@ -542,7 +553,9 @@
       els.btnSleep.setAttribute('title', T('radio.sleep_timer'));
       return;
     }
-    var minutes = SLEEP_OPTIONS[sleepIndex];
+    // Show what is left, not what was chosen: the label used to read "30" for the
+    // whole half hour, which is wrong for sighted and screen-reader users alike.
+    var minutes = Math.max(1, Math.ceil((sleepEnd - Date.now()) / 60000));
     els.btnSleep.innerHTML = '<span id="sleep-label">' + minutes + '</span>';
     els.sleepLabel = document.getElementById('sleep-label');
     els.btnSleep.style.color = 'var(--radio-accent)';
@@ -857,10 +870,12 @@
   }
 
   function onTimeUpdate() {
+    enforceSleepDeadline();
     var duration = playableDuration();
-    var pct = duration ? (audio.currentTime / duration) * 100 : 0;
+    var pct = duration ? Math.min(100, Math.max(0, (audio.currentTime / duration) * 100)) : 0;
+    var pctText = pct.toFixed(1);
     els.progressBar.value = pct;
-    els.progressBar.style.background = 'linear-gradient(to right, var(--radio-accent) ' + pct + '%, rgba(127,127,127,0.22) ' + pct + '%)';
+    els.progressBar.style.background = 'linear-gradient(to right, var(--radio-accent) ' + pctText + '%, rgba(127,127,127,0.22) ' + pctText + '%)';
     els.timeCurrent.textContent = formatTime(audio.currentTime);
     els.timeTotal.textContent = formatTime(duration);
     if (Date.now() - saveTick > 5000) {
