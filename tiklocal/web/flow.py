@@ -3,6 +3,9 @@
 import datetime
 import random
 import re
+import threading
+import time
+from collections import OrderedDict
 from pathlib import Path
 from urllib.parse import quote
 
@@ -13,6 +16,50 @@ from tiklocal.services import media_naming
 from tiklocal.services.recommendation import FORGOTTEN_DAYS, shown_within
 from tiklocal.web import json_body, read_int_arg
 from tiklocal.web.media_payloads import build_feed_media_item, post_date_of
+
+# The selection order for a seed never changes, so rebuilding it for every page of a
+# scroll is pure waste: page 10 re-picked all 240 diversity slots and re-keyed the
+# whole pool (~684ms on a 10k library) to slice 24 items out of the result. Keep the
+# last few orders per (kind, seed, blog, session) and hand out prefixes instead.
+_SELECTION_CACHE: "OrderedDict[tuple, tuple[float, list[str]]]" = OrderedDict()
+_SELECTION_CACHE_LIMIT = 8
+_SELECTION_CACHE_TTL_SEC = 10.0
+_SELECTION_LOCK = threading.Lock()
+
+
+def _selection_for(select, kind: str, limit: int, seed: str, blog: str,
+                   session_kwargs: dict) -> list[str]:
+    """Return the first ``limit`` items of the seed's selection order.
+
+    A longer order always starts with the shorter one (the picks phase consumes the
+    same random stream and the tail is appended after it), so caching in power-of-two
+    buckets keeps a deep page to a slice instead of a full re-rank.
+    """
+    bucket = 32
+    while bucket < limit:
+        bucket *= 2
+    # The two feeds share a seed, so the selector itself is part of the key: the
+    # forgotten order and the weighted order must never answer for each other.
+    key = (getattr(select, '__name__', repr(select)), kind, seed, blog,
+           tuple(sorted(session_kwargs.items())))
+    now = time.monotonic()
+    with _SELECTION_LOCK:
+        cached = _SELECTION_CACHE.get(key)
+        if cached:
+            stamp, ordered = cached
+            if now - stamp <= _SELECTION_CACHE_TTL_SEC and len(ordered) >= limit:
+                _SELECTION_CACHE.move_to_end(key)
+                return ordered[:limit]
+            # Recomputing at the length already held keeps a stale entry from
+            # shrinking back to a small bucket and re-ranking on the next page.
+            bucket = max(bucket, len(ordered))
+    chosen = list(select(file_type=kind, limit=bucket, seed=seed, source_id=blog, **session_kwargs))
+    with _SELECTION_LOCK:
+        _SELECTION_CACHE[key] = (now, chosen)
+        _SELECTION_CACHE.move_to_end(key)
+        while len(_SELECTION_CACHE) > _SELECTION_CACHE_LIMIT:
+            _SELECTION_CACHE.popitem(last=False)
+    return chosen[:limit]
 
 
 def legacy_media_key(uri: str) -> str:
@@ -493,20 +540,8 @@ def build_mix_feed_page(
     # Only pass the session cutoff when there is one: injected/legacy recommend
     # services (tests, alternative implementations) predate the keyword.
     session_kwargs = {'session_start': session_start} if session_start is not None else {}
-    videos = select(
-        file_type='video',
-        limit=request_window,
-        seed=f"{seed}:video",
-        source_id=blog,
-        **session_kwargs,
-    )
-    images = select(
-        file_type='image',
-        limit=request_window,
-        seed=f"{seed}:image",
-        source_id=blog,
-        **session_kwargs,
-    )
+    videos = _selection_for(select, 'video', request_window, f"{seed}:video", blog, session_kwargs)
+    images = _selection_for(select, 'image', request_window, f"{seed}:image", blog, session_kwargs)
 
     target_image_prob = image_ratio / max(1, ratio_total)
     max_video_streak = 6

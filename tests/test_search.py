@@ -135,6 +135,41 @@ def test_tabs_split_users_from_videos(tmp_path):
     assert [user['name'] for user in users_only['users']] == ['示例博主']
 
 
+def test_the_video_tab_never_lists_images(tmp_path):
+    # The index defaults to every media type, so a tab that does not ask for
+    # videos alone fills up with stills and album badges under a "视频" heading.
+    app, client = _client_with_root(tmp_path, [
+        '2024-05-04 12.00.00-视频-示例博主-晚风.mp4',
+        '2024-05-05 12.00.00-图文-示例博主-晚风海边.jpg',
+    ], 'UID100000000000004_示例博主_发布作品')
+
+    general = _search(client, '晚风')
+    assert any(item['name'].endswith('.jpg') for item in general['videos'])
+
+    video_tab = _search(client, '晚风', tab='video')
+    assert video_tab['videos']
+    assert all(item['name'].endswith('.mp4') for item in video_tab['videos'])
+
+
+def test_scrolling_past_the_offset_window_stops_instead_of_repeating(tmp_path):
+    app, client = _client_with_root(tmp_path, [
+        '2024-05-04 12.00.00-视频-示例博主-晚风.mp4',
+        '2024-05-05 12.00.00-视频-示例博主-晚风起.mp4',
+    ], 'UID100000000000005_示例博主_发布作品')
+
+    first = _search(client, '晚风', offset=0, limit=1)
+    assert first['has_more'] is True
+    assert 'truncated' not in first
+
+    # The cap used to clamp the offset silently: the page repeated the last slice
+    # while ``has_more`` kept saying yes, so a scroll looped forever.
+    beyond = _search(client, '晚风', offset=5000, limit=24)
+    assert beyond['videos'] == []
+    assert beyond['has_more'] is False
+    assert beyond['truncated'] is True
+    assert beyond['offset'] == 5000
+
+
 def test_general_tab_caps_the_author_shortcut(tmp_path):
     files, sources = [], []
     for index in range(4):

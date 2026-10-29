@@ -474,3 +474,22 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] 集合页任一改动都整表 `innerHTML` 重建 | `tiklocal/static/collections_page_controller.js:149`、`:192` | 按 id 增量 patch |
 | [P3] flow 每次切条做一次全文档 `querySelectorAll` | `tiklocal/static/flow_page_controller.js:1884` | 只清理 `prevItem.el` |
 | [P3] `_to_library_record` 每行造 17 键 dict，无惰性、无缓存 | `tiklocal/services/library_index.py:750-768` | 大库转换成本的主要来源之一 |
+
+### 第 31 轮新增（14 条）
+
+| 级别 | 问题 | 位置 | 为什么暂不修 |
+| --- | --- | --- | --- |
+| [P2] memory 卡只在奇数页、且只从本页记录里挑「一年前的图片」，深页命中率趋近 0 | `tiklocal/web/flow.py:614` | 要按 (month, day) 从全量索引查候选，涉及 `on_days` 的预存列方案 |
+| [P2] 深链/blog 起始流每页对整条时间线做无上限 `collapse_media_entries`，10 万图集库单页 2.6s / 52MB | `tiklocal/web/flow.py:391`、`:395`、`tiklocal/services/library_index.py:860-960` | 需把折叠下推到 SQL，属结构性改动 |
+| [P2] 时间线 year_rows 两次 `GROUP BY` + 临时 B 树，10 万行 159ms，每次 `/library` 都跑 | `tiklocal/services/library_index.py:574-623` | 加 `(capture_year, media_type, mtime)` 覆盖索引可到 ~60ms，但每个新索引让快照写锁再涨 5–8% |
+| [P2] `timeline_months()` 全表扫 + 临时 B 树 66ms | `tiklocal/services/library_index.py:600-623` | 同上的索引数量与写放大权衡（加覆盖索引实测 17.7ms） |
+| [P2] `media_vectors` 缺 `(model, mtime)` 索引，`vectors()` 把 90MB BLOB 塞进临时 B 树：902ms | `tiklocal/experiments/similarity/embedding.py:126-152` | 加索引后 302ms，但每模型每文件一行，写放大明显，需先确认向量检索的实际调用频率 |
+| [P2] `replace_snapshot` 单事务 10 万条持写锁 3.6–4.8s，撞上 activity 写入的 3×5s 重试 → 请求挂 ~15s 后 500 | `tiklocal/services/library_index.py:42-145` | 需分批提交 + 版本号，属结构性改动 |
+| [P3] 收藏页每页绕过 `favorites` 的 mtime 缓存（调 `load()` 而非 `_load_cached()`） | `tiklocal/web/library.py:205` | 与「`load()` 每次全量读 JSON」同批处理 |
+| [P3] 位置切片式翻页对库变化敏感：滚动中新增文件会让后续页重复 1 条并被静默丢弃 | `tiklocal/services/library_index.py:520-536`、`tiklocal/static/flow_page_controller.js` | 需 keyset（`after_uri`）分页契约，前端要同步改 |
+| [P3] 多词搜索是「所有词都命中」而不是 OR，用户预期更接近 OR | `tiklocal/web/search.py`、`tiklocal/services/library_index.py:796-809` | 与 FTS5 方案同批，否则 OR 也走不了索引 |
+| [P3] `photo_groups` 的 total 含已删除的父行 → 末页可能为空 | `tiklocal/services/library_index.py` | 需在 COUNT 里 join 存活父行 |
+| [P3] `records()` / `time_states()` 是无 WHERE 无 LIMIT 的全表读，10 万行 862ms / ≈150MB | `tiklocal/services/library_index.py:285-298`、`:716-726` | 需按调用方逐个改 keyset / 只取需要的列 |
+| [P3] `_migrate_015` 是唯一不检查列是否存在的 `ADD COLUMN`，失败后每次启动都失败 | `tiklocal/services/database.py` | 需与迁移框架的「幂等」约定一起改 |
+| [P3] `_sweep_orphan_state` 用前缀 `LIKE` 清孤儿，四张表全扫 | `tiklocal/services/database.py` | 应改范围查询（`uri >= prefix AND uri < prefix+'\uffff'`），与索引方案同批 |
+| [P3] `idx_media_affinity_recent` 没有查询使用，纯写放大 | `tiklocal/services/database.py:120` | 确认无读取方后删除 |

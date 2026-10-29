@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import random
+import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -143,6 +144,17 @@ class MediaIndexStore:
                 """,
                 (now, item_count),
             )
+        if records or deleted:
+            # Statistics decide whether the paged orders use an index at all:
+            # without them SQLite answered the three-value media_type IN with
+            # (media_type, mtime DESC, uri) plus a temporary B-tree over the whole
+            # grid (~90k rows sorted to return 24). Kept out of the snapshot
+            # transaction so the write lock is released before this 50ms pass.
+            try:
+                with self.database.connect() as conn:
+                    conn.execute("ANALYZE")
+            except sqlite3.OperationalError as error:
+                LOGGER.warning('Could not refresh the query statistics: %s', error)
         return {
             "indexed": len(records),
             "deleted": max(deleted, 0),
@@ -535,10 +547,27 @@ class MediaIndexStore:
                     # Collections retain their member order and media types.
                     where, params, order_by = '', [], 'position'
             if mode == 'image_random' and not preserve_order:
-                rows = conn.execute(f'SELECT media_items.* FROM {source} {where} ORDER BY {order_by}', params).fetchall()
-                random.Random(seed).shuffle(rows)
-                total = len(rows)
-                rows = rows[safe_offset:safe_offset + safe_limit]
+                # Shuffling every matching row cost ~90 MB and a second of CPU per
+                # page on a 100k library, and the page only needs `limit` of them.
+                # The permutation depends on the ordered uri list alone, so shuffle
+                # the uris (one small column) and read the page's rows afterwards.
+                uris_in_order = [row[0] for row in conn.execute(
+                    f'SELECT uri FROM {source} {where} ORDER BY {order_by}', params,
+                )]
+                random.Random(seed).shuffle(uris_in_order)
+                total = len(uris_in_order)
+                picked = uris_in_order[safe_offset:safe_offset + safe_limit]
+                rows = []
+                if picked:
+                    placeholders = ','.join('?' * len(picked))
+                    by_uri = {
+                        row['uri']: row
+                        for row in conn.execute(
+                            f'SELECT media_items.* FROM media_items WHERE uri IN ({placeholders})',
+                            picked,
+                        )
+                    }
+                    rows = [by_uri[uri] for uri in picked if uri in by_uri]
             else:
                 total = int(conn.execute(f'SELECT COUNT(*) FROM {source} {where}', params).fetchone()[0])
                 rows = conn.execute(

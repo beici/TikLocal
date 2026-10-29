@@ -181,10 +181,15 @@ class RecommendService:
             pool.remove(chosen)
 
         if len(result) < min(limit, len(weighted_pool)):
+            # The tail has to draw from every candidate, not just the sampled pool:
+            # with 1500 sampled out of 3000+ items the sample ran out first, so
+            # has_more went false while thousands of files had never been shown.
             tail_rng = random.Random(f"{seed}:tail") if seed else random
+            chosen_uris = set(result)
             keyed = [
                 (tail_rng.random() ** (1.0 / max(item['weight'], 1e-9)), item)
-                for item in pool
+                for item in weighted_pool
+                if item['uri'] not in chosen_uris
             ]
             keyed.sort(key=lambda pair: pair[0], reverse=True)
             for _, item in keyed:

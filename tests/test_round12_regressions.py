@@ -146,10 +146,13 @@ def test_csrf_failure_on_an_html_form_renders_a_page(tmp_path):
     assert re.search(r'href="/(library|)"', body)
 
 
-def test_english_compact_count_uses_a_thousand_based_unit():
+def test_english_compact_count_uses_a_thousand_based_unit(tmp_path):
     from tiklocal.app import create_app as _create_app
 
-    app = _create_app({'TESTING': True, 'MEDIA_ROOT': Path('.')})
+    # Only a request context is needed here; pointing MEDIA_ROOT at the repository
+    # made every run index the whole checkout (and race the background scan of the
+    # previous test, which surfaced as an "unable to open database file" flake).
+    app = _create_app({'TESTING': True, 'MEDIA_ROOT': tmp_path})
     with app.test_request_context(headers={'Accept-Language': 'en'}):
         assert format_count(9999) == '9999'
         assert format_count(12345) == '12.3K'

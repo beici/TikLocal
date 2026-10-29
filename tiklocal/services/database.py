@@ -391,6 +391,43 @@ def _migrate_015_add_search_text(conn: sqlite3.Connection) -> None:
         conn.executemany('UPDATE media_items SET search_text = ? WHERE uri = ?', updates)
 
 
+def _migrate_017_index_capture_and_source(conn: sqlite3.Connection) -> None:
+    """Indexes for the paged orders and filters that still sorted whole partitions.
+
+    The default grid filters ``media_type IN ('video','image','live')``, and SQLite
+    cannot use ``(media_type, mtime DESC, uri)`` for ORDER BY when the leading column
+    is an IN list, so every page still built a temporary B-tree over ~90k rows. A
+    month page has a single capture order, which hit the same problem for
+    ``(capture_month, captured_at DESC, uri)``; the blog filter (``source_id = ?``)
+    had no index at all, so each per-source cover scan read its whole partition.
+
+    Two trailing columns carry their weight: ``media_type`` on the source and size
+    indexes turns their COUNT and filter into a covering scan (100k rows: the blog
+    chips 112 -> 23ms, "big files" 455 -> 15ms), and the month-day expression index
+    serves "on this day" (46 -> 7ms) instead of scanning the whole table.
+
+    ANALYZE belongs in this same step: without statistics SQLite keeps choosing the
+    media_type index, and ANALYZE alone would flip the month view to a full scan.
+    """
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_media_items_capture_order '
+        'ON media_items(capture_month, captured_at DESC, uri)'
+    )
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_media_items_source_mtime_uri '
+        'ON media_items(source_id, mtime DESC, uri, media_type)'
+    )
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_media_items_size_order '
+        'ON media_items(size_bytes DESC, mtime DESC, uri, media_type)'
+    )
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_media_items_monthday '
+        'ON media_items(substr(captured_local_date, 6, 5))'
+    )
+    conn.execute('ANALYZE')
+
+
 MIGRATIONS = [
     Migration(1, "create_image_vectors", _migrate_001_create_image_vectors),
     Migration(2, "create_media_similarity_groups", _migrate_002_create_media_similarity_groups),
@@ -408,6 +445,7 @@ MIGRATIONS = [
     Migration(14, "index_media_items_mtime", _migrate_014_index_media_items_mtime),
     Migration(15, "add_search_text", _migrate_015_add_search_text),
     Migration(16, "index_page_order", _migrate_016_index_page_order),
+    Migration(17, "index_capture_and_source", _migrate_017_index_capture_and_source),
 ]
 
 

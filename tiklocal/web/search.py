@@ -80,12 +80,14 @@ def _source_id(record: dict) -> str:
     return name[1:].partition('/')[0] if name.startswith('@') else ''
 
 
-def _works_page(media_index, query: str, limit: int, offset: int = 0) -> dict:
+def _works_page(media_index, query: str, limit: int, offset: int = 0, media_type: str = '') -> dict:
     """One page of matching works; a lightweight index stand-in degrades to none."""
     method = getattr(media_index, 'page', None)
     if not callable(method):
         return {}
-    page = method(search=query, limit=limit, offset=offset, album_covers_only=True)
+    page = method(
+        search=query, limit=limit, offset=offset, album_covers_only=True, media_type=media_type,
+    )
     return page if isinstance(page, dict) else {}
 
 
@@ -311,7 +313,9 @@ def build_search_payload(
     """
     sources_by_id = getattr(library_service, 'sources_by_id', None) or {}
     profiles: dict[str, dict] = {}
-    page = _works_page(media_index, query, limit, offset)
+    # The video tab must only show videos: the index defaults to every media type,
+    # which made the tab list images and albums with their own badges.
+    page = _works_page(media_index, query, limit, offset, media_type='video' if tab == 'video' else '')
     records = [record for record in page.get('records') or () if isinstance(record, dict)]
     work_source_ids = list(dict.fromkeys(_source_id(record) for record in records if _source_id(record)))
 
@@ -376,7 +380,11 @@ def register_search_routes(app, *, media_index, library_service):
         query = clean_query(request.args.get('q'))
         tab = search_tab(request.args.get('tab'))
         limit = read_int_arg('limit', DEFAULT_LIMIT, minimum=MIN_LIMIT, maximum=MAX_LIMIT)
-        offset = read_int_arg('offset', 0, minimum=0, maximum=MAX_OFFSET)
+        # Keep the requested offset so a scroll past the window can be told apart
+        # from one that was merely clamped; clamping alone repeated the last slice
+        # forever while ``has_more`` kept saying yes.
+        requested_offset = read_int_arg('offset', 0, minimum=0)
+        offset = min(requested_offset, MAX_OFFSET)
         if not query:
             return {
                 'success': True,
@@ -389,9 +397,17 @@ def register_search_routes(app, *, media_index, library_service):
                 'next_offset': 0,
                 'has_more': False,
             }
-        return build_search_payload(
+        payload = build_search_payload(
             query, tab, limit,
             media_index=media_index,
             library_service=library_service,
             offset=offset,
         )
+        if requested_offset > MAX_OFFSET or _as_int(payload.get('next_offset'), 0) > MAX_OFFSET:
+            # The scroll window ends here: stop offering another page instead of
+            # serving the same rows again, and say why in the payload.
+            payload['videos'] = []
+            payload['has_more'] = False
+            payload['truncated'] = True
+            payload['offset'] = requested_offset
+        return payload

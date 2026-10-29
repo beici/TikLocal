@@ -132,6 +132,15 @@ def test_api_library_items_supports_modes_search_and_sync(client, tmp_path):
     assert all(item["type"] == "image" for item in image_items)
     assert image_res.get_json()["data"]["seed"] == "fixed"
     assert client.get(image_res.request.url).get_json()["data"]["items"] == image_items
+    # Pages of a seeded shuffle must be slices of the same permutation, not a new
+    # shuffle per request: the page only shuffles uris now and reads rows after.
+    paged = []
+    for page_offset in range(0, len(image_items), 3):
+        chunk = client.get(
+            f"/api/library/items?scope=all&mode=image_random&offset={page_offset}&limit=3&seed=fixed"
+        ).get_json()["data"]["items"]
+        paged.extend(chunk)
+    assert paged[:len(image_items)] == image_items
 
     big_res = client.get("/api/library/items?scope=all&mode=big_files&offset=0&limit=20&min_mb=1")
     big_items = big_res.get_json()["data"]["items"]
