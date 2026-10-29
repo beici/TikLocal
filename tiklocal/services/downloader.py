@@ -39,6 +39,7 @@ from tiklocal.services.download_tools import (
     parse_progress,
     probe_binary,
     resolve_tool,
+    version_is_supported,
     yt_dlp_command,
 )
 from tiklocal.services.tiktok_downloader import (
@@ -85,7 +86,11 @@ GALLERY_MEDIA_SUFFIXES = frozenset(VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_E
 OUTPUT_ENCODINGS = tuple(
     dict.fromkeys(
         encoding
-        for encoding in (locale.getpreferredencoding(False), 'utf-8', 'cp936', 'gbk')
+        # UTF-8 first: yt-dlp writes stdout as UTF-8, and on a zh-CN console cp936
+        # often decodes those bytes without raising, producing a garbled path that
+        # Path.is_file() then cannot find (the download looked like it produced no
+        # file). The ANSI code pages stay as fallbacks for older bundled binaries.
+        for encoding in ('utf-8', locale.getpreferredencoding(False), 'cp936', 'gbk')
         if encoding
     )
 )
@@ -98,7 +103,21 @@ def _decode_output(raw: bytes) -> str:
             return raw.decode(encoding)
         except (UnicodeDecodeError, LookupError):
             continue
-    return raw.decode(OUTPUT_ENCODINGS[0] or 'utf-8', errors='replace')
+    # Nothing decodes cleanly. A single stray byte (a BOM fragment, a truncated
+    # multibyte sequence) used to decide the whole line by whichever encoding was
+    # tried first, so the same log line read differently depending on the order.
+    # Pick the candidate that mangles the fewest bytes instead.
+    best = ''
+    best_bad = None
+    for encoding in OUTPUT_ENCODINGS:
+        try:
+            candidate = raw.decode(encoding, errors='replace')
+        except LookupError:
+            continue
+        bad = candidate.count('\ufffd')
+        if best_bad is None or bad < best_bad:
+            best, best_bad = candidate, bad
+    return best
 
 
 def gallery_media_outputs(temp_dir: Path, log_file: Path, cookie_copy: Path | None) -> list[Path]:
@@ -491,9 +510,14 @@ class DownloadManager:
             "yt_dlp_available": bool(yt_dlp_path),
             "yt_dlp_path": yt_dlp_path or "",
             "yt_dlp_version": yt_dlp_version,
+            # A binary that is present but predates -S/-P fails every job with
+            # "no such option"; reporting it separately lets the UI say "upgrade"
+            # instead of "ready".
+            "yt_dlp_too_old": bool(yt_dlp_path) and not version_is_supported("yt-dlp", yt_dlp_version),
             "gallery_dl_available": bool(gallery_dl_path),
             "gallery_dl_path": gallery_dl_path or "",
             "gallery_dl_version": gallery_dl_version,
+            "gallery_dl_too_old": bool(gallery_dl_path) and not version_is_supported("gallery-dl", gallery_dl_version),
             "ffmpeg_available": bool(ffmpeg_path),
             "ffmpeg_path": ffmpeg_path or "",
         }
@@ -1668,8 +1692,15 @@ class DownloadManager:
             # encoding is not knowable from here (cp936 on a zh-CN console, utf-8
             # under PYTHONUTF8=1), and either hard-coded choice turned the other
             # case into mojibake paths whose outputs were then dropped.
+            # Ask the child for UTF-8 as well: a media root with Chinese characters
+            # otherwise comes back in the console code page and the destination
+            # lines stop matching real files.
+            env = dict(os.environ)
+            env.setdefault('PYTHONIOENCODING', 'utf-8')
+            env.setdefault('PYTHONUTF8', '1')
             process = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT,
                                bufsize=0, start_new_session=os.name == 'posix',
+                               env=env,
                                **NO_WINDOW_KWARGS)
             self._processes[job_id] = process
             return process

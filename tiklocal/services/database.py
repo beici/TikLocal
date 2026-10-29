@@ -2,6 +2,7 @@ import contextlib
 import datetime
 import hashlib
 import json
+import logging
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -9,6 +10,11 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 
 from tiklocal.services.search_text import normalize as normalize_search_text
+
+LOGGER = logging.getLogger(__name__)
+
+# UPSERT needs 3.24 and ROW_NUMBER() needs 3.25; both are used by the index writer.
+MINIMUM_SQLITE = (3, 25, 0)
 
 
 @dataclass(frozen=True)
@@ -19,7 +25,11 @@ class Migration:
 
 
 class DatabaseVersionError(RuntimeError):
-    """The database was written by a newer TikLocal than this build understands."""
+    """The database cannot be opened by this build.
+
+    Raised for a schema written by a newer TikLocal, and for a SQLite library
+    too old to run the queries this build issues.
+    """
 
 
 def _migrate_001_create_image_vectors(conn: sqlite3.Connection) -> None:
@@ -296,8 +306,20 @@ def _migrate_010_add_media_dimensions(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE media_items ADD COLUMN {name} {kind}")
 
 
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    ).fetchone() is not None
+
+
 def _migrate_011_simplify_media_vectors(conn: sqlite3.Connection) -> None:
     """Keep one vector per file; the model column decides which rows are current."""
+    if _table_exists(conn, 'media_vectors'):
+        # The schema_migrations bookmark can be lost while the schema survives (a
+        # partially restored backup, a manual cleanup). Without this guard the
+        # CREATE below raised "table media_vectors already exists", which is not one
+        # of the damaged-database markers, so the app refused to start forever.
+        return
     conn.execute("""
         CREATE TABLE media_vectors (
           uri TEXT PRIMARY KEY,
@@ -333,16 +355,23 @@ def _migrate_011_simplify_media_vectors(conn: sqlite3.Connection) -> None:
 
 def _migrate_012_add_video_frames(conn: sqlite3.Connection) -> None:
     """Keep sampled video vectors with their existing media record."""
-    conn.execute('ALTER TABLE media_vectors ADD COLUMN video_frames BLOB')
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(media_vectors)").fetchall()}
+    if 'video_frames' not in columns:
+        conn.execute('ALTER TABLE media_vectors ADD COLUMN video_frames BLOB')
 
 
 def _migrate_013_douyin_media_groups(conn: sqlite3.Connection) -> None:
     """Live-photo pairs and album membership for Douyin-style exports."""
-    conn.execute('ALTER TABLE media_items ADD COLUMN live_video_uri TEXT')
-    conn.execute('ALTER TABLE media_items ADD COLUMN album_key TEXT')
-    conn.execute('ALTER TABLE media_items ADD COLUMN album_index INTEGER')
-    conn.execute('ALTER TABLE media_items ADD COLUMN album_size INTEGER')
-    conn.execute('CREATE INDEX idx_media_items_album ON media_items(album_key, album_index)')
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(media_items)").fetchall()}
+    for name, kind in (
+        ("live_video_uri", "TEXT"),
+        ("album_key", "TEXT"),
+        ("album_index", "INTEGER"),
+        ("album_size", "INTEGER"),
+    ):
+        if name not in columns:
+            conn.execute(f'ALTER TABLE media_items ADD COLUMN {name} {kind}')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_album ON media_items(album_key, album_index)')
 
 
 def _migrate_014_index_media_items_mtime(conn: sqlite3.Connection) -> None:
@@ -381,7 +410,9 @@ def _migrate_015_add_search_text(conn: sqlite3.Connection) -> None:
     comparing the folded column keeps the filter inside SQL, which pagination
     needs; existing rows are backfilled here.
     """
-    conn.execute('ALTER TABLE media_items ADD COLUMN search_text TEXT')
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(media_items)").fetchall()}
+    if 'search_text' not in columns:
+        conn.execute('ALTER TABLE media_items ADD COLUMN search_text TEXT')
     rows = conn.execute('SELECT uri, filename, rel_path FROM media_items').fetchall()
     updates = [
         (normalize_search_text(f"{row['filename'] or ''} {row['rel_path'] or ''}"), row['uri'])
@@ -448,6 +479,16 @@ MIGRATIONS = [
     Migration(17, "index_capture_and_source", _migrate_017_index_capture_and_source),
 ]
 
+# Version numbers are the only identity a migration has: two branches that each add
+# Migration(18, …) would silently skip the second one (its version is already in
+# schema_migrations), and a fresh install would then be missing a schema change with
+# no error anywhere. Fail at import time instead.
+if [migration.version for migration in MIGRATIONS] != list(range(1, len(MIGRATIONS) + 1)):
+    raise RuntimeError(
+        'MIGRATIONS must be numbered 1..N without gaps or duplicates: '
+        f'{ [migration.version for migration in MIGRATIONS] }'
+    )
+
 
 class AppDatabase:
     def __init__(self, db_path: Path):
@@ -478,11 +519,34 @@ class AppDatabase:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 5000")
-        conn.execute("PRAGMA journal_mode = WAL")
+        # SQLite silently falls back to the rollback journal on filesystems without
+        # shared memory (SMB, some FUSE mounts) and only reports it in the return
+        # value. Losing WAL also loses the "-wal goes with the database" isolation the
+        # damaged-database path relies on, so say so instead of assuming.
+        journal = conn.execute("PRAGMA journal_mode = WAL").fetchone()
+        mode = str(journal[0]).lower() if journal and journal[0] is not None else ''
+        if mode != 'wal':
+            LOGGER.warning(
+                'SQLite could not enable WAL on %s (mode=%s): concurrent reads and '
+                'writes will be slower and the database should not live on a network '
+                'share.', self.db_path, mode or 'unknown',
+            )
         conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
     def migrate(self) -> None:
+        # The index writes use UPSERT (SQLite 3.24) and ROW_NUMBER() (3.25), but the
+        # migrations themselves only create tables: without this check an old
+        # libsqlite3 starts fine, then every index sync fails with a syntax error
+        # that the app swallows into "serving the previous index", so the library
+        # looks empty and nothing says why.
+        if sqlite3.sqlite_version_info < MINIMUM_SQLITE:
+            required = '.'.join(str(part) for part in MINIMUM_SQLITE)
+            raise DatabaseVersionError(
+                f'This build needs SQLite {required} or newer (found '
+                f'{sqlite3.sqlite_version}). Use a newer Python or a build that '
+                'links a newer libsqlite3.'
+            )
         with self.connect() as conn:
             conn.execute(
                 """
@@ -506,6 +570,19 @@ class AppDatabase:
                     f'{applied}, this build knows {latest_known}). Upgrade TikLocal or '
                     'start with a different instance directory.'
                 )
+            stored_names = {
+                int(row[0]): str(row[1])
+                for row in conn.execute('SELECT version, name FROM schema_migrations').fetchall()
+            }
+            for migration in MIGRATIONS:
+                stored_name = stored_names.get(migration.version)
+                if stored_name is not None and stored_name != migration.name:
+                    raise DatabaseVersionError(
+                        f'Schema version {migration.version} is recorded as '
+                        f'{stored_name!r} but this build calls it {migration.name!r}: '
+                        'the migration history was edited after it shipped. Restore the '
+                        'previous release or start with a fresh instance directory.'
+                    )
 
         for migration in MIGRATIONS:
             if self._is_applied(migration.version):

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from tiklocal.paths import get_thumbs_map_path, get_data_dir
 from tiklocal.services.library import LibraryService, VIDEO_EXTENSIONS
+from tiklocal.services.download_tools import resolve_tool
 from tiklocal.services.thumbnail import ThumbnailService
 
 
@@ -42,6 +43,16 @@ def generate_thumbnails(media_root: str | Path, overwrite: bool = False, limit: 
     if show_progress:
         print(f'Data directory: {get_data_dir()}')
         print(f'Found {len(videos)} videos; thumbnail directory: {service.thumb_dir}')
+    if videos and resolve_tool('ffmpeg') is None:
+        # Every poster needs ffmpeg; without it the run reported "failed: 5000"
+        # and still exited 0, which reads like a data problem instead of a
+        # missing tool.
+        message = ('ffmpeg not found: video thumbnails need ffmpeg. '
+                   'Install it (or `pip install imageio-ffmpeg`) and run again.')
+        print(message, file=sys.stderr)
+        stats['failed'] = len(videos[:limit] if limit > 0 else videos)
+        stats['missing_ffmpeg'] = True
+        return stats
     for index, path in enumerate(videos[:limit] if limit > 0 else videos, start=1):
         uri = library.get_relative_path(path)
         if not overwrite and service.cached_thumbnail(uri):

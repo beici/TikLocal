@@ -195,7 +195,14 @@ def parse_output_path(line: str) -> str:
 
 
 def error_line(line: str) -> str:
-    return line if "error:" in line.lower() else ""
+    lowered = line.lower()
+    # argparse's own wording for an unknown flag: the installed binary predates the
+    # options TikLocal passes (-S, -P, --http-timeout, --sleep-429). Saying which
+    # tool to upgrade is actionable; "no such option: -S" is not.
+    if 'no such option' in lowered or 'unrecognized arguments' in lowered:
+        return ('error: the download tool is too old for TikLocal '
+                '(upgrade yt-dlp / gallery-dl and try again)')
+    return line if "error:" in lowered else ""
 
 
 #: ``probe_binary`` spawns the tool, which costs 15-20 s on the first Windows
@@ -224,7 +231,7 @@ def probe_binary(command: str, *, refresh: bool = False) -> tuple[str | None, st
     # The first launch of a freshly installed tool can be slow on Windows.
     for timeout in (15, 20):
         try:
-            out = sp.check_output([*prefix, "--version"], text=True, timeout=timeout,
+            out = sp.check_output([*prefix, "--version"], text=True, encoding="utf-8", errors="replace", timeout=timeout,
                                   stderr=sp.STDOUT, **NO_WINDOW_KWARGS)
             lines = [line for line in (out or "").strip().splitlines() if line.strip()]
             result = (display, (lines[0] if lines else ""))
@@ -241,6 +248,40 @@ def probe_binary(command: str, *, refresh: bool = False) -> tuple[str | None, st
         return None, ""
     _PROBE_CACHE[key] = (now, display, "")
     return display, ""
+
+
+#: Command lines built by this module use options the tools only learned later:
+#: yt-dlp's -S/--format-sort (2022.03) and -P/--paths (2021.09), gallery-dl's
+#: --http-timeout/--sleep-429 (≈1.22). An older binary rejects the whole invocation
+#: with "no such option", so every job failed while the settings page said ready.
+MIN_TOOL_VERSIONS: dict[str, tuple[int, int, int]] = {
+    "yt-dlp": (2023, 1, 1),
+    "gallery-dl": (1, 22, 0),
+}
+
+
+def version_tuple(version: str) -> tuple[int, int, int] | None:
+    match = re.match(r"^\D*?(\d+(?:\.\d+)*)", str(version or "").strip())
+    if not match:
+        return None
+    parts: list[int] = []
+    for chunk in match.group(1).split(".")[:3]:
+        try:
+            parts.append(int(chunk))
+        except ValueError:
+            return None
+    while len(parts) < 3:
+        parts.append(0)
+    return parts[0], parts[1], parts[2]
+
+
+def version_is_supported(command: str, version: str) -> bool:
+    """False only when a version was read and it is below the documented minimum."""
+    minimum = MIN_TOOL_VERSIONS.get(command)
+    parsed = version_tuple(version)
+    if minimum is None or parsed is None:
+        return True
+    return parsed >= minimum
 
 
 def collect_gallery_outputs(temp_dir: Path, *, excluded: set[Path]) -> list[Path]:

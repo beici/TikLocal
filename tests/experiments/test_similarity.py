@@ -47,7 +47,7 @@ def similarity(tmp_path, monkeypatch):
         return response
 
     monkeypatch.setattr('tiklocal.experiments.similarity.embedding.requests.post', post)
-    monkeypatch.setattr('tiklocal.experiments.similarity.indexing.shutil.which', lambda _name: None)
+    monkeypatch.setattr('tiklocal.experiments.similarity.indexing.resolve_tool', lambda _name: None)
     monkeypatch.setenv('TIKLOCAL_EMBEDDING_API_KEY', 'test-key')
     monkeypatch.setenv('HOME', str(tmp_path))
     yaml_config = {'experiments': {'similarity': {'enabled': True}}, 'embedding': config}
@@ -322,7 +322,7 @@ def test_videos_prepare_distinct_frames_without_changing_the_cover(similarity, m
     before = cover.read_bytes()
     assert similarity.client.get('/experiments/similarity').status_code == 200
     assert similarity.store.count('video') == 0
-    monkeypatch.setattr('tiklocal.experiments.similarity.indexing.shutil.which', lambda name: name)
+    monkeypatch.setattr('tiklocal.experiments.similarity.indexing.resolve_tool', lambda name: [name])
     similarity.run_cli('--yes')
     assert similarity.store.count('video') == 1
     sent_colors = []
@@ -355,7 +355,7 @@ def make_video(path, colors, *, duration=1):
 @pytest.mark.skipif(not shutil.which('ffmpeg') or not shutil.which('ffprobe'), reason='ffmpeg and ffprobe required')
 def test_short_video_prepares_one_frame(similarity, monkeypatch):
     make_video(similarity.media / 'short.mp4', ['red'], duration=0.2)
-    monkeypatch.setattr('tiklocal.experiments.similarity.indexing.shutil.which', lambda name: name)
+    monkeypatch.setattr('tiklocal.experiments.similarity.indexing.resolve_tool', lambda name: [name])
     similarity.run_cli('--yes')
     assert len(similarity.wire.calls) == 4
     with similarity.store.database.connect() as conn:
@@ -374,7 +374,7 @@ def test_video_keeps_readable_frames_when_one_cannot_be_extracted(similarity, mo
                                                          auto_timestamp=auto_timestamp)
 
     monkeypatch.setattr(ThumbnailService, '_generate', flaky)
-    monkeypatch.setattr('tiklocal.experiments.similarity.indexing.shutil.which', lambda name: name)
+    monkeypatch.setattr('tiklocal.experiments.similarity.indexing.resolve_tool', lambda name: [name])
     similarity.run_cli('--yes')
     with similarity.store.database.connect() as conn:
         row = conn.execute('SELECT video_frames FROM media_vectors WHERE media_type = ?', ('video',)).fetchone()
@@ -431,7 +431,7 @@ def pending_video(similarity, monkeypatch):
         paths.extend(frames)
         return frames
 
-    monkeypatch.setattr('tiklocal.experiments.similarity.indexing.shutil.which', lambda name: name)
+    monkeypatch.setattr('tiklocal.experiments.similarity.indexing.resolve_tool', lambda name: [name])
     monkeypatch.setattr(ThumbnailService, 'sample_video_frames', sample)
     similarity.wire.calls.clear()
     return paths

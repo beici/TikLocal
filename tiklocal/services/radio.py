@@ -285,6 +285,12 @@ class RadioService:
                     ],
                     capture_output=True,
                     text=True,
+                    # ID3v2 tags are UTF-8/UTF-16 but ffprobe's JSON writer emits
+                    # UTF-8; decoding with the Windows ANSI code page raised
+                    # UnicodeDecodeError (a ValueError, swallowed below) and every
+                    # Chinese title fell back to the file name.
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=5,
                 )
                 if proc.returncode == 0:

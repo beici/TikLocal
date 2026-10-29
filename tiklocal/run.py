@@ -1,5 +1,6 @@
 import ipaddress
 import os
+import platform
 import sqlite3
 import sys
 import signal
@@ -351,7 +352,10 @@ Examples:
 
     # serve command
     serve_parser = subparsers.add_parser('serve', help='Start the server')
-    serve_parser.add_argument('--version', action='version', version=f'TikLocal {__version__}',
+    serve_parser.add_argument('--version', action='version',
+                              version=f'TikLocal {__version__}\n'
+                                      f'Python {platform.python_version()}, '
+                                      f'SQLite {sqlite3.sqlite_version}',
                               help='Print the version and exit')
     serve_parser.add_argument('media_root', nargs='?', help='Media root directory')
     serve_parser.add_argument('--host', default=None, help='Server bind address (default: 0.0.0.0)')
@@ -452,6 +456,10 @@ Examples:
             _fatal(f"Media directory is unavailable: {media_root}")
         print(f"Data directory: {resolve_data_dir(parser)}")
         stats = generate_thumbnails(media_path, overwrite=getattr(args, 'overwrite', False), limit=getattr(args, 'limit', 0), show_progress=True)
+        if stats.get('missing_ffmpeg'):
+            # Non-zero so a script that ignores stdout still notices the tool is
+            # missing instead of treating "failed: N" as a completed run.
+            raise SystemExit(2)
         # Exit after completion.
         return
 

@@ -39,7 +39,7 @@
 
   async function api(url, options = {}) {
     // 连接挂起时没有超时兜底，首屏会永远停在 loading，重试入口也不会出现。
-    const response = await fetch(url, options.signal ? options : { ...options, signal: AbortSignal.timeout(20000) });
+    const response = await fetch(url, options.signal ? options : { ...options, signal: tikTimeoutSignal(20000) });
     let payload = {};
     try {
       payload = await response.json();

@@ -1,9 +1,10 @@
 """Prepare vectors for photos and sampled video frames, then refresh photo groups."""
 
-import shutil
 import threading
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+from tiklocal.services.download_tools import resolve_tool
 
 from .embedding import EmbeddingClient, VectorStore, mean_vector
 from .groups import rebuild_photo_groups
@@ -13,7 +14,10 @@ SERVICE_FAILURE_LIMIT = 3
 
 
 def videos_supported() -> bool:
-    return shutil.which('ffmpeg') is not None and shutil.which('ffprobe') is not None
+    # ffmpeg alone is enough: frame sampling only shells out to ffmpeg, and the
+    # bundled imageio-ffmpeg wheel ships no ffprobe. Requiring both meant a plain
+    # `pip install imageio-ffmpeg` silently skipped every video.
+    return resolve_tool('ffmpeg') is not None
 
 
 class MediaIndexer:

@@ -112,8 +112,22 @@ class CollectionStore:
                     collections.append(normalized)
 
         collections.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+        # int() used to sit here unguarded: a file with "version": "2.0" raised
+        # ValueError past _read's handler, so /collections and every write answered
+        # 500 forever and the file was never quarantined or repaired.
+        try:
+            version = int(data.get("version"))
+        except (TypeError, ValueError):
+            version = COLLECTIONS_VERSION
+        if version > COLLECTIONS_VERSION:
+            # Saving would rebuild the payload from the v1 field list and silently
+            # drop whatever the newer release stored, so refuse instead of downgrading.
+            raise CollectionStoreCorrupt(
+                f"{self.store_path}: version {version} was written by a newer TikLocal "
+                f"(this build understands {COLLECTIONS_VERSION})"
+            )
         return {
-            "version": int(data.get("version") or COLLECTIONS_VERSION),
+            "version": version or COLLECTIONS_VERSION,
             "updated_at": _normalize_text(data.get("updated_at")) or _utc_now_iso(),
             "collections": collections,
         }

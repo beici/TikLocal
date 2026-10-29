@@ -606,3 +606,37 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] 空态图标尺寸在三处不一致（40/44/48px） | `home.css`、`library.css`、`download.css` | 视觉微调，等设计统一 |
 | [P3] `download.empty_title` 在筛选为空时语义不准 | `tiklocal/static/download_page_controller.js:470-500` | 文案类 |
 | [P3] `.collections-empty` 选择器无消费方 | `tiklocal/static/collections.css:60-80` | 无功能影响 |
+
+
+### 第 37 轮新增（28 条）
+
+| 描述 | 位置 | 为什么暂不修 |
+| --- | --- | --- |
+| [P3] `datetime.UTC`（3.11）未用，统一写 `datetime.timezone.utc` | `tiklocal/services/*.py` | 长写法在 3.10 上也正确，纯风格 |
+| [P3] `tomllib` 缺失时回落 `tomli`，而 3.10 已内置 | `tiklocal/app.py:72-100` | `pyproject` 要求 `>=3.10`，真正缺 `tomllib` 的是 3.9 |
+| [P3] Windows 无 tzdata 时 `zoneinfo` 回落 UTC | `tiklocal/services/radio.py` | 只在用户显式设时区时可见 |
+| [P3] `hashlib.file_digest`（3.11）未用，自己循环读块 | `tiklocal/services/thumbnail.py` | 兼容 3.10；实测差 <5% |
+| [P3] `Path.is_relative_to`（3.9）未用，手写前缀比较 | `tiklocal/web/media.py` | 可读性，非缺陷 |
+| [P3] yt-dlp 未用 `--print after_move:filepath`，仍靠解析 `[download] Destination` | `tiklocal/services/download_tools.py:yt_dlp_command` | 需 ≥2021.09 且重跑全部下载用例 |
+| [P3] gallery-dl 的 `--version` 只存首行，未解析 | `tiklocal/services/download_tools.py:probe_binary` | 版本号目前无消费方 |
+| [P3] ffmpeg 版本从不探测 | `tiklocal/services/downloader.py:probe_dependencies` | 只有 HDR/转码分支需要，失败时已有错误行 |
+| [P3] `imageio-ffmpeg` 未锁版本 | `pyproject.toml` | 二进制兼容性风险低 |
+| [P2] `-webkit-backdrop-filter` 缺失，Safari 上无毛玻璃 | `tiklocal/static/radio.css`、`library.css` | 视觉降级，需真机验证具体选择器 |
+| [P2] iOS 输入框 `font-size < 16px` 会触发页面自动放大 | `tiklocal/static/settings.css`、`search.css` | 需真机确认哪几个输入框 |
+| [P2] `crypto.subtle`/安全存储分支未覆盖旧浏览器 | `tiklocal/static/settings_page_controller.js:520-560` | 功能可选，失败已有 toast |
+| [P2] `url('')` 空背景会请求当前页 | `tiklocal/static/radio.css:126` | 已有 `background-image:none` 兜底 |
+| [P2] 空 `href="#"` 链接会跳回页首 | 多个模板 | 需逐页核对交互意图 |
+| [P3] TLS 证书 SAN 只含 `localhost`，不含 `127.0.0.1` | `tiklocal/tls.py` | 用户可用 `--host` 指定主机名 |
+| [P3] `100dvh` 在 iOS 15 上随地址栏抖动 | `tiklocal/static/flow.css` | 视觉问题，需真机 |
+| [P3] 未设 `text-size-adjust`，横屏字号跳变 | `tiklocal/static/input.css` | 视觉 |
+| [P2] `media_sources_store` 写 `version` 但 `load()` 不校验 | `tiklocal/services/media_sources_store.py:94-95` | 与第 34 轮 O3-2 同源，需统一 `StoreVersionError` 改造 |
+| [P2] `download_config.json` 无版本号 | `tiklocal/services/downloader.py:356-367` | 同上 |
+| [P2] `download_jobs.json` 无版本号 | `tiklocal/services/downloader.py:997-1026` | 同上 |
+| [P3] 每条迁移单独事务，017 的 `ANALYZE` 在主事务之外 | `tiklocal/services/database.py:migrate` | 迁移已幂等，失败可重入 |
+| [P3] `PRAGMA user_version` 未使用 | `tiklocal/services/database.py` | `schema_migrations` 已足够 |
+| [P3] `sqlite3.connect(timeout=…)` 与 `busy_timeout` 双份设置 | `tiklocal/services/database.py:_open_connection` | 两处同值，无冲突 |
+| [P3] `schema_migrations.applied_at` 存本地 naive 时间 | `tiklocal/services/database.py:531` | 无读取方 |
+| [P2] 设置页「关于」不显示 Python/SQLite/yt-dlp 版本 | `tiklocal/templates/settings.html` | 需新增 UI 与 i18n 键 |
+| [P3] README 未写最低 SQLite 版本 | `README.md` | 与 `MINIMUM_SQLITE` 需同步维护 |
+| [P3] `probe_binary` 的 60 s TTL 让「刚装完工具」最长 1 分钟不可见 | `tiklocal/services/download_tools.py:203` | 有 `refresh=True` 参数 |
+| [P3] `output.css` 需手工重建，容易忘记 | `package.json` | AGENTS.md 已写明流程 |

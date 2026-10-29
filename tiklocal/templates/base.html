@@ -26,6 +26,18 @@
     {% if auth_enabled %}<meta name="csrf-token" content="{{ csrf_token() }}">{% endif %}
     <script>
       window.__TIKLOCAL_I18N__ = {{ i18n_js|tojson }};
+      // AbortSignal.timeout() only exists from iOS 16 on. Calling it on an older
+      // Safari throws a TypeError while the fetch() argument list is evaluated,
+      // which surfaces as "network error" for every request that used a timeout.
+      // Page controllers run before base.js, so the shim has to live here.
+      window.tikTimeoutSignal = function (ms) {
+        if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+          try { return AbortSignal.timeout(ms); } catch (error) {}
+        }
+        var controller = new AbortController();
+        setTimeout(function () { controller.abort(); }, ms);
+        return controller.signal;
+      };
     </script>
     <script src="{{ static_asset('i18n.js') }}"></script>
     <link rel="stylesheet" type="text/css" href="{{ static_asset('output.css') }}">

@@ -461,7 +461,7 @@
         const offset = Number(cursor?.offset || 0);
         const url = `/api/library/items?${apiParams(offset).toString()}`;
         // 没有超时兜底时，连接挂起会让列表永远停在「加载中…」，重试按钮也不会出现。
-        const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+        const res = await fetch(url, { signal: tikTimeoutSignal(20000) });
         const data = await res.json();
         if (!data?.success) throw new Error('request failed');
 

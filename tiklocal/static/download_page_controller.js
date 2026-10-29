@@ -27,7 +27,7 @@
     // catch/backoff never ran. A timeout turns the hang into a retryable error.
     const response = await fetch(path, {
       headers: { 'Content-Type': 'application/json' },
-      signal: options.signal || AbortSignal.timeout(20000),
+      signal: options.signal || tikTimeoutSignal(20000),
       ...options,
     });
     let payload = null;
@@ -619,7 +619,7 @@
         // With delete_files the server moves every file to the trash first; a
         // selection of large videos outlives the default 20 s, and aborting would
         // report failure after the files were already gone.
-        signal: AbortSignal.timeout(120000),
+        signal: tikTimeoutSignal(120000),
       });
       const deleted = data.deleted || 0;
       const moved = (data.files && data.files.moved) || 0;
@@ -994,7 +994,7 @@
           // Queueing writes the whole job list to disk once per URL; a few hundred
           // URLs outlive the default 20 s, and aborting would report failure while
           // the server kept creating jobs.
-          signal: AbortSignal.timeout(180000),
+          signal: tikTimeoutSignal(180000),
         });
         const failed = Array.isArray(data.failed) ? data.failed.length : 0;
         const queued = Number(data.queued) || 0;

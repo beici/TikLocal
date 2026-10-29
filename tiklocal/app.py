@@ -71,32 +71,13 @@ from tiklocal import __version__
 
 
 def get_app_version():
-    """Return the app version, reading pyproject.toml during development."""
-    # Prefer pyproject.toml when running from a development checkout.
-    pyproject_path = Path(__file__).parent.parent / 'pyproject.toml'
-    if pyproject_path.exists():
-        try:
-            import tomllib
-        except ImportError:
-            try:
-                import tomli as tomllib
-            except ImportError:
-                tomllib = None
+    """Return the app version.
 
-        if tomllib:
-            try:
-                with open(pyproject_path, 'rb') as f:
-                    data = tomllib.load(f)
-                    return data.get('tool', {}).get('poetry', {}).get('version') or __version__
-            except Exception:
-                pass
-
-    # Installed builds read their package metadata.
-    try:
-        return version("tiklocal")
-    except PackageNotFoundError:
-        # Never claim a release that does not exist on PyPI.
-        return __version__
+    ``tiklocal.__version__`` already prefers the checkout's pyproject.toml and
+    falls back to the installed metadata, so this is the same value the CLI
+    prints — one source, no tomllib (which Python 3.10 does not ship).
+    """
+    return __version__
 
 
 app_version = get_app_version()

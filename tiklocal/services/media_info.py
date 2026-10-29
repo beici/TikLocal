@@ -49,11 +49,16 @@ def probe_media_dims(library_service, name: str, media_type: str) -> tuple[int |
                 *probe,
                 '-v', 'error',
                 '-select_streams', 'v:0',
-                '-show_entries', 'stream=width,height:stream_side_data=rotation',
+                # '-show_streams' rather than '-show_entries stream=…:stream_side_data=…':
+                # 'stream_side_data' is not a section ffprobe knows, so the whole call
+                # exited non-zero and this branch never ran (every video paid for an
+                # ffprobe plus an ffmpeg banner). The display matrix lives inside the
+                # stream object as side_data_list.
+                '-show_streams',
                 '-of', 'json',
                 str(target),
             ]
-            proc = sp.run(cmd, capture_output=True, text=True, timeout=8)
+            proc = sp.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=8)
             if proc.returncode == 0:
                 payload = json.loads(proc.stdout or '{}')
                 streams = payload.get('streams') or []
@@ -61,7 +66,17 @@ def probe_media_dims(library_service, name: str, media_type: str) -> tuple[int |
                 width = int(stream.get('width') or 0)
                 height = int(stream.get('height') or 0)
                 if width > 0 and height > 0:
-                    rotation = _rotation_degrees(proc.stdout or '')
+                    rotation = 0
+                    for entry in stream.get('side_data_list') or []:
+                        if not isinstance(entry, dict) or entry.get('rotation') is None:
+                            continue
+                        try:
+                            rotation = int(round(float(entry['rotation']))) % 360
+                        except (TypeError, ValueError):
+                            rotation = 0
+                        break
+                    if not rotation:
+                        rotation = _rotation_degrees(proc.stdout or '')
                     return _apply_rotation(width, height, rotation)
         except Exception:
             pass

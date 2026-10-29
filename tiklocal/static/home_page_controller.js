@@ -8,7 +8,7 @@
 
   function fetchJson(url) {
     const options = { headers: { Accept: 'application/json' } };
-    if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) options.signal = AbortSignal.timeout(15000);
+    options.signal = tikTimeoutSignal(15000);
     return fetch(url, options).then(function (response) {
       return response.json().catch(function () { return null; }).then(function (payload) {
         // A 200 carrying {success: false} is still a failure. fetchJson used to look

@@ -613,7 +613,11 @@ class ThumbnailService:
                     # plain frame instead of losing the poster entirely.
                     _FILTER_SUPPORT['tonemap'] = False
                     hdr_filter = None
-                    cmd[-3] = "scale=-2:'min(ih,640)'"
+                    # The filter sits at -4 (the tail is '-vf', filter, '-q:v',
+                    # '3', output). Writing -3 overwrote '-q:v', so the retry put
+                    # two stray positionals in front of the output path and ffmpeg
+                    # failed with "Unable to find a suitable output format".
+                    cmd[-4] = "scale=-2:'min(ih,640)'"
                     remaining = deadline - time.monotonic()
                     if remaining <= 1.0:
                         break

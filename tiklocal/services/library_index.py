@@ -1320,9 +1320,15 @@ class LibraryIndexer:
         else:
             return None
         existing = (time_states or {}).get(uri) or {}
+        # `or -1` treated a real 0 as "missing": a 0-byte file and an mtime of 0.0
+        # (files unpacked from an archive) never matched, so every scan reopened them.
+        stored_size = existing.get("size_bytes")
+        stored_mtime = existing.get("mtime")
         unchanged = (
-            int(existing.get("size_bytes") or -1) == int(stat.st_size)
-            and float(existing.get("mtime") or -1) == float(stat.st_mtime)
+            stored_size is not None
+            and stored_mtime is not None
+            and int(stored_size) == int(stat.st_size)
+            and float(stored_mtime) == float(stat.st_mtime)
             and _capture_is_current(existing)
         )
         capture = {

@@ -628,7 +628,7 @@
       let data = null;
       try {
         const res = await fetch(`/api/media/info?uri=${encodeURIComponent(display.name)}`, {
-          signal: AbortSignal.timeout(20000),
+          signal: tikTimeoutSignal(20000),
         });
         const payload = await res.json();
         if (!res.ok || !payload?.success) throw new Error(payload?.error || `HTTP ${res.status}`);
@@ -1627,7 +1627,7 @@
           // A hung request (sleeping NAS, stalled server) must fail loudly: the
           // feed has no other way out of isLoading().
           const res = await fetch(`/api/feed/mix?${query.toString()}`, {
-            signal: AbortSignal.timeout(20000),
+            signal: tikTimeoutSignal(20000),
           });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();

@@ -103,7 +103,7 @@
 
   async function requestJson(url, options = {}) {
     // 无超时兜底时设置页会一直转圈（尤其大库扫描期间），用户只能整页刷新。
-    const response = await fetch(url, options.signal ? options : { ...options, signal: AbortSignal.timeout(20000) });
+    const response = await fetch(url, options.signal ? options : { ...options, signal: tikTimeoutSignal(20000) });
     const payload = await readJson(response);
     if (!response.ok || payload.success === false) {
       const message = typeof payload.error === 'object' ? payload.error?.message : payload.error;
@@ -113,7 +113,7 @@
   }
 
   async function requestForm(url, formData) {
-    const response = await fetch(url, { method: 'POST', body: formData, signal: AbortSignal.timeout(30000) });
+    const response = await fetch(url, { method: 'POST', body: formData, signal: tikTimeoutSignal(30000) });
     const payload = await readJson(response);
     if (!response.ok || payload.success === false) throw new Error(payload.error || T('settings.request_failed'));
     return payload;
@@ -689,7 +689,7 @@
       // A folder added for the first time is scanned before the response, so the
       // default 20 s budget is too small for a large library; a cold NAS scan can
       // outlast even this, hence the timeout-specific message below.
-      signal: AbortSignal.timeout(180000),
+      signal: tikTimeoutSignal(180000),
     };
     const url = editing
       ? '/api/library/sources/' + encodeURIComponent(editingSourceId)
@@ -722,7 +722,7 @@
         try {
           const payload = await requestJson('/api/library/sources/' + encodeURIComponent(source.id), {
             method: 'DELETE',
-            signal: AbortSignal.timeout(120000),
+            signal: tikTimeoutSignal(120000),
           });
           applyMediaSourceResult(payload);
         } catch (error) {
@@ -752,7 +752,7 @@
         // "scan failed" because the catch threw the error away.
         const payload = await requestJson('/api/library/sync', {
           method: 'POST',
-          signal: AbortSignal.timeout(180000),
+          signal: tikTimeoutSignal(180000),
         });
         await loadStats();
         const data = payload.data || {};
@@ -1027,7 +1027,7 @@
       // page and the ones most likely to hang. Without a deadline the caller's
       // finally never ran and the row stayed "syncing" with a disabled button until
       // the page was reloaded.
-      signal: AbortSignal.timeout(60000),
+      signal: tikTimeoutSignal(60000),
     });
     const payload = await response.json().catch(() => ({}));
     return { status: response.status, payload };
@@ -1182,7 +1182,7 @@
           body: JSON.stringify({ items: entries }),
           // Every author is fetched over the network; without a deadline the
           // caller's finally never ran and the button stayed disabled on "syncing".
-          signal: AbortSignal.timeout(120000),
+          signal: tikTimeoutSignal(120000),
         });
         payload = await response.json();
       } catch (_) {
