@@ -226,7 +226,7 @@ class RadioService:
         }
 
     def collect_candidates(self) -> list[RadioCandidate]:
-        favs = self.favorites.load()
+        favs = self.favorites.read_only()
         candidates: list[RadioCandidate] = []
         for record in self.media_index.records(media_type='audio'):
             try:

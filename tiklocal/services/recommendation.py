@@ -109,7 +109,9 @@ class RecommendService:
         if not candidates:
             return []
 
-        favs = self.library.canonicalize_many(self.favorites.load())
+        # read_only() reuses the parse until favorites.json changes; load() would
+        # parse the whole file here and again in reasons_for() for one page.
+        favs = self.favorites.read_only()
         names = [item['uri'] for item in candidates]
         profiles = self.activity_store.profiles_for(names) if self.activity_store else {}
         dimension_scores = self.activity_store.dimension_scores() if self.activity_store else {}
@@ -223,7 +225,7 @@ class RecommendService:
             if 0 < float(item.get('mtime_ts') or 0) <= cutoff
         ]
         profiles = self.activity_store.profiles_for(names) if self.activity_store else {}
-        favs = self.favorites.load()
+        favs = self.favorites.read_only()
         rng = random.Random(seed) if seed else random
         keyed = []
         for name in names:
@@ -252,7 +254,7 @@ class RecommendService:
         """Return a short, user-facing explanation for each selected item."""
         profiles = self.activity_store.profiles_for(uris) if self.activity_store else {}
         dimension_scores = self.activity_store.dimension_scores() if self.activity_store else {}
-        favorites = self.favorites.load()
+        favorites = self.favorites.read_only()
         now = datetime.datetime.now().timestamp()
         reasons: dict[str, str] = {}
         for uri in uris:

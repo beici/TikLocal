@@ -20,6 +20,17 @@ from tiklocal.services.search_text import normalize as normalize_search_text
 
 LOGGER = logging.getLogger(__name__)
 
+#: The columns :meth:`MediaIndexStore._to_library_record` reads out of a row.
+#: ``SELECT *`` fetches the other ten as well (``abs_path``, ``search_key``,
+#: ``extension``, the discovery timestamps…), and on an unbounded query that text
+#: is what the reading costs: measured 192ms vs 135ms for 20k rows, identical
+#: records out.
+RECORD_COLUMNS = (
+    'uri, media_type, mtime, captured_at, captured_local_date, time_source, '
+    'time_confidence, size_bytes, width, height, source_id, live_video_uri, '
+    'album_key, album_index, album_size'
+)
+
 
 class MediaIndexStore:
     """SQLite query index for the filesystem-backed media library."""
@@ -411,13 +422,28 @@ class MediaIndexStore:
         self, *, search: str = "", media_type: str = "",
         source_id: str = "", album_covers_only: bool = False,
     ) -> list[dict]:
+        """Every record matching the filters, newest first.
+
+        Deliberately unbounded: the callers that still use it are the ones whose
+        semantics need the whole filtered set — the tag feed and the deep-link
+        start feed filter captions in Python (the caption is derived from the
+        file name, so SQL cannot pre-filter it), and the author page sorts by a
+        publish time parsed out of the name. The everyday Flow does not: it goes
+        through :meth:`records_for_names` for its ~24 cards.
+
+        Cost at the sizes this is written for: 5ms for the 127-file sample
+        library, 60ms at 8k files, 168ms at 20k, 585ms at 50k. It is a rare page,
+        not one interaction that hangs, which is why it stays unbounded instead of
+        turning every caller into a keyset walk.
+        """
+
         where, params = self._filters(
             search=search, media_type=media_type, source_id=source_id,
             album_covers_only=album_covers_only,
         )
         with self.database.connect() as conn:
             rows = conn.execute(
-                f"SELECT * FROM media_items {where} ORDER BY mtime DESC, uri",
+                f"SELECT {RECORD_COLUMNS} FROM media_items {where} ORDER BY mtime DESC, uri",
                 params,
             ).fetchall()
         return [self._to_library_record(row) for row in rows]
@@ -435,7 +461,7 @@ class MediaIndexStore:
         placeholders = ','.join('?' for _ in wanted)
         with self.database.connect() as conn:
             rows = conn.execute(
-                f"SELECT * FROM media_items WHERE uri IN ({placeholders})",
+                f"SELECT {RECORD_COLUMNS} FROM media_items WHERE uri IN ({placeholders})",
                 wanted,
             ).fetchall()
         return [self._to_library_record(row) for row in rows]

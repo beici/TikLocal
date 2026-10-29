@@ -206,7 +206,9 @@ def register_library_routes(
         if collection_id:
             uris = collection_store.list_item_uris(collection_id, newest_first=True)
         elif favorites_only:
-            uris = favorite_service.load()
+            # read_only() reuses the mtime-cached parse; page() only enumerates
+            # the set (dict.fromkeys) and never mutates it.
+            uris = favorite_service.read_only()
         page = media_index.page(
             mode=mode, seed=seed, search=search, month=month,
             min_size=min_mb * 1024 * 1024 if mode == 'big_files' else 0,

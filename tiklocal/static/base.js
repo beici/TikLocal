@@ -146,54 +146,8 @@ window.addEventListener('pageshow', (event) => {
   document.body.classList.remove('app-nav-menu-open');
 });
 
-// 会话过期（30 天到期，或 `tiklocal auth set-password` 把 revision 加一）之后，
-// 每个请求都只拿到 401 JSON，页面静默失灵、必须手动刷新才会被门禁送回登录页。
-// 在这里统一把 401 变成一次跳转，页面自己的 catch 分支照旧执行也不会卡住。
-(() => {
-  const nativeFetch = window.fetch?.bind(window);
-  if (!nativeFetch) return;
-  window.fetch = async (...args) => {
-    const response = await nativeFetch(...args);
-    if (response.status === 401 && !window.__tiklocalRedirecting) {
-      const target = `${window.location.pathname}${window.location.search}`;
-      if (!window.location.pathname.startsWith('/login')) {
-        window.__tiklocalRedirecting = true;
-        // The latch exists to stop one redirect per request in a burst. It used to be
-        // released only by `pageshow`, so a navigation that never happened (a pending
-        // download blocking it, Esc pressed at the wrong moment) left every later 401
-        // ignored and the page silently dead. Release it on a timer too.
-        window.setTimeout(() => { window.__tiklocalRedirecting = false; }, 3000);
-        window.location.href = `/login?next=${encodeURIComponent(target)}`;
-      }
-    } else if (response.status === 403) {
-      // A second tab logged in, which rotates the session's CSRF token: this tab's
-      // pages still carry the old one in their <meta>, so every write answered 403
-      // forever (and even the logout form landed on the 403 page). Reload once to
-      // pick up the new token; the storage latch keeps a broken token from looping.
-      try {
-        const payload = await response.clone().json();
-        if (payload && payload.code === 'csrf') {
-          const KEY = 'tiklocal:csrf-reloaded-at';
-          const last = Number(window.sessionStorage.getItem(KEY) || 0);
-          if (Date.now() - last > 10000) {
-            window.sessionStorage.setItem(KEY, String(Date.now()));
-            window.location.reload();
-          }
-        }
-      } catch (error) {
-        // Not JSON (a proxied error page): leave the response to the caller.
-      }
-    }
-    return response;
-  };
-  // The latch stops a burst of 401s from firing one redirect per request, but nothing
-  // ever released it: when the navigation did not happen (offline, blocked, a download
-  // took over), every later 401 was ignored and the page sat on empty states until a
-  // manual refresh. A bfcache restore means the page is live again, so release it.
-  window.addEventListener('pageshow', () => {
-    window.__tiklocalRedirecting = false;
-  });
-})();
+// 会话失效（401）与 CSRF 轮转（403）的统一处理在 static/session_guard.js：它必须比
+// 任何页面控制器先执行，所以由 <head> 加载，不能留在这个 </body> 前的脚本里。
 
 // 退出登录只清了服务端 cookie，浏览器里还留着上一个账号的收听记录、最近曲目与上次
 // 播放的电台（`radio_position` / `radio_recent_tracks` / `radio_station` 存的是媒体库

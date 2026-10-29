@@ -49,6 +49,8 @@
     <script src="{{ static_asset('page_transitions.js') }}"></script>
     <script src="{{ static_asset('retire_pwa.js') }}"></script>
     {% if auth_enabled %}<script src="{{ static_asset('csrf_fetch.js') }}"></script>{% endif %}
+    {# 必须在所有页面控制器之前执行：控制器在 <body> 里立刻发首屏请求，401 得先被接住。 #}
+    <script src="{{ static_asset('session_guard.js') }}"></script>
     <link rel="stylesheet" href="{{ static_asset('base.css') }}">
     {% block extra_head %}{% endblock %}
     <link rel="stylesheet" type="text/css" href="{{ static_asset('app_navigation.css') }}">

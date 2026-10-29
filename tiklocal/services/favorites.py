@@ -35,6 +35,20 @@ class FavoriteService:
     def load(self) -> set[str]:
         return self.library_service.canonicalize_many(self._read_raw(self.db_path))
 
+    def read_only(self) -> set[str]:
+        """The current favorites, reused until ``favorites.json`` changes.
+
+        ``load()`` parses and canonicalizes the whole file on every call, which is
+        right for a read-modify-write but wasteful for callers that only ask
+        "is this one a favorite?": one ``/flow`` request asked twice (the picker and
+        the reason builder) and the radio page once more. At 10k favorites that was
+        42ms of URI parsing per feed page.
+
+        The returned set must not be mutated; use :meth:`toggle` or
+        :meth:`set_favorite` to change anything.
+        """
+        return self._load_cached()
+
     def save(self, favorites: set[str]) -> None:
         # Callers hand in canonical URIs (load() canonicalizes and _save_state adds a
         # canonical key), so normalizing every entry again only doubled the cost of
@@ -69,9 +83,9 @@ class FavoriteService:
     def _load_cached(self) -> set[str]:
         """Canonical favorites, reused until favorites.json changes.
 
-        is_favorite() asked for one boolean and paid for a full read plus a
-        canonicalize of every entry; the library page asked once per card, so a
-        10k-favorite library ran 10k URI parses to draw one page.
+        The stamp is the file's own mtime+size, so a write from another process
+        invalidates it without any cross-process signalling. ``save()`` clears it
+        explicitly for this process.
 
         The returned set is read-only: callers must not mutate it.
         """

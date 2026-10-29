@@ -375,8 +375,9 @@ def register_settings_routes(
 
         index = safe(media_index.stats, {}) or {}
         cache = safe(thumbnail_service.cache_stats, {}) or {}
-        # favorite_service.load() returns a set, not a list.
-        favorites = safe(favorite_service.load, set()) or set()
+        # read_only() returns a set too, and reuses the mtime-cached parse; this
+        # endpoint fires on every settings page load.
+        favorites = safe(favorite_service.read_only, set()) or set()
         return {
             'videos': index.get('videos', 0),
             'images': index.get('images', 0),
