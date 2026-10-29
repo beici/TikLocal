@@ -17,6 +17,7 @@ from tiklocal.i18n import t
 from tiklocal.services.embedded_metadata import read_embedded_generation
 from tiklocal.services.library import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from tiklocal.services.media_info import probe_media_duration
+from tiklocal.services.thumbnail import ThumbnailBusy
 from tiklocal.web import json_body
 from tiklocal.web.media_payloads import media_urls, post_date_of
 
@@ -792,7 +793,12 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         # overwrite=True: without it generate_thumbnail() sees the existing poster,
         # decides it is fresh and returns it, so the chosen frame was silently
         # dropped while the response claimed success.
-        success = thumbnail_service.generate_thumbnail(name, timestamp=timestamp, overwrite=True)
+        try:
+            success = thumbnail_service.generate_thumbnail(name, timestamp=timestamp, overwrite=True)
+        except ThumbnailBusy:
+            # The server is already decoding as much as it can carry; the file is
+            # fine and the same click works a moment later.
+            return {'success': False, 'error': t('detail.error.thumbnail_busy')}, 503
 
         if success:
              return {'success': True, 'url': f"{media_urls(name)['thumb_url']}&v={time.time_ns()}"}

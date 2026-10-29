@@ -200,3 +200,62 @@ def test_successful_generation_clears_an_earlier_failure_marker(tmp_path, monkey
     Image.new('RGB', (64, 64), 'red').save(tmp_path / 'photo.jpg')
     assert service.generate_thumbnail('photo.jpg') is not None
     assert not service._failure_path('photo.jpg').exists()
+
+def test_a_full_decode_queue_serves_the_placeholder_without_blacklisting_the_file(tmp_path, monkeypatch):
+    # /thumb used to park a waitress worker on the generate semaphore for as long as
+    # the in-flight decodes took: eight cold tiles were enough to fill all eight
+    # threads and every other request (JSON included) queued behind them. It now gives
+    # up after a bounded wait and answers with the placeholder, and the file must NOT
+    # be marked failed: one unlucky queue would hide a good picture for the whole TTL.
+    from tiklocal.services import thumbnail as thumbnail_module
+    from tiklocal.services.thumbnail import ThumbnailBusy, ThumbnailService
+
+    (tmp_path / 'clip.mp4').write_bytes(b'video')
+    service = ThumbnailService(tmp_path)
+    service.thumb_dir = tmp_path / 'cache'
+    service.thumb_dir.mkdir()
+
+    slots = thumbnail_module._GENERATE_SLOTS
+    taken = 0
+    while slots.acquire(timeout=0):
+        taken += 1
+    monkeypatch.setattr(thumbnail_module, 'GENERATE_SLOT_WAIT_SEC', 0.01)
+    try:
+        assert taken >= 1
+        with pytest.raises(ThumbnailBusy):
+            service.generate_thumbnail('clip.mp4')
+        path, mimetype = service.get_thumbnail('clip.mp4')
+    finally:
+        for _ in range(taken):
+            slots.release()
+
+    assert path == service.placeholder
+    assert mimetype == 'image/png'
+    assert not service._failure_path('clip.mp4').exists()
+
+
+def test_a_full_queue_on_the_image_path_is_not_swallowed_as_a_decode_failure(tmp_path, monkeypatch):
+    # _generate_image guards the decode with a broad `except Exception` so one broken
+    # file cannot fail the grid; Busy must pass through it, otherwise a full queue
+    # would be reported as "this image is corrupt" and blacklisted.
+    from tiklocal.services import thumbnail as thumbnail_module
+    from tiklocal.services.thumbnail import ThumbnailBusy, ThumbnailService
+
+    Image.new('RGB', (64, 64), 'navy').save(tmp_path / 'photo.png')
+    service = ThumbnailService(tmp_path)
+    service.thumb_dir = tmp_path / 'cache'
+    service.thumb_dir.mkdir()
+
+    slots = thumbnail_module._GENERATE_SLOTS
+    taken = 0
+    while slots.acquire(timeout=0):
+        taken += 1
+    monkeypatch.setattr(thumbnail_module, 'GENERATE_SLOT_WAIT_SEC', 0.01)
+    try:
+        with pytest.raises(ThumbnailBusy):
+            service.generate_thumbnail('photo.png')
+    finally:
+        for _ in range(taken):
+            slots.release()
+
+    assert not service._failure_path('photo.png').exists()

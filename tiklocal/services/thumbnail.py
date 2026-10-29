@@ -26,6 +26,14 @@ _FAILURE_LOG_SEEN: set[str] = set()
 _FAILURE_LOG_LOCK = threading.Lock()
 _FAILURE_LOG_LIMIT = 20
 
+# A full decode queue is normal on a cold grid, so a busy skip is logged once per
+# interval rather than once per tile; the counter says how many were swallowed so
+# "some tiles stayed grey" can be told apart from "the decoder is broken".
+_BUSY_LOG_LOCK = threading.Lock()
+_BUSY_LOG_INTERVAL_SEC = 30.0
+_BUSY_LOG_LAST = 0.0
+_BUSY_LOG_SKIPPED = 0
+
 #: How long a video frame extraction may take before the request gives up.
 FFMPEG_TIMEOUT_SEC = 30
 # One poster may need a duration probe, a colour-transfer probe and up to four
@@ -79,6 +87,24 @@ _BIG_IMAGE_SLOT = threading.BoundedSemaphore(1)
 #: the caller holds its per-output lock, so a large value also blocks *other*
 #: tiles that hash to the same lock: keep it well under a request timeout.
 _BIG_IMAGE_WAIT_SEC = 20.0
+
+#: How long a request waits for one of ``_GENERATE_SLOTS`` before serving a
+#: placeholder instead. waitress runs 8 threads and there are at most four slots,
+#: so an unbounded wait parked every request thread behind one slow decode: the
+#: page froze and so did the JSON endpoints that have nothing to do with
+#: thumbnails. Long enough for a cold photo (tens of milliseconds) or a video
+#: frame (one to three seconds), short enough that a wedged decoder costs seconds.
+GENERATE_SLOT_WAIT_SEC = 5.0
+
+
+class ThumbnailBusy(Exception):
+    """A decode slot did not free up in time; the file itself is fine.
+
+    Deliberately *not* a generation failure: ``get_thumbnail`` writes a failure
+    marker that hides the tile for an hour, so one unlucky queue used to blank a
+    perfectly good picture. Callers serve a placeholder and let the next request
+    try again.
+    """
 
 #: `+=` is not atomic: two threads could build the same temporary name, and the
 #: loser's replace would publish the other frame as its own thumbnail.
@@ -350,7 +376,15 @@ class ThumbnailService:
             stale = self._stale_thumbnail(uri)
             return (stale, 'image/jpeg') if stale else (self.placeholder, 'image/png')
         try:
-            generated = self.generate_thumbnail(uri)
+            try:
+                generated = self.generate_thumbnail(uri)
+            except ThumbnailBusy:
+                # Every decode slot is busy. Hold the worker no longer than the
+                # bounded wait and answer now: no failure marker, so the next
+                # request retries instead of showing grey for the whole TTL.
+                self._log_busy(uri)
+                stale = self._stale_thumbnail(uri)
+                return (stale, 'image/jpeg') if stale else (self.placeholder, 'image/png')
             if generated:
                 return generated, 'image/jpeg'
             self._mark_failure(uri)
@@ -424,6 +458,28 @@ class ThumbnailService:
             'found' if resolve_tool('ffmpeg') else 'missing',
             'found' if resolve_tool('ffprobe') else 'missing',
         )
+
+    def _log_busy(self, _uri: str) -> None:
+        """Say once per interval that tiles were dropped because the queue was full.
+
+        Not a failure of any file, so it must not reuse the per-file failure log:
+        the point of this line is that a grey tile can be explained by load.
+        """
+        global _BUSY_LOG_LAST, _BUSY_LOG_SKIPPED
+        now = time.monotonic()
+        with _BUSY_LOG_LOCK:
+            if now - _BUSY_LOG_LAST < _BUSY_LOG_INTERVAL_SEC:
+                _BUSY_LOG_SKIPPED += 1
+                return
+            swallowed = _BUSY_LOG_SKIPPED
+            _BUSY_LOG_LAST = now
+            _BUSY_LOG_SKIPPED = 0
+        logger.warning(
+            'thumbnail queue full: waited %gs for a decode slot, served the placeholder%s',
+            GENERATE_SLOT_WAIT_SEC,
+            f' ({swallowed} more tiles in the same burst)' if swallowed else '',
+        )
+
     def _clear_failure(self, uri: str) -> None:
         """A successful generation invalidates an earlier failure marker.
 
@@ -614,8 +670,15 @@ class ThumbnailService:
         # PNG park every generate slot on the big-image semaphore and stall the grid.
         if video_path.suffix.lower() in IMAGE_EXTENSIONS:
             return self._generate_image(video_path, output_path)
-        with _GENERATE_SLOTS:
+        # A request thread may only wait so long for a slot: every worker parked
+        # here is one that cannot answer anything else, and a cold grid issued more
+        # tiles than there are slots and threads together.
+        if not _GENERATE_SLOTS.acquire(timeout=GENERATE_SLOT_WAIT_SEC):
+            raise ThumbnailBusy(f'{GENERATE_SLOT_WAIT_SEC:g}s wait for a generate slot')
+        try:
             return self._render(video_path, output_path, timestamp, auto_timestamp=auto_timestamp)
+        finally:
+            _GENERATE_SLOTS.release()
 
     def _render(self, video_path: Path, output_path: Path, timestamp: float | None, *, auto_timestamp: bool) -> bool:
         suffix = video_path.suffix.lower()
@@ -741,15 +804,14 @@ class ThumbnailService:
                 # a single slot of their own instead of scaling with the grid's slots.
                 big = pixels > REDUCE_ABOVE_PIXELS
                 if big and not _BIG_IMAGE_SLOT.acquire(timeout=_BIG_IMAGE_WAIT_SEC):
-                    # A decode that never finishes must not park the whole grid: fail
-                    # this tile and let the next request try again.
-                    logger.warning(
-                        'thumbnail for %s waited %ss for the big-image slot; skipping it',
-                        image_path.name, int(_BIG_IMAGE_WAIT_SEC),
-                    )
-                    return False
+                    # A decode that never finishes must not park the whole grid, and a
+                    # wait that timed out is not a broken file: raise Busy so the tile
+                    # is retried instead of being hidden for the failure TTL.
+                    raise ThumbnailBusy(f'{_BIG_IMAGE_WAIT_SEC:g}s wait for the big-image slot')
                 try:
-                    with _GENERATE_SLOTS:
+                    if not _GENERATE_SLOTS.acquire(timeout=GENERATE_SLOT_WAIT_SEC):
+                        raise ThumbnailBusy(f'{GENERATE_SLOT_WAIT_SEC:g}s wait for a generate slot')
+                    try:
                         if pixels > REDUCE_ABOVE_PIXELS:
                             # Reducing by an integer factor keeps the LANCZOS input bounded
                             # and leaves the visible result identical.
@@ -772,10 +834,16 @@ class ThumbnailService:
                         if icc_profile:
                             options['icc_profile'] = icc_profile
                         image.save(output_path, 'JPEG', **options)
+                    finally:
+                        _GENERATE_SLOTS.release()
                 finally:
                     if big:
                         _BIG_IMAGE_SLOT.release()
             return output_path.exists() and output_path.stat().st_size > 0
+        except ThumbnailBusy:
+            # Not this file's fault: let the caller serve a placeholder and retry
+            # later instead of burning the failure TTL on a queue that was full.
+            raise
         except Exception as exc:  # noqa: BLE001 - one broken file must not fail the grid
             # Silent before: a 189 MP photo and a truncated download looked identical
             # in the logs (nothing at all), which made the invisible tile impossible

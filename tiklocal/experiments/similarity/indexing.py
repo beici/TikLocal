@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from tiklocal.services.download_tools import resolve_tool
+from tiklocal.services.thumbnail import ThumbnailBusy
 
 from .embedding import EmbeddingClient, VectorStore, mean_vector
 from .groups import rebuild_photo_groups
@@ -94,6 +95,12 @@ class MediaIndexer:
                 if not self.index(record, client, should_stop=should_stop):
                     return {**state, 'state': 'paused'}
                 service_failures = 0
+            except ThumbnailBusy:
+                # Every decode slot was busy, so this file was not indexed at all.
+                # Leave it pending for the next run instead of counting it as a
+                # damaged file (and never as a failing embedding service).
+                progress(dict(state), record, '')
+                continue
             except RuntimeError as exc:
                 # Service errors repeat for every file, so stop instead of exhausting the queue.
                 error = str(exc)
