@@ -575,3 +575,16 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P2] 设置页删过的源 id 会吞掉同名 `--media-source` | `media_sources_store.py:282-285` | 本轮已加 warning，语义改动待定 |
 | [P3] `TIKLOCAL_HOST=` 空串被 `or` 链吞成 `0.0.0.0` | `tiklocal/run.py:539` | 空串与未设置难以区分 |
 | [P3] 死端点 `/api/library/blogs`、分页参数静默改写且各端点不一致 | `tiklocal/web/library.py:405,55` | 无消费方，清理留待路由收敛 |
+
+### 第 35 轮新增（7 条）
+
+| 描述 | 位置 | 为什么暂不修 |
+| --- | --- | --- |
+| [P2] 重试任务把新旧 `output_files_rel` 合并时按路径去重，同名不同次下载会丢一个 | `tiklocal/services/downloader.py:1263-1277` | 需要重做 job 的「输出集合」语义（去重键是路径还是 job+序号），改动面大 |
+| [P2] `delete_files` 部分失败只回一个计数，不说是哪几个文件 | `tiklocal/web/downloads.py:520-560` | 要新增逐文件结果信封，前端同步改；与下一条同批 |
+| [P2] 批量入队逐条落盘（每条一次 `_persist_locked`） | `tiklocal/services/downloader.py:619-639` | 与第 30 轮「批量入队一次落盘」是同一处，需先定 API 语义 |
+| [P2] `_persist_sources` 失败后 `removed_ids` 仍生效，下次保存会清理未清理过的源 | `tiklocal/web/settings.py:158-176` | 需要「先落盘再清理」的两阶段，失败回滚风险高于收益 |
+| [P2] 回收站清空部分失败只报总数 | `tiklocal/web/media.py:328-340` | 同 `delete_files`，等统一信封 |
+| [P3] `AbortSignal.timeout` 在旧 Safari（<16）缺失，会抛 TypeError | `tiklocal/static/download_page_controller.js:24`、`settings_page_controller.js:970` | 项目已要求现代浏览器，仅记录 |
+| [P3] `_defer_probe` 退避无上限，缺工具时每行都留一条 60s 到期时间 | `tiklocal/services/library_index.py:1390-1400` | 30s 轮询已缓解重复扫描，暂不改退避策略 |
+

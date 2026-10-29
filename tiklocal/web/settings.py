@@ -178,6 +178,7 @@ def register_settings_routes(
 
     def _apply_change_locked(sources, message: str) -> dict:
         previous_default = Path(library_service.media_root)
+        previous_sources = list(library_service.sources)
         previous_ids = {source.id for source in _media_sources()}
         download_manager = app.extensions.get('download_manager')
         if download_manager is not None:
@@ -211,6 +212,20 @@ def register_settings_routes(
             installed = apply_sources(library_service, sources)
         except MediaSourceError as error:
             return {'success': False, 'error': _reason(error)}, 400
+        except OSError as error:
+            # resolve() failed on one of the new roots after the list was already
+            # written. Put the previous list back (disk and runtime) instead of
+            # answering 500 with sources and roots disagreeing.
+            app.logger.warning('Could not apply the media folder list; restoring the previous one: %s', error)
+            try:
+                _persist_sources(list(previous_sources), previous_ids)
+            except (MediaSourceError, OSError):
+                app.logger.exception('Could not restore the previous media folder list')
+            try:
+                apply_sources(library_service, list(previous_sources))
+            except (MediaSourceError, OSError):
+                app.logger.exception('Could not restore the previous media folders in memory')
+            return {'success': False, 'error': t('settings.library.source_error_generic')}, 500
         new_default = Path(library_service.media_root)
         app.config['MEDIA_ROOT'] = library_service.media_root
         if new_default != previous_default:

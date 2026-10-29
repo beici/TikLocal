@@ -463,7 +463,21 @@ def create_app(test_config=None):
         app_database.migrate()
     media_index = MediaIndexStore(app_database)
     library_indexer = LibraryIndexer(library_service, media_index)
-    index_sync_result = library_indexer.sync()
+    try:
+        index_sync_result = library_indexer.sync()
+    except (sqlite3.Error, OSError) as error:
+        # A full disk or a locked database made the index unwritable. The index
+        # itself is still consistent (every write is one transaction), so serving
+        # the previous snapshot beats refusing to start.
+        app.logger.error('index sync failed; serving the previous index: %s', error)
+        index_sync_result = {
+            'indexed': 0,
+            'deleted': 0,
+            'unavailable_sources': [],
+            'source_errors': {},
+            'busy': False,
+            'error': str(error),
+        }
     app.extensions["media_index_sync"] = index_sync_result
     # The result was stored and never read: an unreadable source, an empty folder
     # and a wrong path all looked the same in the log (one INFO line, then "Serving

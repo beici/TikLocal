@@ -1,4 +1,5 @@
 import datetime
+import errno
 import logging
 import os
 import re
@@ -1126,7 +1127,14 @@ class LibraryIndexer:
         for source in self.library.sources:
             skipped: list[str] = []
             try:
-                records = self._records_for_paths(self.library.scan_source(source, skipped=skipped), time_states)
+                paths = self.library.scan_source(source, skipped=skipped)
+                records = self._records_for_paths(paths, time_states)
+                if paths and not records:
+                    # The tree was walked but not one path could be stat'ed: the
+                    # source went away mid-scan (USB unplugged, SMB dropped). Treating
+                    # that as "the source is now empty" deleted every row and swept
+                    # its playback positions and watch history for good.
+                    raise OSError(errno.ENOENT, 'source vanished during scan', str(source.path))
                 records = self._apply_douyin_pairing(records)
             except OSError as error:
                 failures[source.id] = str(error)
@@ -1172,7 +1180,14 @@ class LibraryIndexer:
                 # finished job hands over routinely names files that are gone.
                 LOGGER.warning('Skipping a media output that no longer exists: %s', uri)
                 continue
-            record = self._record_for_path(path, time_states)
+            try:
+                record = self._record_for_path(path, time_states)
+            except OSError as error:
+                # is_file() passed but stat() can still fail on a share (SMB lock,
+                # antivirus, ACL). Dropping the whole batch for one such file lost
+                # every sibling output that had already parsed fine.
+                LOGGER.warning('Unable to register media output %s: %s', uri, error)
+                continue
             if record is None:
                 LOGGER.warning('Unable to register media output: %s', uri)
                 continue
@@ -1425,4 +1440,7 @@ class MediaProbeWorker:
             if done:
                 self._wake.wait(0.5)
             else:
-                self._wake.wait()
+                # Nothing was probed: either every row is done, or the probe tool is
+                # missing (rows were deferred with a backoff). Waking on index changes
+                # only meant installing ffmpeg never triggered a retry, so poll slowly.
+                self._wake.wait(30.0)

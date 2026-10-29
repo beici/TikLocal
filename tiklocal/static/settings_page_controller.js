@@ -87,10 +87,24 @@
   }
 
 
+  async function readJson(response) {
+    // A proxy or a crashed worker answers 502/504 with an HTML page; response.json()
+    // then threw "Unexpected token '<'", which the toast showed verbatim instead of
+    // saying the server did not answer in JSON.
+    try {
+      return await response.json();
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(T('settings.request_failed'));
+      }
+      throw error;
+    }
+  }
+
   async function requestJson(url, options = {}) {
     // 无超时兜底时设置页会一直转圈（尤其大库扫描期间），用户只能整页刷新。
     const response = await fetch(url, options.signal ? options : { ...options, signal: AbortSignal.timeout(20000) });
-    const payload = await response.json();
+    const payload = await readJson(response);
     if (!response.ok || payload.success === false) {
       const message = typeof payload.error === 'object' ? payload.error?.message : payload.error;
       throw new Error(message || T('settings.request_failed'));
@@ -100,7 +114,7 @@
 
   async function requestForm(url, formData) {
     const response = await fetch(url, { method: 'POST', body: formData, signal: AbortSignal.timeout(30000) });
-    const payload = await response.json();
+    const payload = await readJson(response);
     if (!response.ok || payload.success === false) throw new Error(payload.error || T('settings.request_failed'));
     return payload;
   }
@@ -629,6 +643,11 @@
       // The folder list is saved even when a scan was already running; say so
       // instead of implying the new items are visible already.
       TikLocalUI.toast(T('settings.library.source_scan_pending'), 'warning');
+    } else if (scan.error) {
+      // The folder was saved but the scan itself failed (full disk, corrupt index).
+      // Reporting payload.message here announced success over an index that never
+      // received the new files.
+      TikLocalUI.toast(T('settings.library.source_scan_failed'), 'error');
     } else {
       TikLocalUI.toast(typeof payload?.message === 'string' && payload.message
         ? payload.message
@@ -1154,6 +1173,9 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ items: entries }),
+          // Every author is fetched over the network; without a deadline the
+          // caller's finally never ran and the button stayed disabled on "syncing".
+          signal: AbortSignal.timeout(120000),
         });
         payload = await response.json();
       } catch (_) {

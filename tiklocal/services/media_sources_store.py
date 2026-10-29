@@ -320,15 +320,18 @@ def apply_sources(library_service: Any, sources: Iterable[MediaSource]) -> list[
     installed = list(sources)
     if not installed:
         raise MediaSourceError('last')
+    # Resolve first: resolve() can fail (offline share, revoked permission) and the
+    # caller has already written the new list to disk. Assigning the sources before
+    # that left the library on the new roots while URIs and thumbnails still used
+    # the old ones -- a half-applied state no retry could repair.
+    resolved_roots = [(source, source.path.resolve()) for source in installed]
     library_service.sources = installed
     library_service.sources_by_id = {source.id: source for source in installed}
     library_service.default_source_id = (
         DEFAULT_SOURCE_ID if DEFAULT_SOURCE_ID in library_service.sources_by_id else installed[0].id
     )
     library_service.media_root = library_service.sources_by_id[library_service.default_source_id].path
-    library_service._resolved_roots = [
-        (source, source.path.resolve()) for source in installed
-    ]
+    library_service._resolved_roots = resolved_roots
     library_service._warn_overlapping_sources()
     return installed
 

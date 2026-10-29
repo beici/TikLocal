@@ -181,7 +181,13 @@ class LibraryService:
                     try:
                         relative = Path(error.filename).resolve().relative_to(source.path.resolve())
                     except (OSError, ValueError):
-                        relative = None
+                        # resolve() itself fails on a path we were just refused: fall
+                        # back to a lexical answer, otherwise the prefix is not
+                        # recorded and the rows under it are swept as deleted.
+                        try:
+                            relative = Path(os.path.relpath(error.filename, source.path))
+                        except ValueError:
+                            relative = None
                     if relative is not None and str(relative) != '.':
                         skipped.append(f'@{source.id}/{relative.as_posix().rstrip("/")}/')
                 return

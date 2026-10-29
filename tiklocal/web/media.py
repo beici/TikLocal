@@ -298,19 +298,28 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         # file is known to be gone for good -- unless the name is already taken again.
         if reused:
             return
-        try:
-            if favorite_service is not None:
+        # Each step gets its own guard: a failure in one (a locked collections file,
+        # a full disk) used to skip the rest, and a purge has no second chance --
+        # the trash entry is already gone, so nothing can retry it later.
+        if favorite_service is not None:
+            try:
                 favorite_service.set_favorite(uri, False)
-            if collection_store is not None:
+            except Exception:  # noqa: BLE001 - derived cleanup must never fail the purge
+                app.logger.warning('favourite cleanup failed for %s', uri, exc_info=True)
+        if collection_store is not None:
+            try:
                 for collection in collection_store.list_for_media(uri):
                     collection_store.remove_items(collection['id'], [uri])
-            if image_metadata is not None:
-                # Captions are keyed by URI too: a stale entry would caption the next
-                # file that lands on this name, with text about a different picture.
+            except Exception:  # noqa: BLE001
+                app.logger.warning('collection cleanup failed for %s', uri, exc_info=True)
+        if image_metadata is not None:
+            # Captions are keyed by URI too: a stale entry would caption the next
+            # file that lands on this name, with text about a different picture.
+            try:
                 for candidate in library_service.legacy_candidates(uri):
                     image_metadata.delete(candidate)
-        except Exception:  # noqa: BLE001 - derived cleanup must never fail the purge
-            app.logger.warning('saved-list cleanup failed for %s', uri, exc_info=True)
+            except Exception:  # noqa: BLE001
+                app.logger.warning('caption cleanup failed for %s', uri, exc_info=True)
 
     def purge_expired():
         for entry_id in trash_service.expired():

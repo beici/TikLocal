@@ -1304,7 +1304,12 @@ class DownloadManager:
             shutil.rmtree(temp_dir, ignore_errors=True)
         if not error_message and return_code != 0:
             error_message = f"yt-dlp exited with code {return_code}."
-        output_rel = [self._to_media_relative(path) for path in output_paths]
+        # yt-dlp prints a Destination for the separate video/audio streams as well and
+        # deletes them again after merging. Keeping those names made the job claim
+        # files that never existed: the history card showed one file too many and
+        # "delete files" reported the ghost as missing on every run.
+        live = [path for path in output_paths if Path(path).is_file()]
+        output_rel = [self._to_media_relative(path) for path in live]
         return return_code, error_message, [path for path in output_rel if path]
 
     def _execute_download_gallery_dl(self, job_id: str) -> tuple[int, str, list[str]]:
@@ -1381,7 +1386,13 @@ class DownloadManager:
             downloaded: list[Path] = []
             for index, url in enumerate(downloads, start=1):
                 if cancel_event and cancel_event.is_set():
-                    return 1, translate(self._job_locale(job_id), 'download.error.canceled'), []
+                    # Cancel between two items: the earlier ones are already on disk.
+                    # Reporting them keeps this path consistent with the mid-item
+                    # cancel branch below, which has always kept what it had.
+                    moved = [self._move_file_to_media_root(path) for path in downloaded]
+                    return 1, translate(self._job_locale(job_id), 'download.error.canceled'), [
+                        path for path in moved if path
+                    ]
                 extension = guess_download_extension(url, str(naming.get("post_type") or "视频"))
                 filename = build_work_filename(naming, index, total, extension)
                 target = temp_dir / filename
@@ -1590,7 +1601,14 @@ class DownloadManager:
             self._terminate_process(process)
             error_message = error_message or translate(
                 self._job_locale(job_id), 'download.error.canceled')
-        return process.wait(), error_message
+        # Bounded wait: _terminate_process gives up after a few seconds, and an
+        # unkillable tool must not park this worker (and its queue slot) forever.
+        try:
+            return process.wait(timeout=10), error_message
+        except subprocess.TimeoutExpired:
+            LOGGER.warning('Download process %s ignored termination; abandoning it', process.pid)
+            return 1, error_message or translate(
+                self._job_locale(job_id), 'download.error.canceled')
 
     def _job_locale(self, job_id: str | None) -> str:
         """Locale the job was queued in (worker threads have no request context).

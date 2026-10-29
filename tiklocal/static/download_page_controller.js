@@ -22,8 +22,12 @@
   }
 
   async function api(path, options = {}) {
+    // A request that never settles (server thread starved, NAS half-open) used to
+    // freeze the polling chain with no message: refreshJobs awaits this, so its
+    // catch/backoff never ran. A timeout turns the hang into a retryable error.
     const response = await fetch(path, {
       headers: { 'Content-Type': 'application/json' },
+      signal: options.signal || AbortSignal.timeout(20000),
       ...options,
     });
     let payload = null;
@@ -611,6 +615,10 @@
       const data = await api('/api/download/jobs/delete', {
         method: 'POST',
         body: JSON.stringify({ ids, delete_files: mode === 'files' }),
+        // With delete_files the server moves every file to the trash first; a
+        // selection of large videos outlives the default 20 s, and aborting would
+        // report failure after the files were already gone.
+        signal: AbortSignal.timeout(120000),
       });
       const deleted = data.deleted || 0;
       const moved = (data.files && data.files.moved) || 0;
@@ -961,9 +969,29 @@
         const data = await api('/api/download/urls/queue', {
           method: 'POST',
           body: JSON.stringify({ engine: selectedEngine, save_mode: 'root' }),
+          // Queueing writes the whole job list to disk once per URL; a few hundred
+          // URLs outlive the default 20 s, and aborting would report failure while
+          // the server kept creating jobs.
+          signal: AbortSignal.timeout(180000),
         });
         const failed = Array.isArray(data.failed) ? data.failed.length : 0;
         const queued = Number(data.queued) || 0;
+        const skipped = Number(data.skipped) || 0;
+        if (!queued && !failed && skipped) {
+          // Every link was already queued (a second click, or a list that was not
+          // cleared): reporting "the list is empty" over a full list left the user
+          // with nothing to do.
+          TikLocalUI.toast(T('download.urls.already_queued'));
+          try {
+            renderUrlList(await api('/api/download/urls', {
+              method: 'POST',
+              body: JSON.stringify({ action: 'clear' }),
+            }));
+          } catch (error) {
+            renderUrlList({ lines: [] });
+          }
+          return;
+        }
         if (!queued && !failed) {
           // An empty list answered with success ("queued 0 jobs"), which reads as
           // if the action worked.
@@ -1087,7 +1115,21 @@
             method: 'POST',
             body: JSON.stringify({ url, tab: selectedTab, count: Number(countSelect?.value || '18') }),
           });
-          TikLocalUI.toast(T('download.tiktok_queued', { n: data.queued || 0 }));
+          const queuedCount = Number(data.queued) || 0;
+          const failedCount = Number(data.failed) || 0;
+          if (failedCount) {
+            // The route answers 200 even when every work item was rejected, so a
+            // green "queued 0" was the only thing the user saw.
+            TikLocalUI.toast(
+              T('download.urls.queued_partial', { count: queuedCount, failed: failedCount }),
+              'error',
+            );
+          } else {
+            TikLocalUI.toast(T('download.tiktok_queued', { n: queuedCount }));
+          }
+          if (data.truncated) {
+            TikLocalUI.toast(T('download.tiktok_truncated'), 'error');
+          }
         } else {
           const payload = { url, save_mode: 'root', engine: selectedEngine, cookie_mode: 'auto' };
           await api('/api/download/jobs', { method: 'POST', body: JSON.stringify(payload) });
