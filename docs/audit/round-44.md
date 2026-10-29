@@ -143,7 +143,7 @@
 
 用户问「这 16 条有必要修复吗」。答案先摆证据：**0 条已修、16 条仍存在（3 条部分修复）、无真 P0**（原标 `[P0]` 的两条按当前影响降为 P1）。逐条核查表见 `总结-44轮.md` 5.1，处置结果见 `backlog.md` 顶部「分诊」一节（那一节插在文件开头后，backlog 的行号整体下移了，别拿旧行号去对）。判断标准是一句话：**单用户的本地媒体服务器，不是公网 SaaS**——值得修的只有安全边界，和「一次交互就卡住」；十万文件规模下的慢、默认关闭的实验特性、1px 的视觉抖动都不值得修。
 
-分诊结果：**修 2 条、关闭 7 条、转成规矩 3 条、留 4 条**。留下的 4 条是 `records()` 无 LIMIT（第 432/702 行，同一根因）、feed 每页建全库 dict + 每请求三次读 `favorites.json`（第 433 行）、设置页 6 个请求跑在 401 包装器之前（第 648 行）。
+分诊结果：**修 2 条、关闭 7 条、转成规矩 3 条、留 4 条**。留下的 4 条是 `records()` 无 LIMIT（第 432/702 行，同一根因）、feed 每页建全库 dict + 每请求三次读 `favorites.json`（第 433 行）、设置页 6 个请求跑在 401 包装器之前（第 648 行）。**这 4 条后来也结了**——用户接着问「欠着的 4 条有必要修吗」，量完之后的结论见下面第十一节：3 条修掉、1 条明确不修。
 
 ### 10.1 修掉的两条
 
@@ -174,8 +174,45 @@ password = supplied or generate_password()
 
 ### 10.4 验证
 
-`pytest -q` = **688 passed / 8 skipped / 0 failed**（提交树上实测三次：237.59s / 209.41s；收尾时是 684P，分诊补了 4 条）。真实进程实测：`tiklocal serve` 首次启动打印 `Access password (generated, save it)` + 12 位口令，用它对 `/login` POST 得 200，用 `admin666` 得 401；重启后 `auth status` 只说「已生成且只显示过一次」而不再打印；把口令改回 `admin666` 后 `uses_published_default()` 为真、banner 恢复 WARNING。八个页面（`/`、`/flow`、`/library`、`/favorite`、`/collections`、`/radio`、`/download`、`/settings/`）登录后全 200，`/thumb?uri=photo.jpg` 出真图（`image/jpeg`）、坏文件的 `/thumb` 仍走占位图。缩略图侧新增两条用例：占满槽位后 `generate_thumbnail` 抛 `ThumbnailBusy` 且**不产生失败标记**，图片路径的宽 `except Exception` 不吃掉它。
+`pytest -q` = **688 passed / 8 skipped / 0 failed**（提交树上实测三次：237.59s / 209.41s；收尾时是 684P，分诊补了 4 条；第二次分诊再补 7 条后是 695P，见 §11.4）。真实进程实测：`tiklocal serve` 首次启动打印 `Access password (generated, save it)` + 12 位口令，用它对 `/login` POST 得 200，用 `admin666` 得 401；重启后 `auth status` 只说「已生成且只显示过一次」而不再打印；把口令改回 `admin666` 后 `uses_published_default()` 为真、banner 恢复 WARNING。八个页面（`/`、`/flow`、`/library`、`/favorite`、`/collections`、`/radio`、`/download`、`/settings/`）登录后全 200，`/thumb?uri=photo.jpg` 出真图（`image/jpeg`）、坏文件的 `/thumb` 仍走占位图。缩略图侧新增两条用例：占满槽位后 `generate_thumbnail` 抛 `ThumbnailBusy` 且**不产生失败标记**，图片路径的宽 `except Exception` 不吃掉它。
 
 ### 10.5 记一条
 
 **「安全类」和「性能类」不能用同一把尺子。** 默认口令和槽位无超时之所以该修，不是因为它们「严重度高」，而是因为前者是一个任何人都能走进来的门，后者是一次正常操作就会撞上的墙；而十万文件的慢是「你还没到那个规模」。分诊真正要回答的不是「这条严不严重」，而是**「这个用户、这个规模，会不会在这一次交互里遇到它」**。
+
+## 十一、剩下四条 P1：用同一把尺子量完（仍未开第 45 轮）
+
+用户接着问「欠着的 4 条有必要修吗」。这 4 条是第 10 节表里标「仍待修」的那行：`records()` 无 LIMIT（432）、flow 每请求物化整库（702，同一次调用）、feed 两份全库 dict + 三次读 `favorites.json`（433）、设置页 6 请求跑在 401 包装器之前（648）。
+
+### 11.1 先量再判断：造 1:1 的表才量得准
+
+`records()` 的成本只能在自己的表上量（临时库要先 `PRAGMA temp_store = MEMORY`——本机 TEMP 不可写，否则 `ORDER BY` 直接 `unable to open database file`）。实测 `MediaIndexStore.records()`：
+
+| 行数 | 127 | 2 000 | 8 000 | 20 000 | 50 000 |
+| --- | --- | --- | --- | --- | --- |
+| `SELECT *` + 建 dict | 5.0 ms | 17.8 ms | 60.0 ms | 168.1 ms | 584.9 ms |
+
+拆开看 20 000 行：`SELECT *` fetchall 96.5 ms、`_to_library_record` 建 dict 60 ms、只取两列 28.7 ms。**这台机器的真实库只有 127 条**（image 64 / live 35 / video 28），`records()` 是 5.0 ms。这正是第 10 节那把尺子的答案：**用户不会遇到它，只有「规模」这一条在变。**
+
+`favorites.load()` 单次成本（100 / 1 000 / 5 000 / 10 000 条）：0.33 / 2.15 / 11.1 / 21.3 ms，三次/请求就是 63.9 ms @1 万。另外发现 `recommendation.py:112` 是 `canonicalize_many(self.favorites.load())`——`load()` 内部已经 canonicalize 过，这一层**把 1 万条收藏又算了一遍**，17.2 ms，占 21.3 ms 的 80%。
+
+### 11.2 修了三条
+
+- **648 是四条里唯一「后果恶劣」的，而且它根本不是性能问题。** 401/403 包装器装在 `base.js` 里，而 `base.js` 是 `</body>` 前最后一个脚本；`settings_page_controller.js` 一执行就发 6 个请求（`loadStats` / `loadRadioDevices` / `loadTrash` / `loadDownloadSettings` / `loadTikTokDownloaderStatus` / `loadAuthorSources`），全会跑在包装器之前。会话过期时这 6 个各拿 401 文本，页面按「没有数据」渲染，**用户一保存就把这套空态写回服务端**。
+  改法不是给 9 个控制器排队（下一个页面还会忘），而是把包装器搬进 `tiklocal/static/session_guard.js`，在 `base.html` 的 `<head>` 里、`csrf_fetch.js` 之后加载。它只需要 `window`、不碰 DOM，所以能提到任何控制器之前。`base.js` 里那段删掉只留一行注释——两个包装器会 redirect 两次、每个响应 clone 两次。
+- **433 三次读 JSON → 一次解析。** 新增 `FavoriteService.read_only()`，走已有的 `_load_cached()`（按 `mtime_ns + size` 判 stamp），返回只读视图不复制；`recommendation.py:114/226/255` 与 `radio.py:229` 换成它，并删掉那层重复 canonicalize。同一批把另外两处纯读也换了：`web/library.py` 的收藏页分页（它只把 set 交给 `dict.fromkeys`）与 `web/settings.py` 的 `/api/library/stats`。`{'uri','mtime'}` 那份列表（2 万行 2.5 ms）刻意不动——它比候选查询便宜两个数量级，改了只增加出错面。
+- **432 窄列。** `SELECT *` → 15 列 `RECORD_COLUMNS`（`_to_library_record` 实际读的全部列），2 万行 192 ms → 135 ms，产出记录**逐字段相等**（用一个 2 万行的库对拍确认）。
+
+### 11.3 一条明确不修
+
+**432 的 LIMIT 与 702 不加。** 还在用 `records()` 的三个调用方语义上都需要完整集合：tag feed 与深链 caption feed 在 Python 里匹配标题（标题从文件名派生，SQL 无法预过滤），作者页按文件名里解析出的发布时间排序。加 LIMIT 只会**静默少条目**——那是把「慢」换成「错」。日常 Flow 根本不经它（走 `records_for_names` 取那 ~24 张）。docstring 里记了实测曲线，谁量到 2 万文件以上变慢，就按 keyset 分页开工。
+
+### 11.4 验证
+
+`pytest -q` = **695 passed / 8 skipped / 0 failed**（228.62 s）。新增 `tests/test_session_guard.py` 七条：只读视图复用一次解析且文件变了就失效、能看见经服务写入的改动、不泄漏可变缓存；收藏增删之后收藏页与 `scope=favorite` 列表立刻看到变化（读那条缓存了，写这条路仍然打通）；对 `/`、`/flow`、`/library`、`/settings/` 断言 `session_guard.js` 在首个 controller 之前、`base.js` 在其后；`base.js` 不再装第二个包装器。
+
+端到端用真实进程验：`tiklocal serve --port 8877` 起一个 6 文件的小库，登录后 11 条路由全 200；`/api/feed/mix?tag=%23travel` 返回 2 条（`#travel 山顶`、`#travel 海边日落`）——这条正是走 `records()` 全表 + Python 匹配的路径，窄列改动后结果不变。Chromium 里在 `/settings/` 上读脚本顺序 `guard=8 < controller=9 < base=10`，换新实例让会话失效后 `fetch('/api/library/stats')` 得 401，页面跳到 `/login?next=%2Fsettings%2F`。
+
+### 11.5 记一条
+
+**「修」和「关」都要有数字。** 上一节用「2 万文件」当分界线时，它是估的；这一节把它换成了实测曲线，于是同一把尺子自动给出了三种答案：这一条要修（648，后果是错的）、这一条修一半（432，窄列是纯收益，LIMIT 是纯风险）、这一条不修（702，2 万行 135 ms 是「翻页多 0.1 秒」不是「卡住」）。判据一旦落到表上，结论就不再需要争论。
