@@ -152,20 +152,21 @@
 
 用户在第 44 轮收尾时要求「继续最后一轮后收尾、暂停循环」。循环到此暂停，不再自动开启第 45 轮；恢复时按第 44 轮末的「下轮建议」继续即可。
 
-- 当前基线：`pytest -q` = **684 passed / 8 skipped / 0 failed**（约 220–282 s），此后任何失败都是回归。
-- 累计：44 轮、44 个审计 tag（21 个 `-start` + 23 个 `-end`），测试套件从 354 条长到 684 条（+93%），仓库累计 265 次提交。
-- backlog 现状：P2 214 条、P3 291 条。历史 `[P0]/[P1]` 类条目 16 条已逐条对照当前代码核查：**0 条完全修掉、16 条仍存在（其中 3 条部分修复）**；**无 P0**，但仍有 4 个按当前影响应定为 P1 的根因（见下表）。
+- 当前基线：`pytest -q` = **688 passed / 8 skipped / 0 failed**（约 238–282 s），此后任何失败都是回归。（收尾时是 684P；第 44 轮后分诊补了 4 条用例。）
+- 累计：44 轮、44 个审计 tag（21 个 `-start` + 23 个 `-end`），测试套件从 354 条长到 688 条（+94%），仓库累计 265 次提交。
+- backlog 现状：P2 214 条、P3 291 条。历史 `[P0]/[P1]` 类条目 16 条已逐条对照当前代码核查，并在收尾后做了分诊：**修 2 条、关闭 7 条、转成规矩 3 条、留 4 条**。处置与理由见 `backlog.md` 顶部「分诊」一节，过程见 `round-44.md` 第十节。
 - 因此「自动退出条件」（连续三轮无新 P0/P1/P2）尚未满足：暂停是用户指令，不是收敛完成，继续与否由用户决定。
-- 暂停不是完成：若要继续，建议先从下表 4 个 P1 根因里挑 1–2 个（都属「一次改造覆盖多处调用」的类型），再回到 backlog 的 P2。
+- 暂停不是完成：若要继续，从下面 3 个待办 P1 根因里挑 1–2 个（都属「一次改造覆盖多处调用」的类型），再回到 backlog 的 P2。
 
-### 暂停时仍算 P1 的 4 个根因（按建议优先级）
+### 待办的 3 个 P1 根因（分诊后剩这些）
 
 | 优先级 | 位置 | 现状 |
 | --- | --- | --- |
-| 1 | `tiklocal/services/auth.py:19`（`DEFAULT_PASSWORD`）、`tiklocal/run.py:623`（默认 `0.0.0.0`） | 默认口令 `admin666` 配默认全网卡绑定，只在启动时打 WARNING 不阻断——唯一安全类项 |
-| 2 | `tiklocal/services/library_index.py:418-423`（`records()` 无 LIMIT）、`tiklocal/web/flow.py:418/467/471`、`author.py:115/202`、`radio.py:231` | 全表 `SELECT *` + `fetchall()`，被 tag 流、深链 caption、作者页、电台直接调用；flow 常规 mix 已改 `records_for_names` |
-| 3 | `tiklocal/services/thumbnail.py:617`、`:752`（`with _GENERATE_SLOTS:` 无超时） | 冷缓存首屏在请求线程排队生成缩略图，waitress 只有 8 个线程，可被占满 |
-| 4 | `tiklocal/services/recommendation.py:69-74`、`:117-139`、`:112`、`:255` | feed 每页按全库规模建两份 dict，且一次请求最多读三次 `favorites.json` |
+| 1 | `tiklocal/services/library_index.py:418-423`（`records()` 无 LIMIT）、`tiklocal/web/flow.py:418/467/471`、`author.py:115/202`、`radio.py:231` | 全表 `SELECT *` + `fetchall()`，被 tag 流、深链 caption、作者页、电台直接调用；flow 常规 mix 已改 `records_for_names`。改法是 keyset 分页，一次覆盖五处 |
+| 2 | `tiklocal/services/recommendation.py:69-74`、`:117-139`、`:112`、`:255` | feed 每页按全库规模建两份 dict，且一次请求最多读三次 `favorites.json`。改法是请求级解析 |
+| 3 | `tiklocal/static/settings_page_controller.js:1318-1325`（早于 `base.js:152-196` 的 401 包装器） | 会话过期时首屏 6 个请求被当成空态，用户一保存就把空态写回。代价最小、后果最恶劣的一条 |
+
+**已经不在表里**：默认口令（`admin666` → 首启生成随机口令，老实例启动告警）与 `/thumb` 槽位无超时（`acquire(timeout=5)` → 占位图，不写失败标记）已在分诊时修掉。其余 7 条关闭、3 条转成「不到 2 万文件先别量」的规矩，都写在 `backlog.md` 的「分诊」一节里。
 
 完整核查表（16 条逐条取证）见 `docs/audit/总结-44轮.md` 第五节。
 

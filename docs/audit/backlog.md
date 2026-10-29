@@ -8,6 +8,58 @@
 
 （暂无）
 
+### 分诊：16 条历史 P0/P1 一次性结清（第 44 轮后，未开第 45 轮）
+
+44 轮攒下 16 条标记为 `[P0]`/`[P1]` 的条目。逐条对照当前代码取证后：**0 条已修、16 条仍存在（3 条部分修复）**，无真正的 P0（原标 `[P0]` 的两条按当前影响降为 P1）。以下是它们的去向，写完这一节就不再逐条争论。
+
+下表的行号是**收尾核查时**的编号（与 `总结-44轮.md` 5.1 表一致）；本节插在文件开头后行号整体下移，找原条目请按摘要搜。每条原行也已在原位标注了去向。
+
+判断标准（后续同类问题沿用，不重复讨论）：**这是单用户的本地媒体服务器，不是公网 SaaS。** 值得修只有两类——① 安全边界（默认口令、越权、把别人的数据写坏）；② 一次交互就卡住（首屏、保存、播放）。十万文件规模下的慢、默认关闭的实验特性、1px 的视觉抖动，都不值得修。
+
+| 原行号 | 摘要 | 结论 |
+| --- | --- | --- |
+| 322 | 首次启动默认口令 `admin666` + 默认绑 `0.0.0.0` | **已修**（本节 §1） |
+| 440 | `/thumb` 生成槽位无超时，占满 waitress 线程 | **已修**（本节 §1） |
+| 434 | 每页 `COUNT(*)` | 关闭（§2） |
+| 435 | 搜索 `LIKE '%term%'` + 子查询双重不可索引 | 关闭（§2） |
+| 437 | 索引重建 2N 语句 + 孤儿全扫 | 关闭（§2） |
+| 438 | `media_vectors` 请求路径读 BLOB | 关闭（§2） |
+| 439 | `download_payload` 无上限 | 关闭（§2） |
+| 442 | 1px 宽度变化重建 grid | 关闭（§2） |
+| 443 | `?focus=` 逐页串行 | 关闭（§2） |
+| 85 | 首建索引同步读 EXIF | 转规矩（§3） |
+| 436 | `/library` 全表聚合 | 转规矩（§3） |
+| 441 | 启动期同步全量扫描 | 转规矩（§3） |
+| 432 | `records()` 无 LIMIT | **仍待修**（P1，本条为根因） |
+| 702 | flow 每请求物化整库 | **仍待修**（P1，与上同根因，一次改法覆盖两处） |
+| 433 | feed 建两份全库 dict + 三次读 `favorites.json` | **仍待修**（P1） |
+| 648 | 设置页 6 请求跑在 401 包装器之前 | **仍待修**（P1，代价小、后果恶劣：会话过期被当空态，一保存就把空态写回） |
+
+#### 1. 已修的两条
+
+- **322 默认口令**：首次启动改为生成 12 位随机口令（去掉 `0/O/1/l/I` 这类易读错的字符），只打印一次，文件里只存哈希；本次启动的进程把它送给 `run.py` 的 banner 与 `tiklocal auth status`，重启后无法再打印，`auth status` 会明确说「已生成且只显示过一次，忘了就 `tiklocal auth set-password`」。老实例（文件里仍是 `admin666` 的哈希）启动时打 WARNING 并指出改法——这条不能自动迁移，明文早就没了。默认绑定仍是 `0.0.0.0`：局域网访问是本产品的主要用法，靠口令而不是靠绑回环来防护。
+- **440 `/thumb` 槽位**：`_GENERATE_SLOTS.acquire(timeout=5.0)`，超时抛 `ThumbnailBusy`（刻意不是生成失败），`/thumb` 与 `/api/thumbnail/frame` 分别返回占位图与 503 + 可读文案，**不写失败标记**——原实现若在槽位里等到超时就记一次失败，一张好图会被藏一小时。槽位满只按 30 s 一次记日志（带被吞掉的条数），避免冷缓存时刷屏。
+
+#### 2. 关闭的七条（写清为什么不再修）
+
+- **434 每页 `COUNT(*)`**：2 万行带索引的 COUNT 是毫秒级，而改 `total` 语义会让分页器失去总数（「共 N 张」说不出来）。收益测不出来，代价是前端一整套改动。
+- **435 `LIKE` 双重不可索引**：根治要引 FTS5（新表 + 触发器 + 迁移 + 分词语义）。`q=` 是低频的「我记得名字里有这个词」，2 万行全扫十几毫秒。真正痛的是**非 ASCII 文件名搜不到**（本文件「搜索只折叠 ASCII 大小写」与「搜索不做 Unicode 归一化」两条），那两条要单独一轮做 `search_key` 列，会顺手解决本条。
+- **437 索引重建 2N 语句 + 孤儿全扫**：只在启动和手动重建时跑；2 万文件约 4–12 s，且可预期。已批量化（`library_index.py:87-121`）、`ANALYZE` 移出事务（`:184-194`），剩下的问题要到十万文件才显形。
+- **438 `media_vectors` 无界读 BLOB**：`similarity` 是**默认关闭**的实验特性，只在 `similarity_enabled` 时注册路由。默认用户永远走不到这段代码；打开它的人自己选了实验特性。
+- **439 `download_payload` 无上限**：payload 是用户自己发起的下载任务的快照，一条几百字节到几 KB。要到 10 万条任务才会撑爆，而那时 `tasks.json` 本身先写不动了。锁内 `json.dumps` 已改成锁内取快照、锁外序列化（`downloader.py:1776-1795`）。
+- **442 1px 宽度变化重建 grid**：有 180 ms 防抖，实际行为是「拖动窗口停下后重建一次」，重建后图片走浏览器缓存。要消除得做节点复用 + 保留已解码结果，这是视觉抖动级别的问题。
+- **443 `?focus=` 逐页串行**：只在用户点了「我记得是 2023 年 5 月」这种深链时发生，最多 200 轮、拉的是元数据不是文件；正常路径是滚动加载。改成链接里带 offset 得动所有生成深链的地方。
+
+#### 3. 性能问题不再开条目，改成一个提问（规矩）
+
+规模类问题不再进 backlog 正文，按下面三步处理：
+
+1. **先问文件数。** 不到 2 万 → 不修，最多在这条下面记一句「到 2 万再看」。
+2. **超过 2 万才量。** `--dev` 下用浏览器 Performance 面板录一次冷启动或首屏，把帧时间贴进新的 `round-NN.md`；没有数字的「慢」不上报。
+3. **只有「一次交互就卡住」（>300 ms 且用户在场）才进 §1 那一类。**
+
+按此撤下三条（改法留在原行，谁量到真慢就直接开工）：首建索引同步读 EXIF（先入库 + 后台补 `time_metadata_version`）、`/library` 全表聚合（`capture_year` 索引 + 排序键）、启动期同步全扫（后台扫描 + `DO UPDATE ... WHERE` 条件更新）。
+
 ## P2
 
 | 问题 | 位置 | 为什么暂不修 |
@@ -82,7 +134,7 @@
 
 | 问题 | 位置 | 为什么暂不修 |
 |------|------|--------------|
-| [P1] 首次建索引同步读 EXIF，20k 库冷启动 11 s | `tiklocal/services/library_index.py`（`_record_for_path`） | 正确修法是「先入库 + 后台补时间元数据」（`time_metadata_version=0` → 探测线程回填），要同时改写入路径、探测队列与按时间排序的回退，属结构性改动 |
+| [P1→规矩] 首次建索引同步读 EXIF，20k 库冷启动 11 s | `tiklocal/services/library_index.py`（`_record_for_path`） | **按 §3 转为规矩：不到 2 万文件不修。** 若量到真慢，正确修法是「先入库 + 后台补时间元数据」（`time_metadata_version=0` → 探测线程回填），要同时改写入路径、探测队列与按时间排序的回退 |
 | [P2] 缩略图解码并发只有 2 路且无 single-flight，冷缓存 200 张 p95 7.4 s | `tiklocal/services/thumbnail.py:22` | 提高并发会顶高 Pillow 内存峰值（第 09 轮才为 222 MB 峰值加过 `draft()`），需按 CPU 数设上限 + 同路径 single-flight 并配套压测 |
 | [P3] 取消落在「工具已退出、`on_outputs` 执行中」窗口 → `canceled` 但 `file_count=1` | `tiklocal/services/downloader.py:938-979` | 需把产物登记与状态写入放进同一事务，牵动 job 状态机 |
 | [P3] 中途取消在库根留 `.info.json` 孤儿 | `tiklocal/services/download_tools.py:116`、`downloader.py:1072` | 需按 job 记录本次产生的 info 文件并在取消时回收，收益低 |
@@ -319,7 +371,7 @@ P3：17 条（R1 3 / R2 3 / R3 1 / R4 3 / R5 2 / R6 1 / R7 4）。值得留意�
 
 | 问题 | 位置 | 为什么暂不修 |
 |------|------|--------------|
-| **[P1] 优先** 首次启动默认口令 `admin666` + 默认绑 `0.0.0.0`：同网段任何人可登录、删媒体、改口令把主人锁在外面。本轮只在非回环绑定且仍用默认口令时打印警告 | `tiklocal/services/auth.py:17`、`tiklocal/run.py:637-646` | 改随机口令会改变每个老用户的首次启动行为，且 `tests/test_auth.py:75-109` 明确锁定该契约 → 属产品决策（随机口令 + 首启打印到控制台？还是强制首次登录改密？） |
+| ~~**[P1] 优先**~~ **已修（第 44 轮后）** 首次启动默认口令 `admin666` + 默认绑 `0.0.0.0`：同网段任何人可登录、删媒体、改口令把主人锁在外面 | `tiklocal/services/auth.py`、`tiklocal/run.py` | 首次启动改为生成随机口令并只打印一次（文件只存哈希）；老实例仍用 `admin666` 时启动打警告并给出改法。详见 §1 |
 | **[P2] 优先** `OUTPUT_ENCODINGS` 把系统首选编码（zh-CN=cp936）排在 UTF-8 之前，而 cp936 解 UTF-8 字节几乎不抛错 → 中文媒体目录下 yt-dlp 的 `Destination:` 行 mojibake，已成功的下载被判无输出 | `tiklocal/services/downloader.py:78-97` | 两种顺序都有反例（cp936 控制台 vs UTF-8 子进程）。正确修法是「解出的路径不存在时换编码重试」，属结构性改动，需连带测试下载状态机 |
 | [P2] 反代部署下 `remote_addr` 恒为 127.0.0.1：登录限流退化为单桶（一人失败全站被锁）、审计日志无真实来源 | `tiklocal/services/auth.py:222` | 需要 `ProxyFix` 或显式的可信代理白名单配置；默认信任 `X-Forwarded-For` 会让直连场景可被伪造，必须先定部署契约 |
 | [P2] 一次 `POST /api/author/sync` 最多 200 条、逐条串行且每条最长 150 s → 单请求可占一个 waitress 线程数小时 | `tiklocal/web/author.py:431-444` | 要改成后台任务 + 进度轮询，牵动作者页前端与 `author_sync` 的既有同步语义 |
@@ -429,18 +481,18 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 
 | 级别 | 问题 | 位置 | 为什么暂不修 |
 | --- | --- | --- | --- |
-| [P0] `records()` 无 LIMIT 的全表 `SELECT *` + fetchall（tag feed、深链 caption feed、作者页、电台都直接用） | `tiklocal/services/library_index.py:285-298` | 需 keyset 分页（`after_uri`）；简单加 LIMIT 会让 feed 少条目 |
-| [P0] feed 每页按全库规模建两份 dict，且一次请求读三次 `favorites.json` | `tiklocal/services/recommendation.py:64-71`、`:101`、`:239` | 候选池改 tuple + favorites 提到请求级解析，需动选择算法 |
-| [P1] 每页都 `COUNT(*)`，与取行是两条独立语句 | `tiklocal/services/library_index.py:543` | 要改 `total` 语义（offset>0 时未知），前端需同步 |
-| [P1] 搜索条件 `(album_key IS NULL OR album_index = 0)` + `LIKE '%term%'` 双重不可索引 | `tiklocal/services/library_index.py:796-809` | 需 FTS5 或前缀索引方案 |
-| [P1] `/library` 每次一次全表 + 一次全索引 + 8 次整月排序 | `tiklocal/services/library_index.py:574-623` | 需拆 `capture_year` 索引与排序键 |
-| [P1] 索引重建单事务 2N 条语句 + 每 source×4 表孤儿全扫，10 万文件 20–60s | `tiklocal/services/library_index.py:42-145` | 分块提交 + 孤儿清扫移出事务 |
-| [P1] `media_vectors`/`video_frames` 在请求路径无界读 BLOB | `tiklocal/experiments/similarity/embedding.py:126-152` | 需 fetchmany 流式 top-K |
-| [P1] `download_payload` 无尺寸上限，且全量 `json.dumps` 发生在全局锁内 | `tiklocal/services/downloader.py:603`、`:1528-1545` | 入队白名单裁剪 + 锁内取快照、锁外序列化 |
-| [P1] `/thumb` 在请求线程排队生成，生成槽位无超时 → 冷缓存首屏可占满 waitress 线程 | `tiklocal/services/thumbnail.py:549` | 要改占位图契约（`acquire(timeout=2)` + `Retry-After`） |
-| [P1] 启动期同步全量扫描，零变化也重写全部行 | `tiklocal/app.py:466`、`tiklocal/services/library_index.py:44-91` | 后台扫描 + `DO UPDATE ... WHERE` 条件更新 |
-| [P1] 窗口宽度变化 1px 即清空 grid 重建全部卡片 | `tiklocal/static/library_page_controller.js:399-411` | 复用已有节点重排（保留监听器与解码结果） |
-| [P1] `?focus=` 深链逐页串行拉全库（最多 200 轮 × 24 条） | `tiklocal/static/library_page_controller.js:501-521` | 生成链接时带 offset，或接口支持 `focus=` |
+| [P1] `records()` 无 LIMIT 的全表 `SELECT *` + fetchall（tag feed、深链 caption feed、作者页、电台都直接用） | `tiklocal/services/library_index.py:285-298` | **仍待修（P1）**；与第 702 行同根因，一次 keyset 分页改法覆盖五处调用。简单加 LIMIT 会让 feed 少条目 |
+| [P1] feed 每页按全库规模建两份 dict，且一次请求读三次 `favorites.json` | `tiklocal/services/recommendation.py:64-71`、`:101`、`:239` | **仍待修（P1）**；候选池改 tuple + favorites 提到请求级解析，需动选择算法 |
+| [P1→关闭] 每页都 `COUNT(*)`，与取行是两条独立语句 | `tiklocal/services/library_index.py:543` | **wontfix（§2）**：2 万行带索引的 COUNT 是毫秒级，改 `total` 语义反而让分页器失去总数 |
+| [P1→关闭] 搜索条件 `(album_key IS NULL OR album_index = 0)` + `LIKE '%term%'` 双重不可索引 | `tiklocal/services/library_index.py:796-809` | **wontfix（§2）**：根治要引 FTS5；低频搜索、2 万行全扫十几毫秒。真正要修的是非 ASCII 文件名搜不到（第 37/38 行），那条会顺手解决本条 |
+| [P1→规矩] `/library` 每次一次全表 + 一次全索引 + 8 次整月排序 | `tiklocal/services/library_index.py:574-623` | **按 §3 转为规矩：不到 2 万文件不修。** 若量到真慢，改法是拆 `capture_year` 索引与排序键 |
+| [P1→关闭] 索引重建单事务 2N 条语句 + 每 source×4 表孤儿全扫，10 万文件 20–60s | `tiklocal/services/library_index.py:42-145` | **wontfix（§2）**：只在启动/手动重建时跑，2 万文件约 4–12 s；已批量化并移出 `ANALYZE`，剩下要到十万文件才显形 |
+| [P1→关闭] `media_vectors`/`video_frames` 在请求路径无界读 BLOB | `tiklocal/experiments/similarity/embedding.py:126-152` | **wontfix（§2）**：`similarity` 是默认关闭的实验特性，只在 `similarity_enabled` 时注册路由；默认用户永远走不到这段代码 |
+| [P1→关闭] `download_payload` 无尺寸上限，且全量 `json.dumps` 发生在全局锁内 | `tiklocal/services/downloader.py:603`、`:1528-1545` | **wontfix（§2）**：一条任务几百字节到几 KB，要到 10 万条任务才撑爆，而那时 `tasks.json` 先写不动；锁内序列化已改成锁内取快照、锁外 `json.dumps` |
+| ~~[P1]~~ **已修（第 44 轮后）** `/thumb` 在请求线程排队生成，生成槽位无超时 → 冷缓存首屏可占满 waitress 线程 | `tiklocal/services/thumbnail.py` | `acquire(timeout=5)` → `ThumbnailBusy` → 占位图/503 + 不写失败标记 + 30 s 一次的日志。详见 §1 |
+| [P1→规矩] 启动期同步全量扫描，零变化也重写全部行 | `tiklocal/app.py:466`、`tiklocal/services/library_index.py:44-91` | **按 §3 转为规矩：不到 2 万文件不修。** 若量到真慢，改法是后台扫描 + `DO UPDATE ... WHERE` 条件更新 |
+| [P1→关闭] 窗口宽度变化 1px 即清空 grid 重建全部卡片 | `tiklocal/static/library_page_controller.js:399-411` | **wontfix（§2）**：有 180 ms 防抖，重建后图片走浏览器缓存；要消除得做节点复用并保留已解码结果，属视觉抖动 |
+| [P1→关闭] `?focus=` 深链逐页串行拉全库（最多 200 轮 × 24 条） | `tiklocal/static/library_page_controller.js:501-521` | **wontfix（§2）**：只在点「我记得是 2023 年 5 月」这类深链时发生，拉的是元数据不是文件；正常路径是滚动加载 |
 | [P2] `image_random` 全量 fetchall + Python shuffle | `tiklocal/services/library_index.py:537-541` | 需 SQL 侧抽样 |
 | [P2] `OFFSET` 无上限，且 temp 表没有 `position` 索引 | `tiklocal/services/library_index.py:520-536`、`tiklocal/web/library.py:55` | 加 `maximum` 与索引 |
 | [P2] `unprobed()` 每 5s 全索引扫（`probed_mtime` 无索引） | `tiklocal/services/library_index.py:249-275` | 加索引或维护待探测队列 |
@@ -645,7 +697,7 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 
 | 描述 | 位置 | 为什么暂不修 |
 | --- | --- | --- |
-| [P1] 设置页首屏 6 个请求跑在 401 包装器安装之前，会话过期时被当空态并可能写回 | `tiklocal/static/settings_page_controller.js`、`base.html` | 需 9 个控制器统一「先装包装器再发请求」的约定，超出最小 diff |
+| [P1] 设置页首屏 6 个请求跑在 401 包装器安装之前，会话过期时被当空态并可能写回 | `tiklocal/static/settings_page_controller.js`、`base.html` | **仍待修（P1）**：代价小、后果恶劣——会话过期会被当成「没有数据」，一保存就把空态写回。需 9 个控制器统一「先装包装器再发请求」的约定 |
 | [P2] `cookie_dir` 可指向任意绝对路径，可覆盖任意 `*.txt`/`*.cookies` | `tiklocal/web/downloads.py`、`tiklocal/services/downloader.py:734` | 需先定「允许哪些目录」的产品语义（数据目录内？任意可写？） |
 | [P2] 关闭认证后安全响应头一起消失，且仍可绑 `0.0.0.0` | `tiklocal/app.py` | 安全头应无条件添加，但要先确认不影响 `--dev` 下的调试体验 |
 | [P2] 限流键用 `remote_addr`，反代后所有请求共用一个桶 | `tiklocal/auth.py` | 需信任代理配置（`ProxyFix` 或白名单），否则可被 `X-Forwarded-For` 绕过 |
@@ -699,7 +751,7 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 
 | 问题 | 位置 | 为什么暂不修 |
 | --- | --- | --- |
-| [P1] `records()` 无 LIMIT，flow 每请求物化整库（19k 行 ≈ 35-40 MB / ~1 s） | `tiklocal/services/library_index.py:410-423`、`tiklocal/web/flow.py:460-464` | 要动 flow 的选片与折叠语义，需单独一轮 |
+| [P1] `records()` 无 LIMIT，flow 每请求物化整库（19k 行 ≈ 35-40 MB / ~1 s） | `tiklocal/services/library_index.py:410-423`、`tiklocal/web/flow.py:460-464` | **仍待修（P1）**；与第 432 行同根因，keyset 分页一次覆盖。要动 flow 的选片与折叠语义 |
 | [P2] 每源新建线程池，`shutdown(wait=True)` 在异常时会白跑 19k 任务并长期持 `_sync_lock` | `tiklocal/services/library_index.py:1411-1417` | 改成有界提交要重排扫描结构 |
 | [P2] `time_states()` 每次扫描/每次下载都建全表 dict（19k 行 ≈ 10 MB） | `tiklocal/services/library_index.py:862-872` | 要改成按需查询 + 索引 |
 | [P2] `image_random` 每页全量排序 + shuffle（19k 行 ≈ 30 ms/页） | `tiklocal/services/library_index.py:664-685` | 需加确定性随机序列列（迁移） |
