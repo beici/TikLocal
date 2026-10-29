@@ -236,10 +236,18 @@ def collapse_media_entries(
     page_media: list[tuple[str, str]],
     records_by_name: dict,
     media_index,
+    stop_after: int | None = None,
 ) -> list[dict]:
-    """Fold album members and live posts into the entries the feed renders."""
+    """Fold album members and live posts into the entries the feed renders.
+
+    ``stop_after`` ends the walk once that many entries exist. Every album cover costs
+    a query for its members, so folding a whole 20k library to render page three spent
+    thousands of queries and tens of MB on entries the caller slices away again.
+    """
     entries: list[dict] = []
     for media_type, name in page_media:
+        if stop_after is not None and len(entries) >= stop_after:
+            break
         record = records_by_name.get(name)
         if record and record.get('album_key'):
             # Group members only surface through their cover's swipeable entry.
@@ -338,9 +346,10 @@ def build_tag_feed_page(
         for record in records
         if tag_matches(str(record.get('name') or ''), tag)
     ]
-    entries = collapse_media_entries(matched, records_by_name, media_index)
     end = page * size
     start = max(0, end - size)
+    # One entry past the slice is enough to answer ``has_more``.
+    entries = collapse_media_entries(matched, records_by_name, media_index, stop_after=end + 1)
     return {
         'items': build_feed_items(entries[start:end], records_by_name, sources_by_id),
         'page': page,

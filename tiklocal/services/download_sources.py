@@ -1,12 +1,13 @@
 """Where a downloaded file came from: the recorded source map and fallbacks."""
 import datetime
 import json
-import os
 import re
 import threading
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+from tiklocal.services.json_storage import StoreUnreadableError, read_json_file, write_json_atomic
 
 SOURCE_MAP_VERSION = 1
 
@@ -153,17 +154,18 @@ class DownloadSourceStore:
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
-    def _read(self) -> dict[str, Any]:
-        if not self.store_path.exists():
-            return {"version": SOURCE_MAP_VERSION, "items": {}, "updated_at": utc_now_iso()}
-        try:
-            with self.store_path.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-        except Exception:
-            return {"version": SOURCE_MAP_VERSION, "items": {}, "updated_at": utc_now_iso()}
+    def _empty_payload(self) -> dict[str, Any]:
         return {"version": SOURCE_MAP_VERSION, "items": {}, "updated_at": utc_now_iso()}
+
+    def _read(self) -> dict[str, Any]:
+        """Return the stored map, or raise StoreUnreadableError.
+
+        A file that exists but cannot be read must never look like an empty map: the
+        next set_many() would write that emptiness back and drop every recorded
+        source. json_storage keeps that distinction, and quarantines real corruption.
+        """
+        data = read_json_file(self.store_path, self._empty_payload())
+        return data if isinstance(data, dict) else self._empty_payload()
 
     def _normalized_payload(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         data = payload if isinstance(payload, dict) else self._read()
@@ -181,19 +183,21 @@ class DownloadSourceStore:
         }
 
     def _write(self, payload: dict[str, Any]) -> None:
-        tmp_path = self.store_path.with_name(self.store_path.name + ".tmp")
-        with tmp_path.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, self.store_path)
+        write_json_atomic(self.store_path, payload)
 
     def get(self, file_rel: str) -> dict[str, Any] | None:
         key = normalize_file_rel(file_rel)
         if not key:
             return None
-        with self._lock:
-            payload = self._normalized_payload()
-            value = payload["items"].get(key)
-            return dict(value) if isinstance(value, dict) else None
+        try:
+            with self._lock:
+                payload = self._normalized_payload()
+                value = payload["items"].get(key)
+                return dict(value) if isinstance(value, dict) else None
+        except StoreUnreadableError:
+            # A read-only caller cannot repair the file; showing no source beats
+            # failing the request that only wanted to render a badge.
+            return None
 
     def get_many(self, file_rels: list[str]) -> dict[str, dict[str, Any] | None]:
         normalized = [normalize_file_rel(item) for item in file_rels]
@@ -201,12 +205,15 @@ class DownloadSourceStore:
         result: dict[str, dict[str, Any] | None] = {}
         if not normalized:
             return result
-        with self._lock:
-            payload = self._normalized_payload()
-            items = payload["items"]
-            for key in normalized:
-                value = items.get(key)
-                result[key] = dict(value) if isinstance(value, dict) else None
+        try:
+            with self._lock:
+                payload = self._normalized_payload()
+                items = payload["items"]
+                for key in normalized:
+                    value = items.get(key)
+                    result[key] = dict(value) if isinstance(value, dict) else None
+        except StoreUnreadableError:
+            return {}
         return result
 
     def set_many(self, records: dict[str, dict[str, Any]]) -> int:

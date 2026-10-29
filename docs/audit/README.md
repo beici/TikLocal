@@ -40,6 +40,7 @@
 | 22 | 2026-10-29 | 591P/7S/0F | 0/3/30/35（七域 68 + 独立复审 9 = 77，修复 18，驳回 1，转 backlog 54） | `fix: keep canceled downloads indexed, bound the password store and stop the history rebuild`，17 文件 | [round-22](round-22.md) |
 | 23 | 2026-10-29 | 602P/8S/0F | 0/7/25/21（七域 53，去重 51：P1 6 + P2 24 + P3 21；修复 24，复审另提 4 条阻塞项并当轮修完，转 backlog 27） | `fix: hand the keyboard back to buttons, dialogs and the feed`，17 文件 `+415/-31` | [round-23](round-23.md) |
 | 24 | 2026-10-29 | 602P/8S/0F | 0/4/26/19（七域 49，去重 46；修复 28：P1 4 + P2 19 + P3 5，转 backlog 18，并入既有 3） | `fix: log startup failures, keep partial downloads and stop the silent 500s`，21 文件 `+530/-113` | [round-24](round-24.md) |
+| 25 | 2026-10-29 | 602P/8S/0F | 0/6/27/17（七域 50，去重 50；修复 15：P1 5 + P2 7 + P3 3，其中 5 条为复审追加，P1 中 1 条第 23 轮已修，转 backlog 40） | `fix: keep the source map, the big-image slot and the log file alive`，20 文件 `+636/-79` | [round-25](round-25.md) |
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
 
@@ -87,8 +88,11 @@
 
 第 24 轮结束后：`pytest -q` = **602 passed / 8 skipped / 0 failed**（232.98s，本轮未新增用例）。视角换成「后端错误路径与边界」，七个域按代码层切。P0 为 0，P1 有 4 条（无控制台宿主上启动失败零日志、失败任务重试时 `_persist_locked` 抛错留下永久「排队中」、`register_uris` 在请求线程里无超时等索引锁、`download_avatar` 固定临时名并发撕裂），全部当轮修完。另有两条「改了又回退」值得记下：把缩略图缓存键扩到全部来源会让 CLI 与 web 的缓存复用契约失效（`tests/test_thumbnails.py` 当场抓到），作者搜索 503→400 属产品语义变更（两条既有用例失败）——两者都转 backlog 并写明前置条件。还修了 2 条自测发现的连带问题：`_quarantine_database()` 的 WAL/SHM 只 `unlink` 会让新库带着旧 WAL 打开、`migrate()` 读到旧 `schema_migrations` 跳过全部迁移；缩略图候选帧循环没有总预算（时长探测 + 色彩探测 + 最多 4 次 ffmpeg 串起来能把 waitress worker 钉住数分钟，而槽位只有 2 个）。
 
+第 25 轮结束后：`pytest -q` = **602 passed / 8 skipped / 0 failed**（241.13s，本轮未新增用例）。视角换成「内存与资源预算 + 长时运行稳定性」，七个域按资源归属切，域级明细另存 `round-25-r1.md`…`round-25-r5.md`。P0 为 0，P1 有 6 条（读失败把来源映射整表覆盖成单条、4 槽位并发解码大图峰值近 3 GB、`If-Range` 不匹配时全文件走生成器把 worker 钉死、话题流每翻一页重建全库并逐专辑查成员、两进程共写 `tiklocal.log` 时轮转失败后日志静默死亡，以及第 23 轮已修、本轮复核确认的电台偏好跨账号泄漏），当轮修完 5 条。修完 P2 5 条，其余 40 条转 backlog 并写明「为什么暂不修」。刻意不修一条：限流表满时新键不记录是第 21 轮加 `MAX_KEYS` 时的有意取舍（驱逐仍在封禁窗口内的地址比少记一次失败更糟），要改需换前缀聚合或全局令牌桶。下一轮建议视角是「外部依赖与网络边界」，那是唯一还没单独覆盖过的维度。
+
 ## 目录
 
 - `round-NN.md`：每轮审查报告（发现、复现、处置、检索、修复、验证）
+- `round-NN-rX.md`：某一轮里单个域的审查明细（本轮起用于保留域级表格）
 - `backlog.md`：未修问题（按严重度排序，含暂不修理由与前置条件）
 - `proposals/`：需要跨模块重构的方案（评审后才动代码）

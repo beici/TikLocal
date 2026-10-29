@@ -68,6 +68,31 @@ class RedactFilter(logging.Filter):
         return True
 
 
+class _SharedRotatingFileHandler(RotatingFileHandler):
+    """Rotate the shared log file without letting a lock kill logging for good.
+
+    Every CLI subcommand configures logging, so the server and a short-lived command
+    can hold the same ``tiklocal.log`` at once. On Windows the rollover renames the
+    active file, which fails with ``WinError 32`` while the other process has it open.
+    ``RotatingFileHandler`` closes the stream *before* trying and never reopens it, so
+    every later record -- including the traceback that explains the failure -- was
+    dropped silently. Reopening here keeps the log alive and retries the rotation on
+    the next full file.
+    """
+
+    def doRollover(self) -> None:  # pragma: no cover - needs a held file handle
+        try:
+            super().doRollover()
+        except OSError:
+            if self.stream is None:
+                try:
+                    self.stream = self._open()
+                except OSError:
+                    # Still locked: the next emit goes to stderr only, and the next
+                    # rollover attempt tries the rename again.
+                    self.stream = None
+
+
 def configure_logging(log_dir, level: int = logging.INFO) -> logging.Logger:
     """Attach a console handler and a rotating file handler exactly once."""
     root = logging.getLogger()
@@ -86,7 +111,7 @@ def configure_logging(log_dir, level: int = logging.INFO) -> logging.Logger:
     try:
         log_dir = Path(log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
-        file_handler = RotatingFileHandler(
+        file_handler = _SharedRotatingFileHandler(
             log_dir / LOG_FILE_NAME,
             maxBytes=MAX_LOG_BYTES,
             backupCount=BACKUP_COUNT,

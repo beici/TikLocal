@@ -838,8 +838,31 @@ class DownloadManager:
         normalized = [item for item in normalized if item]
         normalized = list(dict.fromkeys(normalized))
         result: dict[str, dict[str, Any] | None] = {}
+        if not normalized:
+            return result
+        # One read for the whole batch: a store that is unreadable costs its five
+        # retries once here instead of once per file (200 files used to pin a worker
+        # for ~100 s), and legacy keys are fetched in the same pass.
+        keys: list[str] = []
+        legacy_by_file: dict[str, str] = {}
         for file_rel in normalized:
-            result[file_rel] = self.resolve_source_for_file(file_rel)
+            keys.append(file_rel)
+            legacy = self._strip_output_source_prefix(file_rel)
+            if legacy != file_rel:
+                legacy_by_file[file_rel] = legacy
+                keys.append(legacy)
+        mapped: dict[str, dict[str, Any] | None] = {}
+        if self.source_store:
+            try:
+                mapped = self.source_store.get_many(keys)
+            except OSError:
+                mapped = {}
+        for file_rel in normalized:
+            found = mapped.get(file_rel) or mapped.get(legacy_by_file.get(file_rel, ''))
+            if found:
+                result[file_rel] = normalize_source_meta(found, resolved_by="map")
+                continue
+            result[file_rel] = self._resolve_source_from_info_json(file_rel) or source_from_filename(file_rel)
         return result
 
     def delete_source_for_file(self, file_rel: str) -> bool:
@@ -1623,7 +1646,12 @@ class DownloadManager:
                 continue
             records[key] = dict(base_meta)
         if records:
-            self.source_store.set_many(records)
+            try:
+                self.source_store.set_many(records)
+            except OSError as exc:
+                # The download itself succeeded; an unreadable source map must not
+                # turn it into a failure, and the file is left untouched on disk.
+                LOGGER.warning("Could not record the source of %d file(s): %s", len(records), exc)
 
     def _resolve_source_from_map(self, file_rel: str) -> dict[str, Any] | None:
         if not self.source_store:
@@ -1642,7 +1670,12 @@ class DownloadManager:
             return None
         meta = source_from_info_json(media_file)
         if meta and self.source_store:
-            self.source_store.set_many({file_rel: dict(meta)})
+            try:
+                self.source_store.set_many({file_rel: dict(meta)})
+            except OSError as exc:
+                # Showing the source from the sidecar file still works without the
+                # map; failing here would only break the caller that renders it.
+                LOGGER.warning("Could not cache the source of %s: %s", file_rel, exc)
         return meta
 
     def _resolve_media_file_path(self, file_rel: str) -> Path | None:

@@ -94,8 +94,22 @@ class TrashService:
                 continue
             for folder in root.iterdir():
                 entry = self._read(folder)
-                if entry:
-                    items.append({**entry, 'id': f"{source.id}.{folder.name}"})
+                if not entry:
+                    continue
+                deleted_at = str(entry.get('deleted_at') or '')
+                if not deleted_at:
+                    # A manifest written before the timestamp existed (or edited by
+                    # hand) used to raise KeyError from the sort key, and that ran
+                    # during startup: one bad entry kept the whole app from booting.
+                    # Falling back to the folder's own mtime keeps the entry listed
+                    # and purgeable instead of hiding it from /api/trash forever.
+                    try:
+                        deleted_at = datetime.datetime.fromtimestamp(
+                            folder.stat().st_mtime, datetime.timezone.utc,
+                        ).isoformat(timespec='seconds')
+                    except OSError:
+                        continue
+                items.append({**entry, 'deleted_at': deleted_at, 'id': f"{source.id}.{folder.name}"})
         return sorted(items, key=lambda item: item['deleted_at'], reverse=True)
 
     def expired(self) -> list[str]:

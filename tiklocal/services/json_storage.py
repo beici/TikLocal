@@ -104,12 +104,16 @@ def quarantine_corrupt_file(path: Path) -> Path | None:
 def _prune_quarantine(path: Path) -> None:
     """Keep only the newest quarantined copies so they cannot grow without bound."""
 
-    copies = sorted(
-        (candidate for candidate in path.parent.glob(f'{path.name}.corrupt*') if candidate.is_file()),
-        key=lambda candidate: candidate.stat().st_mtime,
-        reverse=True,
-    )
-    for stale in copies[_QUARANTINE_KEEP:]:
+    copies: list[tuple[float, Path]] = []
+    for candidate in path.parent.glob(f'{path.name}.corrupt*'):
+        try:
+            if candidate.is_file():
+                copies.append((candidate.stat().st_mtime, candidate))
+        except OSError:
+            # Another process pruning at the same time: nothing to keep here, and a
+            # FileNotFoundError escaping this helper would turn a read into a 500.
+            continue
+    for _, stale in sorted(copies, reverse=True)[_QUARANTINE_KEEP:]:
         try:
             stale.unlink()
         except OSError:

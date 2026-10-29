@@ -1,5 +1,6 @@
 import contextlib
 import datetime
+import hashlib
 import json
 import sqlite3
 import time
@@ -498,6 +499,23 @@ class MediaActivityStore:
         "skip": -0.035,
     }
     MAX_EVENTS = 20_000
+    # A library uri is a relative path, and the caller's metadata blob is opaque: both
+    # used to be stored verbatim, so one crafted /api/activity request could write a
+    # multi-megabyte row into the events table.
+    MAX_URI_CHARS = 512
+    MAX_METADATA_CHARS = 2_048
+
+    @classmethod
+    def _bounded_uri(cls, uri: str) -> str:
+        """Trim a path that is longer than any real library path, keeping it unique.
+
+        A plain slice made two long paths share a key, so their affinity weights
+        merged while ``profiles_for()`` (which gets the real uri) found neither.
+        """
+        if len(uri) <= cls.MAX_URI_CHARS:
+            return uri
+        digest = hashlib.sha1(uri.encode('utf-8')).hexdigest()[:8]
+        return f"{uri[:cls.MAX_URI_CHARS - len(digest) - 1]}:{digest}"
 
     def __init__(self, database: AppDatabase):
         self.database = database
@@ -520,7 +538,7 @@ class MediaActivityStore:
         accepted = 0
         with self.database.connect() as conn:
             for raw in events[:50]:
-                uri = str(raw.get("uri") or raw.get("name") or "").strip()
+                uri = self._bounded_uri(str(raw.get("uri") or raw.get("name") or "").strip())
                 event_type = str(raw.get("event") or raw.get("event_type") or "").strip()
                 media_type = str(raw.get("media_type") or "").strip()
                 surface = str(raw.get("surface") or "flow").strip()[:32]
@@ -532,6 +550,9 @@ class MediaActivityStore:
                 ratio = self._bounded_float(raw.get("ratio"), 0.0, 1.0)
                 visible_ms = self._bounded_int(raw.get("visible_ms"), 0, 86_400_000)
                 metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+                metadata_json = json.dumps(metadata, ensure_ascii=False)
+                if len(metadata_json) > self.MAX_METADATA_CHARS:
+                    metadata_json = json.dumps({"truncated": True}, ensure_ascii=False)
                 conn.execute(
                     """
                     INSERT INTO media_events(
@@ -540,7 +561,7 @@ class MediaActivityStore:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (session_id, uri, media_type, surface, event_type, ratio,
-                     visible_ms, json.dumps(metadata, ensure_ascii=False), now),
+                     visible_ms, metadata_json, now),
                 )
                 self._update_affinity(conn, uri, media_type, event_type, ratio, visible_ms, now)
                 self._update_dimensions(conn, uri, media_type, event_type, now)

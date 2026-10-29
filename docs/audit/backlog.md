@@ -274,4 +274,43 @@
 | [P3] 配置只校验已知键，`prot: 9000`/`medai_root:` 这类拼错静默忽略并按默认值启动，零 warning | `tiklocal/run.py:104-159` | 加顶层键白名单会与「未来新增键」冲突，需先定兼容策略（警告 vs 报错） |
 | [P3] `docs/https.md` 称 `https: yes` 是 startup error，但 PyYAML 把 `yes` 解析成 True 放行、静默以 HTTPS 起在 8443（compose 只发布 8000）；`run.py:134-136` 的注释把同一事实说反 | `docs/https.md:32-34`、`tiklocal/run.py:134-136` | 改示例与注释即可，但要同时决定 `https: yes` 是「接受」还是「报错」——若报错需加类型白名单（与上一行同批） |
 
+## 第 25 轮新增（按严重度）
+
+本轮视角是**内存与资源预算 + 长时运行稳定性**：7 个域共 50 条发现，修 15 条（5×P1 + 7×P2 + 3×P3，其中 5 条由复审追加），其余 40 条如下（含复审新增 1 条）。P1 全部当轮修完，故下表从 P2 开始。**优先做**：下载任务对象只增不减（前两行，长跑进程的主要增长源）与缩略图缓存无淘汰（第三行）。
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| **[P2] 优先** `_jobs`/`_job_order`/`_cancel_events`/`_progress_persist_at` 只在手动删除任务时回收，200 条上限只作用于落盘 → 一个常跑实例处理万级任务后常驻数十 MB，且 `_job_order` 越长每次遍历越慢 | `tiklocal/services/downloader.py:433-437` | 要在「保留历史给 UI 看」与「进程内只留活跃任务」之间划线：需要给已完成任务加 TTL 或改成按需从 jobs.json 读，牵动下载页历史列表与测试 |
+| **[P2] 优先** 任务终态后 `download_payload` 仍随 job 常驻，而 jobs.json 每秒全量重写 → 2 并发时约 2-6 MB/s 的写放大并全程持锁 | `tiklocal/services/downloader.py:1466-1468` | 清空字段会让「已完成任务详情」变空，需先决定详情页是否改从产物目录反查；属产品取舍 |
+| **[P2] 优先** 缩略图缓存无条目上限与淘汰：媒体被外部删除后 `.jpg` 永不回收，长期可涨到数 GB | `tiklocal/services/thumbnail.py:353-390` | 要引入 LRU 或按 mtime 清理，必须先解决「CLI 与 web 共用同一缓存目录」的并发写（两进程同时淘汰会互删对方正在写的文件） |
+| [P2] 批量入队对每条 URL 各做一次全量落盘与 `probe_binary`，5000 条时单请求占死一个 waitress 线程数分钟 | `tiklocal/web/downloads.py:246-261` | 需改成「先校验全部、再一次性落盘」，并把探测结果缓存到进程内；会改变部分失败时的返回语义 |
+| [P2] `/api/source` 未命中即整表重写来源映射，随库规模 O(n²) I/O（临时文件已改为唯一名 + 重试） | `tiklocal/services/downloader.py:1639-1646` | 写放大本身要改成追加日志或分片；本轮只修了「读失败覆盖整表」与固定 `.tmp` 两个真故障 |
+| [P2] sidecar 响应 `read()` 无大小上限：`source=true` 取百条原始作品约 4 MB JSON 只为读 id | `tiklocal/services/tiktok_downloader.py:302-303` | 需要给 `urlopen` 响应加 `read(limit)` 并定义超限行为（截断会破坏 JSON），属外部接口契约 |
+| [P2] `/thumb` 先 `read_bytes()` 再判 304：no-cache 下每次条件请求都白读整份缩略图 | `tiklocal/web/media.py:531-543` | 要改成 `send_file(conditional=True)` 或先比 ETag 再开文件；单次 ≤200KB，属读放大而非内存问题 |
+| [P2] 每次 `GET /api/trash` 把回收站目录全量扫两遍（`entries()` + `expired()`），2000 条约占线程 1-2 s | `tiklocal/web/media.py:287-288` | 要合并成一次扫描并把结果同时给两个消费者；需确认前端是否依赖两次独立快照 |
+| [P2] 候选缓存键取未校验的 `blog` 查询串且从不删键，进程内键空间只增不减 | `tiklocal/services/recommendation.py:79-87` | 加键校验会改变「非法 blog 退回默认池」的既有行为；上限策略要先定（LRU 还是按来源） |
+| [P2] 标注元数据每次读写都整份解析并重写 JSON，20k 条约 10 MB 且全程持锁串行 | `tiklocal/services/metadata.py:15-17` | 要改成增量写（SQLite 或追加日志），牵动导出/备份格式 |
+| [P2] 超 4 小时曲目提前断流致 ffmpeg 非零退出、恒返回 None，且每次请求重解 4 小时音频 | `tiklocal/services/radio_energy.py:225-226` | 需要给「超长曲目」定义降级策略（抽样解码或按段缓存），属算法改动 |
+| [P2] AI 标注前先全分辨率解码再缩到 1536px，大 PNG 单请求峰值可达 300 MB 以上 | `tiklocal/services/captions.py:430-436` | 要复用缩略图管线的 `draft()`/`reduce()` 逻辑，但标注需要比 640px 更高的分辨率，阈值要单独定 |
+| [P2] Quick Viewer 图片直取原图，翻页无守卫无节流：按住方向键约 30 req/s 打满线程池 | `tiklocal/static/library_page_controller.js:840` | 需要 `event.repeat` 守卫 + 请求代际号 + 预取窗口，与第 23 轮键盘守卫同批做更稳 |
+| [P2] 隐藏的全屏层 eager 拉原图，控制器又 `new Image` 二次请求并常驻，24MP 峰值 200 MB+ | `tiklocal/templates/image_detail.html:163`、`tiklocal/static/image_detail_page_controller.js:51` | 要改成按需加载并在关闭时释放 `fullImage.src`；需确认打开动画的首帧不闪 |
+| [P2] 放大镜关闭不清 `backgroundImage`，原图解码位图与 2.5× 光栅常驻，每换一张钉住一张大图 | `tiklocal/static/flow_ui_shared.js:108` | 一行即可清，但要在 `close()` 与「切换图片」两条路径都清，且不破坏正在放大的实例 |
+| [P2] 房间音效 `cache` 只写不删：切过雨→雪→火→夜后四套 PCM 常驻约 70 MB（48 kHz），iOS Safari 有整页被回收风险 | `tiklocal/static/radio_ambience.js:49`、`:243-248` | 需要在 `stop()` 后 `delete cache[key]`，但连续切房间时重算 168 s 噪声会有 1-2 s 卡顿，要加淡出与预取 |
+| [P2] 下载页 `api()` 无 `AbortSignal`，`refreshJobs → renderJobs → schedulePolling` 自链在后端半断时断掉，进度条永久冻结且零提示 | `tiklocal/static/download_page_controller.js:24-28` | 加 `AbortSignal.timeout()` 会走已有 catch 退避分支，但要确认 15 s 对慢 NAS 不误判 |
+| [P2] 作者页 `postJSON` 无超时，`setBusy(true)` 后靠 `finally` 解锁 → 后端卡住时输入框与三个按钮永久禁用 | `tiklocal/static/author_page_controller.js:107-115` | 与设置页同款改法（`AbortSignal.timeout(120000)`），但要同时改「同步中」提示的文案与重试入口 |
+| [P2] 损坏数据库副本无上限：每次启动隔离一份 `*.corrupt-*`，反复启动会把数据目录撑满 | `tiklocal/app.py:132-166` | 需按数量或总大小保留最近 N 份，并决定是否在 UI 提示用户清理 |
+| [P2] 登录限流表满且所有桶仍在窗口内时，新键不记录（防的是「驱逐活桶=给攻击者清零」） | `tiklocal/auth.py:38-43` | 这是第 21 轮加 `MAX_KEYS` 时的有意取舍：驱逐一个仍在封禁的地址比少记一次失败更糟。要改需换成按前缀聚合或全局令牌桶 |
+| [P2] `media_affinity` 每 uri 一行且只增不减，重下载/改名累积孤儿行，10 万行约 20 MB | `tiklocal/services/database.py:631-684` | 需在索引重建时对账（`replace_snapshot` 里删孤儿），但改名场景无法区分「改名」与「删除+新增」 |
+| [P2] `Executor.map` 先建满 19k 个 Future，与 `records`、`time_states` 同刻存活，冷扫峰值 55-60 MB | `tiklocal/services/library_index.py:1105-1111` | 要改成分批 `submit` 或流式消费，牵动扫描进度回调与并发上限语义 |
+
+P3：17 条（R1 3 / R2 3 / R3 1 / R4 3 / R5 2 / R6 1 / R7 4）。值得留意的三条：`tiklocal/services/trash.py` 的 `expired()` 与 `entries()` 各扫一遍（与上表 `/api/trash` 同条）、`tiklocal/static/library_page_controller.js:779` 的 `quickImage.src=''` 与别处释放写法不一致、`tiklocal/static/radio_scene.js:302-306` 换曲时每帧 `blend()`×2 + `uploadArt()`（每曲约 2200 万次数组写与 78 次 256² 纹理重传，约 18 曲/小时）。
+
+### 第 25 轮复审后新增（1 条）
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| [P3] 第二进程长期占用日志文件时 `shouldRollover` 恒为真，**每条**记录都会跑一遍失败的 `doRollover`（重命名 + 重开）。本轮修的是「失败后 handler 不再静默死亡」，但没有减少无谓 syscall | `tiklocal/logging_setup.py:84-93` | 加 30 s 冷却即可（记住上次轮转失败时刻），但改动落在日志路径上，收益只是 syscall 数量，留到下一轮与「日志级别/容量策略」一起看 |
+
+复审给出的其余 8 条已在当轮补修（槽位顺序、draft 后判定、`acquire` 超时、批量 `get_many`、trash mtime 兜底、`_prune_quarantine` 的 `stat` 守卫、`wsgi.file_wrapper` 回退、超长 uri 前缀+哈希），详见 `round-25.md` 第十三节。
+
 

@@ -213,3 +213,23 @@ document.addEventListener(
   true,
 );
 
+// 重试成功后同一个 <img> 会再触发 load（状态栏「重试」换 src、断网自动重试、搜索卡片
+// 换兜底头像都走这条路）。隐藏和底色原本是单向的，于是图已经解码成功却永久空白；
+// load 时把 error 那一步撤销即可。
+document.addEventListener(
+  'load',
+  (event) => {
+    const img = event.target;
+    if (!(img instanceof HTMLImageElement)) return;
+    if (!img.dataset.fallbackApplied) return;
+    delete img.dataset.fallbackApplied;
+    img.style.visibility = '';
+    const parent = img.parentElement;
+    if (parent && parent.dataset.imageFallback) {
+      delete parent.dataset.imageFallback;
+      parent.style.background = '';
+    }
+  },
+  true,
+);
+

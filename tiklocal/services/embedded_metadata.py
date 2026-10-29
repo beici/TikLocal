@@ -9,6 +9,11 @@ JPEG_SOS = 0xDA
 JPEG_EOI = 0xD9
 JPEG_COM = 0xFE
 
+#: JPEG header segments (APPn, COM, DQT) all precede the first scan, so a comment
+#: never sits deeper than a few kilobytes into a normal file. 4 MB leaves room for
+#: an oversized XMP/ICC block without ever loading the pixel data.
+_HEADER_READ_LIMIT = 4 * 1024 * 1024
+
 
 def _decode_comment(data: bytes) -> str:
     for encoding in ("utf-8", "utf-16", "latin-1"):
@@ -22,7 +27,12 @@ def _decode_comment(data: bytes) -> str:
 def read_jpeg_comments(path: Path) -> list[str]:
     comments: list[str] = []
     try:
-        data = path.read_bytes()
+        # Comments live in the header segments, before the first scan: reading the
+        # whole file pulled a 20 MB photo into memory to inspect its first
+        # kilobytes. A header larger than this cap is padded past any real use, and
+        # a truncated walk simply finds fewer comments instead of wrong ones.
+        with path.open('rb') as handle:
+            data = handle.read(_HEADER_READ_LIMIT)
     except OSError:
         return comments
     if not data.startswith(JPEG_SOI):

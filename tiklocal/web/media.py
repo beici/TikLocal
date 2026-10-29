@@ -342,6 +342,61 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         if not uri: return redirect('/library')
         return redirect(f"/delete/{quote(uri)}")
 
+    def _media_validators(target):
+        """The ``(etag, last_modified)`` pair for one file, or None when unreadable."""
+        try:
+            stat = target.stat()
+        except OSError:
+            return None
+        # Same shape as ``werkzeug.utils.send_file`` so the 200 path and the
+        # hand-built range paths answer with one identical validator.
+        check = zlib.adler32(str(target).encode()) & 0xFFFFFFFF
+        return f'{stat.st_mtime}-{stat.st_size}-{check}', formatdate(stat.st_mtime, usegmt=True)
+
+    def _if_range_allows_range(value, target):
+        """Whether an ``If-Range`` validator still selects the same representation."""
+        validators = _media_validators(target)
+        if not validators:
+            return False
+        etag, last_modified = validators
+        candidate = value.strip()
+        if candidate.startswith('W/'):
+            # RFC 9110: a weak validator may never be used to select a range.
+            return False
+        if candidate.startswith('"') and candidate.endswith('"') and len(candidate) > 1:
+            candidate = candidate[1:-1]
+        return candidate == etag or value.strip() == last_modified
+
+    def _whole_file_media(target):
+        """Answer 200 for a file whose Range must be ignored, off the worker thread.
+
+        Reached when ``If-Range`` no longer matches: RFC 9110 then requires the whole
+        representation, and ``send_file()`` would stream it through the generator-based
+        ``RangeWrapper`` that waitress copies in the request thread. A client asking for
+        one byte of a 2 GB file with a stale validator could pin a worker for the whole
+        transfer, so the body is built here and moved off-thread by the file wrapper.
+        """
+        try:
+            size = target.stat().st_size
+            handle = open(target, 'rb')
+        except OSError:
+            return None
+        wrapper = request.environ.get('wsgi.file_wrapper')
+        body = None
+        if wrapper is not None:
+            try:
+                body = wrapper(handle, 64 * 1024)
+            except Exception:  # noqa: BLE001 - a hostile wrapper must not leak the handle
+                body = None
+        if body is None:
+            body = _iter_reader(_BoundedReader(handle, 0, size))
+        response = Response(body, status=200, direct_passthrough=True)
+        response.headers['Content-Length'] = str(size)
+        response.headers['Accept-Ranges'] = 'bytes'
+        response.headers['Cache-Control'] = 'private, no-cache'
+        response.mimetype = mimetypes.guess_type(target.name)[0] or 'application/octet-stream'
+        return _apply_media_validators(response, target)
+
     def _apply_media_validators(response, target):
         """Give hand-built media responses the same validators as ``send_file``.
 
@@ -350,15 +405,12 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         ship without either. A player that revalidates a partially downloaded range
         then had nothing to compare and re-downloaded the whole file.
         """
-        try:
-            stat = target.stat()
-        except OSError:
+        validators = _media_validators(target)
+        if validators is None:
             return response
-        # Same shape as ``werkzeug.utils.send_file`` so the 200 path and the
-        # hand-built range paths answer with one identical validator.
-        check = zlib.adler32(str(target).encode()) & 0xFFFFFFFF
-        response.set_etag(f'{stat.st_mtime}-{stat.st_size}-{check}')
-        response.headers['Last-Modified'] = formatdate(stat.st_mtime, usegmt=True)
+        etag, last_modified = validators
+        response.set_etag(etag)
+        response.headers['Last-Modified'] = last_modified
         return response
 
     def _ranged_media(target):
@@ -372,9 +424,16 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         """
         if request.method != 'GET':
             return None
-        if (request.headers.get('If-None-Match') or request.headers.get('If-Modified-Since')
-                or request.headers.get('If-Range')):
-            return None  # send_file owns 304 / If-Range semantics
+        if request.headers.get('If-None-Match') or request.headers.get('If-Modified-Since'):
+            return None  # send_file owns the 304 decision
+        if_range = (request.headers.get('If-Range') or '').strip()
+        if if_range and not _if_range_allows_range(if_range, target):
+            # RFC 9110: a stale If-Range makes the server ignore the Range and send the
+            # whole representation. send_file() would stream that body through the
+            # generator-based RangeWrapper that waitress copies in the request thread,
+            # so a client asking for one byte of a 2 GB file with a stale validator
+            # pinned this worker for the whole transfer. Build the full response here.
+            return _whole_file_media(target)
         try:
             size = target.stat().st_size
         except OSError:

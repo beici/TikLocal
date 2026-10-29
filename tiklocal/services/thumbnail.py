@@ -60,6 +60,17 @@ THUMB_VERSION = 2
 #: while still letting a multi-core box fill the grid faster than two at a time.
 _GENERATE_SLOTS = threading.BoundedSemaphore(max(2, min(4, (os.cpu_count() or 4) // 2)))
 
+#: A single image above ``REDUCE_ABOVE_PIXELS`` costs several hundred MB while it
+#: decodes, and ``draft()`` cannot shrink a PNG or WebP before that. Four of them at
+#: once (one per slot) is how a cold grid over a folder of large scans reached the
+#: process memory ceiling, so the big ones decode one at a time instead.
+_BIG_IMAGE_SLOT = threading.BoundedSemaphore(1)
+
+#: How long a big image waits for that slot before giving up. Long enough for a
+#: slow 100 MP decode plus the save, short enough that a wedged decoder cannot
+#: park every request for a tile that will never appear.
+_BIG_IMAGE_WAIT_SEC = 180.0
+
 #: `+=` is not atomic: two threads could build the same temporary name, and the
 #: loser's replace would publish the other frame as its own thumbnail.
 _TEMP_COUNTER = itertools.count(1)
@@ -500,14 +511,16 @@ class ThumbnailService:
     def _generate(self, video_path: Path, output_path: Path, timestamp: float | None, *, auto_timestamp: bool) -> bool:
         # Decoding one 24MP JPEG peaks at ~192MB; six concurrent cold thumbnails
         # took RSS to ~983MB. Two slots keeps the peak bounded and still parallel.
+        # Images take their slots inside _generate_image() so a big one waits for the
+        # big-image slot *before* holding a generate slot; the old order let one huge
+        # PNG park every generate slot on the big-image semaphore and stall the grid.
+        if video_path.suffix.lower() in IMAGE_EXTENSIONS:
+            return self._generate_image(video_path, output_path)
         with _GENERATE_SLOTS:
             return self._render(video_path, output_path, timestamp, auto_timestamp=auto_timestamp)
 
     def _render(self, video_path: Path, output_path: Path, timestamp: float | None, *, auto_timestamp: bool) -> bool:
         suffix = video_path.suffix.lower()
-
-        if suffix in IMAGE_EXTENSIONS:
-            return self._generate_image(video_path, output_path)
 
         # Audio: extract embedded cover art
         if suffix in AUDIO_EXTENSIONS:
@@ -615,28 +628,51 @@ class ThumbnailService:
                 icc_profile = source.info.get('icc_profile')
                 # draft() lets libjpeg decode at 1/2, 1/4 or 1/8 scale: asking for
                 # 2x the 640px target keeps the final LANCZOS pass at full quality
-                # (a 24MP photo drops from ~101MB extra RSS to ~6MB).
+                # (a 24MP photo drops from ~101MB extra RSS to ~6MB). It runs before
+                # the slot decision on purpose: a 60MP JPEG that draft() shrinks to
+                # 900px decodes in milliseconds and must not queue behind a huge PNG.
                 source.draft('RGB', (1280, 1280))
                 pixels = source.size[0] * source.size[1]
-                if pixels > REDUCE_ABOVE_PIXELS:
-                    # draft() only helps JPEG, so a huge PNG still arrives at full
-                    # size; reducing by an integer factor keeps the LANCZOS input
-                    # bounded and leaves the visible result identical.
-                    factor = math.isqrt(pixels // REDUCE_ABOVE_PIXELS) + 1
-                    source = source.reduce(factor)
-                image = ImageOps.exif_transpose(source)
-                image.thumbnail((640, 640), Image.Resampling.LANCZOS)
-                if has_alpha:
-                    rgba = image.convert('RGBA')
-                    background = Image.new('RGB', rgba.size, (247, 246, 242))
-                    background.paste(rgba, mask=rgba.getchannel('A'))
-                    image = background
-                else:
-                    image = image.convert('RGB')
-                options: dict[str, Any] = {'quality': 84, 'optimize': True, 'progressive': True}
-                if icc_profile:
-                    options['icc_profile'] = icc_profile
-                image.save(output_path, 'JPEG', **options)
+                # draft() only rescales JPEG; a PNG or WebP of this size decodes at full
+                # size first, so one of these can hold several hundred MB while four
+                # ordinary photos would fit in the same memory. Big ones therefore take
+                # a single slot of their own instead of scaling with the grid's slots.
+                big = pixels > REDUCE_ABOVE_PIXELS
+                if big and not _BIG_IMAGE_SLOT.acquire(timeout=_BIG_IMAGE_WAIT_SEC):
+                    # A decode that never finishes must not park the whole grid: fail
+                    # this tile and let the next request try again.
+                    logger.warning(
+                        'thumbnail for %s waited %ss for the big-image slot; skipping it',
+                        image_path.name, int(_BIG_IMAGE_WAIT_SEC),
+                    )
+                    return False
+                try:
+                    with _GENERATE_SLOTS:
+                        if pixels > REDUCE_ABOVE_PIXELS:
+                            # Reducing by an integer factor keeps the LANCZOS input bounded
+                            # and leaves the visible result identical.
+                            factor = math.isqrt(pixels // REDUCE_ABOVE_PIXELS) + 1
+                            source = source.reduce(factor)
+                        # in_place rotates the decoded buffer instead of building a second
+                        # full-size copy (72 MB each at 24 MP); the copy form is the fallback
+                        # for Pillow builds that return a new image anyway.
+                        rotated = ImageOps.exif_transpose(source, in_place=True)
+                        image = source if rotated is None else rotated
+                        image.thumbnail((640, 640), Image.Resampling.LANCZOS)
+                        if has_alpha:
+                            rgba = image.convert('RGBA')
+                            background = Image.new('RGB', rgba.size, (247, 246, 242))
+                            background.paste(rgba, mask=rgba.getchannel('A'))
+                            image = background
+                        else:
+                            image = image.convert('RGB')
+                        options: dict[str, Any] = {'quality': 84, 'optimize': True, 'progressive': True}
+                        if icc_profile:
+                            options['icc_profile'] = icc_profile
+                        image.save(output_path, 'JPEG', **options)
+                finally:
+                    if big:
+                        _BIG_IMAGE_SLOT.release()
             return output_path.exists() and output_path.stat().st_size > 0
         except Exception as exc:  # noqa: BLE001 - one broken file must not fail the grid
             # Silent before: a 189 MP photo and a truncated download looked identical
