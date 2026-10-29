@@ -316,8 +316,14 @@ class LibraryService:
             return None
         return source, ref.rel_path
 
-    def resolve_path(self, relative_path: str) -> Path | None:
-        """Securely resolve a media URI to an absolute path within its media source."""
+    def resolve_target_path(self, relative_path: str) -> Path | None:
+        """Resolve a media URI to an absolute path inside its source.
+
+        Unlike :meth:`resolve_path` the file does not have to exist: restoring a
+        trashed file has to name the place it will be put back into, and every
+        candidate URI of a not-yet-scanned file has to resolve as well. Callers that
+        need a readable media file must use :meth:`resolve_path`.
+        """
         resolved = self.resolve_source_relative_path(relative_path)
         if not resolved:
             return None
@@ -325,9 +331,19 @@ class LibraryService:
         try:
             target = (source.path / rel_path).resolve()
             target.relative_to(source.path.resolve())
-            return target
         except Exception:
             return None
+        return target
+
+    def resolve_path(self, relative_path: str) -> Path | None:
+        """Securely resolve a media URI to an absolute path within its media source."""
+        target = self.resolve_target_path(relative_path)
+        if target is None:
+            return None
+        # A URI can name a directory (@default/sub) or a device (@default/NUL):
+        # exists() is true for both, so /detail and /api/playback accepted them and
+        # rendered a 200 page around target.stat(). Only regular files are media.
+        return target if target.is_file() else None
 
     def find_existing_uri(self, uri: str) -> str:
         for candidate in self.legacy_candidates(uri):

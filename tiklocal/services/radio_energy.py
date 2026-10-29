@@ -16,6 +16,7 @@ import array
 import hashlib
 import itertools
 import json
+import logging
 import math
 import os
 import shutil
@@ -28,6 +29,8 @@ from typing import Callable, Iterator
 
 from tiklocal.paths import get_data_dir
 from tiklocal.services import download_tools
+
+LOGGER = logging.getLogger(__name__)
 
 HOP_SECONDS = 0.25
 DECODE_RATE = 4000
@@ -60,6 +63,10 @@ class RadioEnergyService:
             return cached
         powers = decode_powers(source)
         if not powers:
+            # A flat waveform is the only visible symptom, and it looks the same
+            # whether ffmpeg is missing, the codec is unsupported or the decode timed
+            # out; without this line none of that reached the log.
+            LOGGER.warning('no waveform for %s: the audio track could not be decoded', uri)
             return None
         envelope = {'version': FORMAT_VERSION, 'hop': HOP_SECONDS, 'values': envelope_values(powers)}
         self._write_cache(cache, envelope)
@@ -91,6 +98,10 @@ class RadioEnergyService:
             temporary.write_text(json.dumps(envelope, separators=(',', ':')), encoding='utf-8')
             os.replace(temporary, cache)
         except OSError:
+            # The waveform still renders for this request; only the cache is lost, so
+            # a warning is enough. Staying silent made a read-only cache directory
+            # look like a working one while every tune re-decoded the whole track.
+            LOGGER.warning('could not cache the waveform for %s', cache.name, exc_info=True)
             try:
                 temporary.unlink(missing_ok=True)
             except OSError:

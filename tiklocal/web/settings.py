@@ -188,22 +188,28 @@ def register_settings_routes(
         download_manager = app.extensions.get('download_manager')
         if download_manager is not None and target is not None:
             download_manager.media_root = Path(target.path).resolve()
-        scan = {'indexed': 0, 'deleted': 0, 'busy': False, 'unavailable': []}
+        scan = {'indexed': 0, 'deleted': 0, 'busy': False, 'unavailable': [], 'error': ''}
         if library_indexer is not None:
             try:
                 result = library_indexer.sync()
-            except sqlite3.OperationalError as error:
-                if 'locked' not in str(error) and 'busy' not in str(error):
-                    raise
-                # The folder list is already saved; only the rescan has to wait for
-                # the next successful scan, so this is a warning, not a failure.
-                app.logger.warning('Rescan after a folder change hit a busy database: %s', error)
-                result = {'busy': True}
+            except sqlite3.Error as error:
+                # The folder list is already saved, so a failing rescan must not turn
+                # the request into a 500: the page then kept showing the old list while
+                # the server used the new one, and the new folder stayed unscanned
+                # until a restart. A damaged index ("database disk image is malformed"
+                # is a DatabaseError, not an OperationalError) lands here too.
+                busy = 'locked' in str(error) or 'busy' in str(error)
+                if busy:
+                    app.logger.warning('Rescan after a folder change hit a busy database: %s', error)
+                else:
+                    app.logger.exception('Rescan after a folder change failed')
+                result = {'busy': busy, 'error': 'busy' if busy else 'failed'}
             scan = {
                 'indexed': int(result.get('indexed') or 0),
                 'deleted': int(result.get('deleted') or 0),
                 'busy': bool(result.get('busy')),
                 'unavailable': list(result.get('unavailable_sources') or []),
+                'error': str(result.get('error') or ''),
             }
         app.logger.info(
             'Media folders updated: %s', ', '.join(f"@{source.id}={source.path}" for source in installed),

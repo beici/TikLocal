@@ -252,8 +252,12 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
                 return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
             except TikTokDownloaderError as exc:
                 return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 502
-            except Exception as exc:  # a sidecar hiccup must never become a 500 page
-                return jsonify({'success': False, 'ok': False, 'error': str(exc) or t('author.refresh.error')}), 502
+            except Exception:  # a sidecar hiccup must never become a 500 page
+                # The sidecar client's own text reads "HTTPConnectionPool(host=…,
+                # port=…): Max retries exceeded with url: /api/…", which handed any
+                # LAN client the sidecar address and its private routes.
+                app.logger.warning('author refresh failed for %s', source_id, exc_info=True)
+                return jsonify({'success': False, 'ok': False, 'error': t('author.refresh.error')}), 502
             profile = author_profiles.resolve_profile(source_id, folder_name=folder_name)
             return jsonify({'success': True, 'ok': True, 'profile': profile})
 
@@ -272,8 +276,9 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
         except TikTokDownloaderError as exc:
             return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 502
-        except Exception as exc:  # a sidecar hiccup must never become a 500 page
-            return jsonify({'success': False, 'ok': False, 'error': str(exc) or t('author.refresh.error')}), 502
+        except Exception:  # a sidecar hiccup must never become a 500 page
+            app.logger.warning('author refresh failed for %s', source_id, exc_info=True)
+            return jsonify({'success': False, 'ok': False, 'error': t('author.refresh.error')}), 502
         return jsonify({'success': True, 'ok': True, 'profile': profile})
 
     @app.post('/api/author/<source_id>/refresh')
@@ -296,7 +301,14 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             sec_uid = parse_profile_sec_uid(url)
         except ValueError as exc:
             return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
-        author_profiles.set_profile_url(source_id, url)
+        try:
+            author_profiles.set_profile_url(source_id, url)
+        except OSError:
+            # authors/*.json is briefly locked by a scanner or an editor. The old
+            # password-store lesson applies: an unwritable store is a 503 with a
+            # readable message, not a 500 page that says "internal error".
+            app.logger.exception('Could not save the author link for %s', source_id)
+            return jsonify({'success': False, 'ok': False, 'error': t('common.error.storage_unavailable')}), 503
         return jsonify({'success': True, 'ok': True, 'profile_url': url, 'sec_uid': sec_uid})
 
     @app.post('/api/author/<source_id>/update-videos')
@@ -311,7 +323,11 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             bound = normalize_profile_url(profile_url)
             if not bound:
                 return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.profile_url')}), 400
-            author_profiles.set_profile_url(source_id, bound)
+            try:
+                author_profiles.set_profile_url(source_id, bound)
+            except OSError:
+                app.logger.exception('Could not save the author link for %s', source_id)
+                return jsonify({'success': False, 'ok': False, 'error': t('common.error.storage_unavailable')}), 503
         try:
             result = tiktok_service.enqueue_latest_videos(
                 source_id,
@@ -322,8 +338,9 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
         except TikTokDownloaderError as exc:
             return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 502
-        except Exception as exc:  # a sidecar hiccup must never become a 500 page
-            return jsonify({'success': False, 'ok': False, 'error': str(exc) or t('author.sync.error.unknown')}), 502
+        except Exception:  # a sidecar hiccup must never become a 500 page
+            app.logger.warning('author video sync failed for %s', source_id, exc_info=True)
+            return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.unknown')}), 502
         return jsonify({'success': True, 'ok': True, **result})
 
     @app.post('/api/author/<source_id>/search')
@@ -338,8 +355,9 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
         except TikTokDownloaderError as exc:
             return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 502
-        except Exception as exc:
-            return jsonify({'success': False, 'ok': False, 'error': str(exc) or t('author.refresh.error')}), 502
+        except Exception:
+            app.logger.warning('author candidate search failed', exc_info=True)
+            return jsonify({'success': False, 'ok': False, 'error': t('author.refresh.error')}), 502
         return jsonify({'success': True, 'ok': True, 'candidates': candidates})
 
     def _uid_index() -> dict:

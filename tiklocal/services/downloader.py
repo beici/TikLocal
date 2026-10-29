@@ -273,7 +273,13 @@ def validate_download_url(payload: Any) -> tuple[dict[str, Any] | None, str | No
     if len(url) > DOWNLOAD_MAX_URL_LENGTH:
         return None, t('download.error.url_too_long', limit=DOWNLOAD_MAX_URL_LENGTH)
 
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        # urlparse() raises on a malformed IPv6 literal such as "http://[::1", and the
+        # route treated the ValueError as an unhandled error: a 500 with an HTML body
+        # instead of the 400 every other malformed URL gets.
+        return None, t('download.error.scheme_invalid')
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None, t('download.error.scheme_invalid')
     if _is_local_host(url):
@@ -755,9 +761,19 @@ class DownloadManager:
                     path = self._resolve_media_file_path(uri)
                     if path is None or not path.is_file():
                         return None, t('download.error.register_missing')
+                previous = {key: job.get(key) for key in ('status', 'error_message', 'finished_at', 'cancel_requested')}
                 job.update(status='queued', error_message='', finished_at=None, cancel_requested=False)
                 self._cancel_events[job_id] = threading.Event()
-                self._persist_locked()
+                try:
+                    self._persist_locked()
+                except OSError:
+                    # jobs.json can be locked for a moment by a scanner or an editor.
+                    # Letting the error escape answered 500 while the job stayed
+                    # "queued" in memory: the card showed a 0 % progress bar forever
+                    # and every further retry was refused because the status was no
+                    # longer failed. Roll back so the retry button keeps working.
+                    job.update(previous)
+                    return None, t('common.error.storage_unavailable')
                 self._pending.append(job_id)
                 self._dispatch_locked()
             url = str(job.get("url") or "")
@@ -1089,10 +1105,19 @@ class DownloadManager:
             engine = str(job.get("engine") or DEFAULT_DOWNLOAD_ENGINE)
 
         if engine == "gallery-dl":
-            return self._execute_download_gallery_dl(job_id)
-        if engine == "tiktok-downloader":
-            return self._execute_download_direct(job_id)
-        return self._execute_download_yt_dlp(job_id)
+            result = self._execute_download_gallery_dl(job_id)
+        elif engine == "tiktok-downloader":
+            result = self._execute_download_direct(job_id)
+        else:
+            result = self._execute_download_yt_dlp(job_id)
+        code, error, outputs = self._normalize_execute_result(result)
+        if code == 0 and not outputs:
+            # yt-dlp exits 0 for "has already been downloaded" and for runs that only
+            # executed post-processors. The job used to be stored as a success with
+            # zero files, so the bytes never reached the index and the UI offered
+            # nothing to open.
+            return 1, t('download.error.no_output'), []
+        return result
 
     def _execute_download_yt_dlp(self, job_id: str) -> tuple[int, str, list[str]]:
         yt_dlp_bin = resolve_tool("yt-dlp")
@@ -1226,7 +1251,12 @@ class DownloadManager:
                     locale=self._job_locale(job_id),
                 )
                 if error:
-                    return 1, error, []
+                    # A gallery item can fail after its siblings landed. Returning an
+                    # empty list here made the finally below delete files that were
+                    # already downloaded, and the job reported "failed, 0 files"
+                    # while the user had nothing to show for the wait.
+                    moved = [self._move_file_to_media_root(path) for path in downloaded]
+                    return 1, error, [path for path in moved if path]
                 downloaded.append(target)
 
             moved_outputs = [self._move_file_to_media_root(path) for path in downloaded]
@@ -1271,6 +1301,13 @@ class DownloadManager:
                     tmp_path.unlink(missing_ok=True)
                     return "The media URL redirected to a local address."
                 total_bytes = int(response.headers.get("Content-Length") or 0)
+                content_type = str(response.headers.get("Content-Type") or "").lower()
+                if content_type.startswith("text/html"):
+                    # A CDN that answers with a challenge page or an error document
+                    # returns 200. Without this check the page was renamed to .mp4
+                    # and recorded as a successful download.
+                    tmp_path.unlink(missing_ok=True)
+                    return "The media URL returned a web page instead of a media file."
                 received = 0
                 while True:
                     # Cancellation used to be checked only between files, so a slow
@@ -1289,6 +1326,12 @@ class DownloadManager:
                     received += len(chunk)
                     if on_progress and total_bytes > 0:
                         on_progress(received / total_bytes)
+            if total_bytes and received != total_bytes:
+                # A dropped connection used to leave a truncated file that was
+                # renamed into the library and reported as a success: the grid then
+                # showed a video that stops halfway and cannot be repaired by retry.
+                tmp_path.unlink(missing_ok=True)
+                return "The media host closed the connection before the file was complete."
             os.replace(tmp_path, target)
         except urllib.error.HTTPError as exc:
             tmp_path.unlink(missing_ok=True)
@@ -1449,23 +1492,28 @@ class DownloadManager:
 
     def _terminate_process(self, process: sp.Popen[bytes]) -> None:
         try:
-            if os.name == 'posix':
-                os.killpg(process.pid, signal.SIGTERM)
-            else:
-                process.terminate()
-            try:
-                process.wait(timeout=2)
-            except sp.TimeoutExpired:
-                pass
-            # A downloader may leave a child (such as ffmpeg) holding stdout open.
-            if os.name == 'posix':
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
-                # TerminateProcess only reaches the direct child; yt-dlp's ffmpeg
-                # merger keeps writing into the job temp dir after a cancel.
-                self._kill_process_tree_windows(process.pid)
-                if process.poll() is None:
-                    process.kill()
+            # Every job ends here, including the ones that finished on their own. On
+            # Windows taskkill /T /F still ran for a reaped pid, so a recycled pid could
+            # take an unrelated process tree (an editor, a build, another job's ffmpeg)
+            # down with it.
+            if process.poll() is None:
+                if os.name == 'posix':
+                    os.killpg(process.pid, signal.SIGTERM)
+                else:
+                    process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except sp.TimeoutExpired:
+                    pass
+                # A downloader may leave a child (such as ffmpeg) holding stdout open.
+                if os.name == 'posix':
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    # TerminateProcess only reaches the direct child; yt-dlp's ffmpeg
+                    # merger keeps writing into the job temp dir after a cancel.
+                    self._kill_process_tree_windows(process.pid)
+                    if process.poll() is None:
+                        process.kill()
         except ProcessLookupError:
             pass
         process.wait()
@@ -1534,7 +1582,7 @@ class DownloadManager:
         try:
             target = claim_available_path((self.media_root / target_name).resolve())
         except OSError as error:
-            logger.warning('Could not reserve a target name for %s: %s', target_name, error)
+            LOGGER.warning('Could not reserve a target name for %s: %s', target_name, error)
             return ''
         try:
             source_path.replace(target)
@@ -1543,7 +1591,7 @@ class DownloadManager:
                 shutil.move(str(source_path), str(target))
             except OSError as error:
                 target.unlink(missing_ok=True)
-                logger.warning('Could not move %s into the library: %s', target_name, error)
+                LOGGER.warning('Could not move %s into the library: %s', target_name, error)
                 return ''
         return self._to_media_relative(str(target))
 

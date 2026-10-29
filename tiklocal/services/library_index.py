@@ -880,6 +880,12 @@ def _filename_capture_time(path: Path) -> dict | None:
 
 _MAX_PLAUSIBLE_FUTURE_SEC = 86400.0
 
+# A cold scan holds the sync lock for minutes on a large library. A download that
+# finishes meanwhile used to wait on that lock inside a request thread, which pinned
+# the waitress workers one at a time until the whole site stopped answering. Both
+# callers treat 0 as "not indexed yet" and the next scan picks the file up.
+REGISTER_LOCK_TIMEOUT_SEC = 0.5
+
 
 def _safe_mtime_datetime(mtime: float) -> datetime.datetime:
     """A naive local datetime for ``mtime`` that never raises.
@@ -982,8 +988,13 @@ class LibraryIndexer:
     def register_uris(self, uris: list[str]) -> int:
         # A download finishing mid-scan must not be treated as "not seen by the
         # scan" by replace_snapshot(), which deletes every row outside its seen set.
-        with self._sync_lock:
+        if not self._sync_lock.acquire(timeout=REGISTER_LOCK_TIMEOUT_SEC):
+            LOGGER.warning('index scan still running; %d output(s) left for the next scan', len(uris))
+            return 0
+        try:
             return self._register_uris_locked(uris)
+        finally:
+            self._sync_lock.release()
 
     def _register_uris_locked(self, uris: list[str]) -> int:
         time_states = self.store.time_states()

@@ -130,7 +130,11 @@ def _is_damaged_database(error: sqlite3.DatabaseError) -> bool:
 
 
 def _quarantine_database(db_path: Path) -> Path | None:
-    """Move a damaged SQLite file aside so a fresh one can be created."""
+    """Move a damaged SQLite file aside so a fresh one can be created.
+
+    The write-ahead log and the shared-memory file move with it: they belong to the
+    damaged database, and a stale WAL next to the new file would be replayed into it.
+    """
     suffix = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     backup = db_path.with_name(f'{db_path.name}.{suffix}.corrupt')
     for attempt in range(3):
@@ -147,10 +151,18 @@ def _quarantine_database(db_path: Path) -> Path | None:
             time.sleep(0.05)
     for extra in ('-wal', '-shm'):
         sidecar = db_path.with_name(db_path.name + extra)
+        if not sidecar.exists():
+            continue
         try:
-            sidecar.unlink(missing_ok=True)
-        except OSError:
-            pass
+            sidecar.replace(backup.with_name(backup.name + extra))
+        except OSError as error:
+            # A leftover WAL next to a brand-new database replays transactions that
+            # belong to the damaged file: migrate() then reads the old
+            # schema_migrations, skips every migration and the instance stays broken
+            # for good. Moving it aside keeps those bytes with the backup instead of
+            # deleting them, and refusing to rebuild beats starting on top of them.
+            _logger.error('Unable to move %s aside with the damaged database: %s', sidecar, error)
+            return None
     return backup
 
 
@@ -605,7 +617,10 @@ def create_app(test_config=None):
     def handle_server_error(error):
         # A bare path could not tell GET from POST or a retry from the original
         # request, so the entry was impossible to reproduce from the log alone.
-        app.logger.exception(
+        # Flask already logged the traceback (log_exception) before calling this
+        # handler: a second exception() entry doubled every 500 in the log and
+        # halved the effective retention of the 2 MB x 3 rotation.
+        app.logger.warning(
             'Unhandled error on %s %s from %s',
             request.method,
             request.full_path if request.query_string else request.path,

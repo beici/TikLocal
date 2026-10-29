@@ -86,11 +86,19 @@ class CollectionStore:
         try:
             with self.store_path.open("r", encoding="utf-8") as f:
                 payload = json.load(f)
-        except Exception as exc:
+        except ValueError as exc:
+            # json.JSONDecodeError and UnicodeDecodeError both mean the bytes are
+            # not a collections file.
             self._quarantine()
             if strict:
                 raise CollectionStoreCorrupt(str(self.store_path)) from exc
             return self._empty_payload()
+        except OSError:
+            # A scanner or an editor holding the file is not corruption. Returning
+            # an empty payload made the collections page look wiped, and quarantining
+            # the file kept a healthy copy under the ".corrupt" name for good. Let
+            # the route answer 503 ("try again") instead of 200 with nothing.
+            raise
         return self._normalize_payload(payload)
 
     def _normalize_payload(self, payload: Any) -> dict[str, Any]:

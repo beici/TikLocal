@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 #: How long a video frame extraction may take before the request gives up.
 FFMPEG_TIMEOUT_SEC = 30
+# One poster may need a duration probe, a colour-transfer probe and up to four
+# ffmpeg runs (three timestamps plus the tonemap fallback). Each is bounded, but in
+# sequence they pinned a waitress worker for minutes on a network share or a damaged
+# container, and only two generation slots exist. Past this budget the poster is not
+# worth the worker: give up and let the next request try again.
+VIDEO_FRAME_BUDGET_SEC = 35.0
 
 #: How long a second request waits for the in-flight decode of the same file.
 GENERATE_WAIT_SEC = 20
@@ -537,7 +543,12 @@ class ThumbnailService:
         # video still gets a poster, but prefer a candidate that is not black.
         fallback_path = output_path.with_name(output_path.name + '.dark')
         best_luma = -1.0
+        deadline = time.monotonic() + VIDEO_FRAME_BUDGET_SEC
         for t in candidates:
+            remaining = deadline - time.monotonic()
+            if remaining <= 1.0:
+                break
+            timeout = min(float(FFMPEG_TIMEOUT_SEC), remaining)
             cmd = [
                 *ffmpeg_argv(), '-y',
                 '-ss', str(max(0.0, float(t))),
@@ -552,7 +563,7 @@ class ThumbnailService:
                 str(output_path)
             ]
             try:
-                result = sp.run(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=FFMPEG_TIMEOUT_SEC)
+                result = sp.run(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=timeout)
                 if hdr_filter and result.returncode != 0:
                     # The bundled ffmpeg may be built without zscale/tonemap (the
                     # measured build fails every tonemap chain), so fall back to a
@@ -560,7 +571,10 @@ class ThumbnailService:
                     _FILTER_SUPPORT['tonemap'] = False
                     hdr_filter = None
                     cmd[-3] = "scale=-2:'min(ih,640)'"
-                    result = sp.run(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=FFMPEG_TIMEOUT_SEC)
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 1.0:
+                        break
+                    result = sp.run(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL, timeout=min(float(FFMPEG_TIMEOUT_SEC), remaining))
                 if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
                     luma = _frame_luma(output_path)
                     if luma is None or luma >= BLACK_FRAME_LUMA:

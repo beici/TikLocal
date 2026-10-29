@@ -39,6 +39,7 @@
 | 21 | 2026-10-29 | 579P/7S/0F | 0/0/12/24（五域 35 + 独立复审 1 = 36，驳回 1，成立 35，修复 9，转 backlog 26） | `fix: align the port probe, unlock --dev and bound bad request bodies`，14 文件 `+331/-44` | [round-21](round-21.md) |
 | 22 | 2026-10-29 | 591P/7S/0F | 0/3/30/35（七域 68 + 独立复审 9 = 77，修复 18，驳回 1，转 backlog 54） | `fix: keep canceled downloads indexed, bound the password store and stop the history rebuild`，17 文件 | [round-22](round-22.md) |
 | 23 | 2026-10-29 | 602P/8S/0F | 0/7/25/21（七域 53，去重 51：P1 6 + P2 24 + P3 21；修复 24，复审另提 4 条阻塞项并当轮修完，转 backlog 27） | `fix: hand the keyboard back to buttons, dialogs and the feed`，17 文件 `+415/-31` | [round-23](round-23.md) |
+| 24 | 2026-10-29 | 602P/8S/0F | 0/4/26/19（七域 49，去重 46；修复 28：P1 4 + P2 19 + P3 5，转 backlog 18，并入既有 3） | `fix: log startup failures, keep partial downloads and stop the silent 500s`，21 文件 `+530/-113` | [round-24](round-24.md) |
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
 
@@ -83,6 +84,8 @@
 第 22 轮结束后：`pytest -q` = **602 passed / 8 skipped / 0 failed**（317.17s，新增 12 个用例：`tests/test_round22_regressions.py`）。本轮把审查视角从「新代码 + 安全」轮换到「数据完整性 / 并发与资源泄漏 / 性能」，因此 P0 仍为 0 但 P1 有 3 条（详情页删除按钮 ReferenceError、下载页每 2.2 s 重建历史列表、`records()` 全表物化压在详情页与 `/flow`），全部当轮修完。独立复审另指出 4 条「本轮修复本身有问题」（`neighbors()` 漏活照片、`AuthStore._load` 的 `exists()` 吞掉共享冲突、`_prune()` 会清掉仍在生效的限流块、`chmod` 在 `replace` 之后），也当轮改正——这类「修完了但没修对」只有独立复审能抓到。
 
 第 23 轮结束后：`pytest -q` = **602 passed / 8 skipped / 0 failed**（213.71s，本轮未新增用例）。视角再换到「前端状态机 + 可访问性与多语言」，域的划分也改成按功能切。P0 为 0，P1 有 6 条（flow 空格键同时触发点赞与暂停、explore 网格卡片不可聚焦、图片详情页按钮被全局 `preventDefault` 吞掉、下载页「进行中」列表每 2.2 s 整块重建、关闭的合集弹层仍可 Tab 进入、换账号后串上一个用户的收听记录），全部当轮修完。因为没有 JS 运行时测试，验证改为**真实 Chromium 冒烟**（断言 DOM 与事件行为，不断言源码文本），覆盖 `/flow`、`/flow?tag=…`（375×812）、`/library?view=explore`、`/image`、`/settings`，控制台零 error；独立复审提出的 4 条阻塞项（键盘守卫过宽吞掉方向键、收藏键空格处理器落在抖音分支、图片详情同一处、tag 流隐藏页头丢掉移动端菜单入口）也当轮修完并复验。
+
+第 24 轮结束后：`pytest -q` = **602 passed / 8 skipped / 0 failed**（232.98s，本轮未新增用例）。视角换成「后端错误路径与边界」，七个域按代码层切。P0 为 0，P1 有 4 条（无控制台宿主上启动失败零日志、失败任务重试时 `_persist_locked` 抛错留下永久「排队中」、`register_uris` 在请求线程里无超时等索引锁、`download_avatar` 固定临时名并发撕裂），全部当轮修完。另有两条「改了又回退」值得记下：把缩略图缓存键扩到全部来源会让 CLI 与 web 的缓存复用契约失效（`tests/test_thumbnails.py` 当场抓到），作者搜索 503→400 属产品语义变更（两条既有用例失败）——两者都转 backlog 并写明前置条件。还修了 2 条自测发现的连带问题：`_quarantine_database()` 的 WAL/SHM 只 `unlink` 会让新库带着旧 WAL 打开、`migrate()` 读到旧 `schema_migrations` 跳过全部迁移；缩略图候选帧循环没有总预算（时长探测 + 色彩探测 + 最多 4 次 ffmpeg 串起来能把 waitress worker 钉住数分钟，而槽位只有 2 个）。
 
 ## 目录
 

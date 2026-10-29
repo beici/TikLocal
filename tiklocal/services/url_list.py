@@ -47,7 +47,13 @@ def normalize_url(raw: str) -> str:
         return ''
     if len(text) > MAX_URL_LENGTH:
         return ''
-    parsed = urlparse(text)
+    try:
+        parsed = urlparse(text)
+    except ValueError:
+        # urlparse() raises on a malformed IPv6 literal. One such line in a
+        # hand-edited download-urls.txt used to make the whole queue unreadable:
+        # the error escaped through lines() and the download page answered 500.
+        return ''
     if parsed.scheme.lower() not in ('http', 'https'):
         return ''
     if not parsed.netloc:

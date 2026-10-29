@@ -11,7 +11,9 @@ cache is cold or the sidecar is offline.
 
 from __future__ import annotations
 
+import itertools
 import json
+import os
 import re
 import threading
 import time
@@ -33,6 +35,10 @@ MAX_AVATAR_BYTES = 4 * 1024 * 1024
 #: Binding a home-page link and syncing the profile can run on two threads at
 #: once; both used one fixed ``.json.tmp`` and lost each other's fields.
 _PROFILE_LOCK = threading.RLock()
+
+#: Unique suffix for the avatar temp file, so two concurrent downloads never write
+#: the same path.
+_TEMP_COUNTER = itertools.count(1)
 
 _UID_FOLDER = re.compile(r'^UID(?P<uid>\d+)_')
 _AVATAR_KEYS = ('avatar_larger', 'avatar_medium', 'avatar_thumb', 'avatar_168x168', 'avatar_300x300')
@@ -190,12 +196,20 @@ def download_avatar(source_id: str, url: str, timeout: float = 10.0) -> bool:
     if not data or len(data) > MAX_AVATAR_BYTES:
         return False
     path = avatar_path(source_id)
-    tmp = path.with_suffix('.jpg.tmp')
+    # Binding a profile link and syncing the author can run at the same time (see the
+    # note on the two routes above). A fixed ".jpg.tmp" made them write over each
+    # other's bytes, publishing a torn JPEG, and a crash left the file behind forever.
+    tmp = path.with_name(f'{path.name}.{os.getpid()}.{next(_TEMP_COUNTER)}.tmp')
     try:
         tmp.write_bytes(data)
         tmp.replace(path)
     except OSError:
         return False
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
     return True
 
 

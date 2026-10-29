@@ -45,7 +45,9 @@ class TrashService:
     def restore(self, entry_id: str) -> str:
         """Put a trashed file back at its original path and return its URI."""
         folder, entry = self._entry(entry_id)
-        target = self.library.resolve_path(entry['uri'])
+        # The file lives in the trash right now, so the target must resolve without
+        # requiring an existing file at that path.
+        target = self.library.resolve_target_path(entry['uri'])
         if not target:
             raise FileNotFoundError(entry['uri'])
         if target.exists():

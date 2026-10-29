@@ -98,7 +98,9 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         try:
             download_manager.update_config(validated)
         except ValueError as exc:
-            app.logger.warning('URL list request rejected: %s', exc)
+            # This is the download-config route: logging "URL list request" here sent
+            # every investigation of a rejected config to the wrong feature.
+            app.logger.warning('Download config rejected: %s', exc)
             return {'success': False, 'error': url_list_error_message(exc)}, 400
 
         return {'success': True, 'data': build_download_config_payload()}
@@ -122,7 +124,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             # Uploading consistently replaces a file with the same name.
             data = download_manager.upload_cookie_file(filename, content, replace=True)
         except ValueError as exc:
-            app.logger.warning('URL list request rejected: %s', exc)
+            app.logger.warning('Cookie upload rejected: %s', exc)
             return {'success': False, 'error': url_list_error_message(exc)}, 400
         return {'success': True, 'data': data}
 
@@ -175,7 +177,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             else:
                 return {'success': False, 'error': t('download.urls.error')}, 400
         except ValueError as exc:
-            app.logger.warning('URL list request rejected: %s', exc)
+            app.logger.warning('URL list source path rejected: %s', exc)
             return {'success': False, 'error': url_list_error_message(exc)}, 400
         except OSError as exc:
             app.logger.warning('Could not write the download URL list', exc_info=exc)
@@ -215,7 +217,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             else:
                 result = store.push()
         except ValueError as exc:
-            app.logger.warning('URL list request rejected: %s', exc)
+            app.logger.warning('URL list sync rejected: %s', exc)
             return {'success': False, 'error': url_list_error_message(exc)}, 400
         except OSError as exc:
             app.logger.warning('Could not write the download URL list', exc_info=exc)
@@ -313,7 +315,7 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
         try:
             data = tiktok_service.enqueue_from_url(url, tab=tab, count=count)
         except ValueError as exc:
-            app.logger.warning('URL list request rejected: %s', exc)
+            app.logger.warning('TikTok download enqueue rejected: %s', exc)
             return {'success': False, 'error': url_list_error_message(exc)}, 400
         except TikTokDownloaderError as exc:
             return {'success': False, 'error': str(exc)}, 502

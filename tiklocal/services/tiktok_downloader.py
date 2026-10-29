@@ -1039,6 +1039,7 @@ class TikTokDownloadService:
         works = works[:max_items]
 
         jobs: list[dict[str, Any]] = []
+        failures: list[str] = []
         for work in works:
             payload = {
                 "downloads": work["downloads"],
@@ -1049,17 +1050,24 @@ class TikTokDownloadService:
                     "desc": work["desc"],
                 },
             }
-            job = self._download_manager.enqueue(
-                url,
-                save_mode="root",
-                engine="tiktok-downloader",
-                cookie_mode="none",
-                payload=payload,
-            )
+            try:
+                job = self._download_manager.enqueue(
+                    url,
+                    save_mode="root",
+                    engine="tiktok-downloader",
+                    cookie_mode="none",
+                    payload=payload,
+                )
+            except RuntimeError as exc:
+                # The manager refuses work while downloads are disabled. Letting the
+                # refusal escape answered 500 and hid every job queued before it, so
+                # the page reported an error while the queue actually held items.
+                failures.append(str(exc))
+                continue
             if isinstance(job, dict):
                 jobs.append(job)
 
-        return {
+        result = {
             "kind": target["kind"],
             "platform": target["platform"],
             "target_id": target["id"],
@@ -1068,3 +1076,7 @@ class TikTokDownloadService:
             "truncated": truncated,
             "jobs": jobs,
         }
+        if failures:
+            result["failed"] = len(failures)
+            result["error"] = failures[0]
+        return result

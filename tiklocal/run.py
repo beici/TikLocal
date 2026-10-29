@@ -4,10 +4,12 @@ import signal
 import socket
 import argparse
 import getpass
+import logging
 from pathlib import Path
 from waitress.server import create_server as create_waitress_server
 from tiklocal.app import create_app
 from tiklocal import __version__
+from tiklocal.logging_setup import configure_logging
 from tiklocal.thumbs import generate_thumbnails
 from tiklocal.paths import get_data_dir
 from tiklocal.paths import get_auth_path
@@ -33,6 +35,8 @@ try:
     import yaml
 except ImportError:
     yaml = None
+
+LOGGER = logging.getLogger('tiklocal.run')
 
 
 def load_config():
@@ -169,10 +173,21 @@ def config_tls_hosts(config):
     return [str(item) for item in value if str(item).strip()]
 
 
+def _fatal(message):
+    """Report one fatal startup problem and exit without a traceback.
+
+    The message is printed for whoever reads stderr *and* written to the log:
+    a process started by nssm, the Task Scheduler or pythonw has no console, so
+    a startup failure used to leave nothing at all in ``tiklocal.log``.
+    """
+    print(f"Error: {message}", file=sys.stderr)
+    LOGGER.error(message)
+    sys.exit(1)
+
+
 def tls_failure(message):
     """Print one actionable line for a TLS problem and exit without a traceback."""
-    print(f"Error: {message}", file=sys.stderr)
-    sys.exit(1)
+    _fatal(message)
 
 
 def listener_present(family, address):
@@ -228,9 +243,10 @@ def probe_listen(host, port, display_host):
     finally:
         probe.close()
     if reason is not None:
-        print(f"Error: cannot listen on {display_host}:{port} ({reason})", file=sys.stderr)
-        print("Another process may already use this port; retry with --port <free port>.", file=sys.stderr)
-        sys.exit(1)
+        _fatal(
+            f"cannot listen on {display_host}:{port} ({reason})\n"
+            "Another process may already use this port; retry with --port <free port>."
+        )
 
 
 def parse_cli_media_source(value):
@@ -267,11 +283,16 @@ def main():
     # 5) tiklocal /path thumbs         -> thumbs /path
     argv = sys.argv[1:]
     if '-h' not in argv and '--help' not in argv:
-        if 'thumbs' in argv:
-            idx = argv.index('thumbs')
-            if idx != 0:
-                argv.pop(idx)
-                argv.insert(0, 'thumbs')
+        # The two documented forms are "tiklocal thumbs /path" and
+        # "tiklocal /path thumbs": the subcommand is the first word, or the second
+        # one after a path. Any other occurrence is a value that happens to spell
+        # "thumbs" (--tls-hosts thumbs, --name thumbs, tls generate --hosts thumbs)
+        # and rewriting the command around it produced an unrelated usage error.
+        if argv[:1] == ['thumbs']:
+            pass
+        elif len(argv) >= 2 and argv[1] == 'thumbs' and not argv[0].startswith('-'):
+            argv.pop(1)
+            argv.insert(0, 'thumbs')
         elif len(argv) == 0 or argv[0] not in ('serve', 'thumbs', 'dedupe', 'vectorize', 'auth', 'tls'):
             # Default to serve when no known subcommand is present.
             argv.insert(0, 'serve')
@@ -377,7 +398,11 @@ Examples:
     # Validate the data directory for every subcommand: `auth` calls get_auth_path()
     # directly, so TIKLOCAL_INSTANCE pointing at a file used to raise a raw
     # FileExistsError from paths.py while serve/thumbs printed a readable error.
-    resolve_data_dir(parser)
+    data_dir = Path(resolve_data_dir(parser))
+    # Configure logging before the first check that can fail. Every fatal message
+    # below is logged as well as printed, so a process without a console still
+    # leaves a record in tiklocal.log instead of dying silently.
+    configure_logging(data_dir)
 
     if cmd == 'thumbs':
         media_root = args.media_root or os.environ.get('MEDIA_ROOT') or config.get('media_root')
@@ -385,8 +410,7 @@ Examples:
             parser.error('Specify a media directory:\n  - tiklocal thumbs /path/to/media\n  - or set MEDIA_ROOT=/path/to/media')
         media_path = Path(media_root).expanduser()
         if not media_path.exists() or not media_path.is_dir():
-            print(f"Error: Media directory is unavailable: {media_root}", file=sys.stderr)
-            sys.exit(1)
+            _fatal(f"Media directory is unavailable: {media_root}")
         print(f"Data directory: {resolve_data_dir(parser)}")
         stats = generate_thumbnails(media_path, overwrite=getattr(args, 'overwrite', False), limit=getattr(args, 'limit', 0), show_progress=True)
         # Exit after completion.
@@ -401,8 +425,7 @@ Examples:
 
         media_path = Path(media_root).expanduser()
         if not media_path.exists() or not media_path.is_dir():
-            print(f"Error: Media directory is unavailable: {media_root}", file=sys.stderr)
-            sys.exit(1)
+            _fatal(f"Media directory is unavailable: {media_root}")
 
         # --execute disables dry-run.
         dry_run = not getattr(args, 'execute', False)
@@ -503,10 +526,15 @@ Examples:
         tls_failure('--tls-hosts and --tls-days only apply to --tls')
     legacy_hosts = config_tls_hosts(config)
     env_port_text = os.environ.get('TIKLOCAL_PORT')
-    try:
-        env_port = int(env_port_text) if env_port_text not in (None, '') else None
-    except ValueError:
-        parser.error('TIKLOCAL_PORT must be an integer')
+    env_port = None
+    if args.port is None and env_port_text not in (None, ''):
+        # The CLI outranks the environment, so a stale TIKLOCAL_PORT must not be
+        # parsed (and rejected) once --port already decided the port: `tiklocal
+        # --port 9000` used to exit 2 because an unrelated variable was malformed.
+        try:
+            env_port = int(env_port_text)
+        except ValueError:
+            parser.error(f'TIKLOCAL_PORT must be an integer, got {env_port_text!r}')
     configured_port = env_port if env_port is not None else config.get('port')
     raw_port = args.port if args.port is not None else configured_port
     if raw_port is None:
@@ -535,12 +563,10 @@ Examples:
     if media_root:
         media_path = Path(media_root).expanduser()
         if not media_path.exists():
-            print(f"Error: Media directory does not exist: {media_root}", file=sys.stderr)
-            sys.exit(1)
+            _fatal(f"Media directory does not exist: {media_root}")
 
         if not media_path.is_dir():
-            print(f"Error: Path is not a directory: {media_root}", file=sys.stderr)
-            sys.exit(1)
+            _fatal(f"Path is not a directory: {media_root}")
     else:
         media_path = Path(media_sources[0]['path'])
 
@@ -551,10 +577,10 @@ Examples:
             unavailable_sources.append((source.get('id'), source_path))
 
     if media_sources and len(unavailable_sources) == len(media_sources):
-        print("Error: No media sources are available", file=sys.stderr)
-        for source_id, source_path in unavailable_sources:
-            print(f"  @{source_id}: {source_path}", file=sys.stderr)
-        sys.exit(1)
+        _fatal(
+            "No media sources are available\n"
+            + '\n'.join(f"  @{source_id}: {source_path}" for source_id, source_path in unavailable_sources)
+        )
     if not media_root and unavailable_sources:
         unavailable_ids = {source_id for source_id, _ in unavailable_sources}
         first_available = next(
@@ -633,8 +659,7 @@ Examples:
     try:
         instance_lock = None if dev_child else acquire_instance_lock(Path(resolve_data_dir(parser)))
     except InstanceLockError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
+        _fatal(str(exc))
 
     # Resolve the certificate before the app is built: the session cookie must be
     # marked Secure from the very first response, and generating material after the
@@ -732,9 +757,10 @@ Examples:
                     ssl_context=ssl_context,
                 )
             except OSError as exc:
-                print(f"Error: cannot listen on {display_host}:{port} ({exc})", file=sys.stderr)
-                print("Another process may already use this port; retry with --port <free port>.", file=sys.stderr)
-                sys.exit(1)
+                _fatal(
+                    f"cannot listen on {display_host}:{port} ({exc})\n"
+                    "Another process may already use this port; retry with --port <free port>."
+                )
             print_banner()
             server.serve_forever()
         else:
@@ -746,9 +772,10 @@ Examples:
                 # Cold thumbnails run ffmpeg, so allow a few more workers than the default 4.
                 server = create_waitress_server(app, host=host, port=port, threads=8)
             except OSError as exc:
-                print(f"Error: cannot listen on {display_host}:{port} ({exc})", file=sys.stderr)
-                print("Another process may already use this port; retry with --port <free port>.", file=sys.stderr)
-                sys.exit(1)
+                _fatal(
+                    f"cannot listen on {display_host}:{port} ({exc})\n"
+                    "Another process may already use this port; retry with --port <free port>."
+                )
             print_banner()
             server.run()
     finally:

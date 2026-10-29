@@ -227,8 +227,10 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             thumbnail_service.delete_thumbnail(uri)
         except OSError:
             # The trashed file is already gone; the derived cleanup is best effort and
-            # must not turn a successful purge into an error response.
-            pass
+            # must not turn a successful purge into an error response. Say so anyway:
+            # a thumbnail that survives its media is served again for the next file
+            # that lands on the same name.
+            app.logger.warning('derived cleanup after purge failed for %s', uri, exc_info=True)
         # Saved lists are keyed by URI, so a leftover row silently re-attaches to the
         # next file that lands on the same name. Purge is the last point where the
         # file is known to be gone for good.
@@ -373,7 +375,14 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         if (request.headers.get('If-None-Match') or request.headers.get('If-Modified-Since')
                 or request.headers.get('If-Range')):
             return None  # send_file owns 304 / If-Range semantics
-        size = target.stat().st_size
+        try:
+            size = target.stat().st_size
+        except OSError:
+            # The file was deleted (or unmounted) between the exists() check in
+            # serve_media() and here: dragging the seek bar then answered 500 with a
+            # JSON error body, which the player cannot recover from. Fall through to
+            # send_file(), which turns the same condition into a plain 404.
+            return None
         span = _byte_range(request.headers.get('Range'), size)
         if span == 'unsatisfiable':
             # RFC 9110 wants 416 here; silently sending the whole file made a broken
@@ -397,13 +406,20 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             # "paused video pins a worker" bug this branch was written to fix. Handing
             # the real handle positioned at ``start`` keeps the fast path; the bounded
             # ``Content-Length`` below stops it at ``end``.
-            handle = open(target, 'rb')
-            handle.seek(start)
+            try:
+                handle = open(target, 'rb')
+                handle.seek(start)
+            except OSError:
+                return None  # deleted mid-play: send_file() answers 404
             body = wrapper(handle, 64 * 1024)
         else:
             # No file wrapper (test client, other WSGI servers): read exactly the
             # requested window, a bare file object would stream to EOF.
-            body = _iter_reader(_BoundedReader(open(target, 'rb'), start, length))
+            try:
+                handle = open(target, 'rb')
+            except OSError:
+                return None
+            body = _iter_reader(_BoundedReader(handle, start, length))
         response = Response(body, status=206, direct_passthrough=True)
         response.headers['Content-Range'] = f'bytes {start}-{end}/{size}'
         response.headers['Content-Length'] = str(length)

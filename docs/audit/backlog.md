@@ -249,4 +249,29 @@
 | [P3] 导入 textarea 无 label / aria-label | `tiklocal/templates/download.html:66` | 需要新增 i18n 键（本轮约束不改键），或复用现有文案 |
 | [P3] 后台仍累计观看时长（`timeupdate` 采样无 `document.hidden` 判定） | `tiklocal/static/playback_resume.js:47`、`:84-88` | 与第 22 轮同条合并（会改变观看统计口径） |
 
+## 第 24 轮新增（按严重度）
+
+本轮 49 条发现（去重后 46 条）中修 28 条（4×P1 + 19×P2 + 5×P3），其余 18 条如下。P1 全部当轮修完，故下表从 P2 开始。**优先做**：缩略图缓存键不含非默认来源路径（第一行）与 `max_concurrent=0` 等于无限并发（第二行）。
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| **[P2] 优先** 缩略图缓存键只含默认根 + `@source_id/rel`，且只在默认源路径变化时重算：非默认来源改到别的目录、或删源后新建同名文件夹复用同一 id（`_unique_id` 只看当前列表）→ 新目录里 mtime 更旧的文件命中旧缓存，网格显示上一个目录的画面 | `tiklocal/services/thumbnail.py:167`、`tiklocal/web/settings.py:183-186` | 本轮试过「把全部来源路径排序后混进根键」，`tests/test_thumbnails.py::test_cli_cache_is_reused_by_web_and_isolated_between_sources` 两条参数化用例立刻失败——CLI 的 `generate_thumbnails()` 只认识默认根，键一扩 CLI 生成的缓存就不再被 web 复用（19k 图库启动会全部重生成）。要修必须同时把完整来源列表传给 CLI，属跨进程契约变更 |
+| **[P2] 优先** 校验允许 `max_concurrent=0`，而 `_dispatch_locked` 把 0 当「无上限」→ 一次起整个 pending 队列（上限 5000）的线程与 yt-dlp 进程 | `tiklocal/services/downloader.py:204`、`:925` | 0 是文档化的「不限并发」语义（校验区间 0-16，UI 只给 1/2/4）。要改需先决定是禁止 0 还是给它一个真实上限，属产品决策 |
+| [P2] 移除来源后该源 `.tiklocal-trash` 下的文件不再列出、restore 抛 KeyError、30 天保留期永不生效 | `tiklocal/services/trash.py:89-90`、`:106`、`tiklocal/services/media_sources_store.py:228-245` | 与第 22 轮同条合并：`entries()` 需扫历史 id/路径，或 `remove_source` 拒绝删除非空回收站；后者是产品决策 |
+| [P2] 回收站目标路径比原路径长约 39 字符，全路径落在 221..260 时 `shutil.move`（MoveFileExW，未开 LongPathsEnabled）抛 OSError(winerror 3) → 这类文件永远删不掉，重试无效 | `tiklocal/services/trash.py:26`、`tiklocal/web/media.py:268` | 修法二选一：用 `\\?\` 长路径前缀构造目标，或把回收站移到数据目录。后者会改变「删除即同盘移动」的原子性假设，需迁移既有回收站 |
+| [P2] `source.path.is_dir()` 与 `_coerce_path` 的 `.resolve()` 对 NAS/离线映射盘（`\\nas\media`、`Z:\`）无超时（Windows 默认 20 s 起）：打开设置页或轮询 `/api/library/sources` 会占住 waitress 线程，多来源可占满线程池；启动时对每个已存来源做同样调用 | `tiklocal/services/media_sources_store.py:350`、`:116` | 需把探测搬进线程池 + 超时 + `available: null` 三态，前端也要接受「未知」；启动路径同样要改 |
+| [P2] 配置类型校验在构造 parser 之前执行，`port: "8000"`（带引号）会让 `--help`/`tls status`/`auth status`/`thumbs` 全部 exit 2，报错也不含实际读取的文件路径 | `tiklocal/run.py:259-260` | 校验要移到 `parse_args` 之后、只在 serve 路径做，但 `load_config()` 的返回值同时被 serve 与 7 个诊断子命令使用，改动会牵动全部入口 |
+| [P2] compose 的 `user: "1000:1000"` + 宿主目录挂载：新克隆按文档 `docker compose up -d --build` 时 Docker 以 root 建 `/data`(0755)，容器内 `auth_store.ensure()` PermissionError → 裸 traceback | `compose.yaml:10`、`:18`、`tiklocal/app.py:251` | 需在本机 Docker 环境实测（当前没有），并决定用命名卷还是 `${TIKLOCAL_UID}` |
+| [P3] 未配 sidecar 时 `/api/author/<id>/search` 返 503，而同条件的 `_sync_profile`/update-videos/`author_sync` 返 400 | `tiklocal/web/author.py:333` | 试过改 400，`tests/test_author_page.py` 两条用例失败（断言 503）。属产品语义变更，要同时改前端重试语义与用例 |
+| [P3] `_backoff` 上限 400 且 `skip` 截断：未装 ffprobe 时第 401 个之后的 uri 永远进不了 skip，`while True` 空转到 5 s 预算耗尽 | `tiklocal/services/library_index.py:1193-1196`、`:1224-1227` | 需把「跳过原因」改成可增长的结构（或按原因聚合计数），牵动索引统计口径 |
+| [P3] `"indexed": len(records)` 把因 ffprobe 缺失被跳过的行也计入，UI 报成功但文件永不可见 | `tiklocal/services/library_index.py:145` | 改口径会让「扫描完成」的既有前端文案与测试一起变，需先定 UI 展示 |
+| [P3] `--dev` 时父进程先完整 `create_app()` 再起 reloader 子进程重跑 `main()`：启动扫描做两次，父进程留常驻 probe 线程抢 WAL 写锁 | `tiklocal/run.py:706`、`:739` | 需要在 reloader 父进程里跳过建库，但 `app.extensions` 与实例锁都依赖它；属启动流程重构 |
+| [P3] 关闭时先串行终止所有子进程（每个 2 s wait + taskkill ≤15 s）之后才起算 5 s join deadline → 3 个并发 job 最坏约 50 s | `tiklocal/services/downloader.py:487-491` | 需改成「并行发终止信号 + 统一等 deadline」，要连带 `close()` 的返回值语义 |
+| [P3] `finally` 先还原 SIGTERM 再 `download_manager.close()` → 收尾期间的第二次 Ctrl+C 直接终止，yt-dlp/ffmpeg 变孤儿继续往 `.tiklocal-download-tmp` 写 | `tiklocal/run.py:775-777` | 顺序调换即可，但「收尾期间忽略 SIGINT」是可用性决策（用户可能想强制退出） |
+| [P3] `create_app()` 在监听端口前同步全量扫描；`MediaProbeWorker` 只有 `start()`，没有 `stop()/join()` | `tiklocal/app.py:428`、`:433-434` | 需要「先 bind 再扫」的启动顺序调整（会改变首屏可用时间语义），以及 probe 线程的优雅停止 |
+| [P3] 相对 `TIKLOCAL_INSTANCE` 的 warning 在 root logger 有 handler 之前触发，只落 last-resort stderr，永远进不了 `tiklocal.log` | `tiklocal/paths.py:31-37` | 本轮已把 `configure_logging` 提前到 `main()` 开头，但这条 warning 更早——路径解析本身就是日志目录的来源，要修得重排二者的先后 |
+| [P3] 纯 HTTP 在 `create_app()`（含全库索引）之后才 bind，端口被占时要等几分钟才报错，期间已建库、写 auth.json | `tiklocal/run.py:745-751` | 需把 `probe_listen` 提到 `create_app` 之前，但 `--tls` 分支的 probe 依赖证书生成结果，两条路径要重新排序 |
+| [P3] 配置只校验已知键，`prot: 9000`/`medai_root:` 这类拼错静默忽略并按默认值启动，零 warning | `tiklocal/run.py:104-159` | 加顶层键白名单会与「未来新增键」冲突，需先定兼容策略（警告 vs 报错） |
+| [P3] `docs/https.md` 称 `https: yes` 是 startup error，但 PyYAML 把 `yes` 解析成 True 放行、静默以 HTTPS 起在 8443（compose 只发布 8000）；`run.py:134-136` 的注释把同一事实说反 | `docs/https.md:32-34`、`tiklocal/run.py:134-136` | 改示例与注释即可，但要同时决定 `https: yes` 是「接受」还是「报错」——若报错需加类型白名单（与上一行同批） |
+
 
