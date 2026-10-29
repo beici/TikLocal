@@ -1,6 +1,7 @@
 """Home, settings and shared library/cache statistics."""
 
 import sqlite3
+import threading
 from pathlib import Path
 
 from flask import render_template, request, session
@@ -19,6 +20,11 @@ from tiklocal.services.media_sources_store import (
 )
 from tiklocal.services.trash import TRASH_DIR
 from tiklocal.web import json_body
+
+#: Serialises the folder list's read-validate-persist-apply sequence. Two tabs that
+#: saved at the same time each read the same list and then wrote it back, so one of
+#: the two new folders disappeared from both the stored list and the running app.
+_SOURCES_LOCK = threading.Lock()
 
 
 def register_settings_routes(
@@ -166,8 +172,33 @@ def register_settings_routes(
         media_source_store.save(sources, removed_ids=[item for item in removed_ids if item not in keep_ids])
 
     def _apply_change(sources, message: str) -> dict:
+        with _SOURCES_LOCK:
+            return _apply_change_locked(sources, message)
+
+    def _apply_change_locked(sources, message: str) -> dict:
         previous_default = Path(library_service.media_root)
         previous_ids = {source.id for source in _media_sources()}
+        download_manager = app.extensions.get('download_manager')
+        if download_manager is not None:
+            target = next((source for source in sources if source.id == _download_target_id()), None)
+            if target is not None:
+                wanted_root = Path(target.path).resolve()
+                try:
+                    current_root = Path(download_manager.media_root).resolve()
+                except OSError:
+                    current_root = wanted_root
+                if wanted_root != current_root:
+                    # A running worker reads media_root five times (temp dir, -P, the
+                    # final relative path...). Switching it mid-download split those
+                    # reads across two roots: the finished file landed outside the new
+                    # root, matched no source and was dropped as "no output files".
+                    active = [
+                        job for job in download_manager.list_jobs()
+                        if job.get('status') in {'queued', 'running'}
+                    ]
+                    if active:
+                        return {'success': False,
+                                'error': t('settings.library.source_download_active')}, 409
         try:
             _persist_sources(sources, previous_ids)
         except MediaSourceError as error:

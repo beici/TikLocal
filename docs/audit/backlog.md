@@ -362,6 +362,32 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] 详情页删除后浏览器「后退」回到 404：没有 `history.replaceState`，也没有 410 页面 | `tiklocal/static/detail_page_controller.js:1-60` | 需要决定后退落点（列表页锚点 or 提示页），属交互设计 |
 | [P3] 回收站列表无分页：条目多时一次返回全部并整块重建 DOM | `tiklocal/web/media.py:300-320` | 条目量小时无感；等回收站真正常驻上百条再做 |
 
+### 第 28 轮新增（17 条）
+
+本轮视角是并发与多进程一致性，五域上报 49 条（P2 19 / P3 30），4 条是跨域同一根因（`register_uris` 超时被吞、设置页读-改-写无锁、CLI 不取实例锁、`_persist_locked` 全量写），去重后 15 条 P2；修 12 条 P2 + 2 条 P3，余下 17 条登记在此。
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| **[P2] 优先** `/api/activity` 在长写事务期间阻塞约 15 s 后 500，播放/跳过信号整批丢失，推荐样本静默缺段 | `tiklocal/web/media.py` + `tiklocal/services/database.py` 写路径 | 要给活动写入单独的短事务连接或内存队列；`busy_timeout=5000` 与索引重建的长事务叠加才触发，需先测重建期间的真实锁持有时长 |
+| **[P2] 优先** 读路径的多条语句不在同一快照：`total`/`has_more` 与分页行可能来自不同时刻，边界处出现「页数变了但行没变」 | `tiklocal/web/library.py`、`tiklocal/services/library_index.py` 读方法 | 需要把一次查询的所有语句包进 `BEGIN`（读事务）或改成单条 CTE；牵动所有分页端点 |
+| [P2] `write_json_atomic` 只 flush 不 `fsync`：断电后可能留下 0 字节的目标文件（临时名已唯一、重试已有） | `tiklocal/services/json_storage.py:35-77` | 每次写盘多一次 `fsync` 在机械盘上约 5-10 ms，而进度写盘是高频路径；要按文件分级（收藏/合集 fsync，进度不 fsync） |
+| [P2] `thumbs.py` 绕过 `write_json_atomic` 直接 `write_text`，且把损坏当空表继续写 | `tiklocal/services/thumbs.py` | CLI 侧独立实现，改成共用工具需连带改 `thumbs` 命令的恢复语义 |
+| [P2] 回收站 manifest 用非原子 `write_text`：崩溃后条目目录存在但 manifest 缺失，该条目永久不可见、也永不过期 | `tiklocal/services/trash.py` | 需要 manifest 原子写 + 扫描时按目录兜底重建，后者要处理「目录半建成」的判定 |
+| [P2] `PRAGMA journal_mode = WAL` 的返回值被忽略：网络盘/只读挂载上静默退化为 delete 模式，此后并发读会被写阻塞 | `tiklocal/services/database.py:425` | 要检测返回值并降级为「单写者 + 更长 busy_timeout」，属部署契约 |
+| [P2] `--dev` reloader 的父进程仍在后台线程写库，且子进程不取实例锁 | `tiklocal/run.py` | 开发模式，影响面限于本机调试；要修得让 reloader 子进程继承实例锁句柄 |
+| [P2] `_PROBE_CACHE` 无锁，且探测失败也按「可用」缓存 60 s：并发首请求可能重复起 `--version`，失败后一分钟内仍被当作可用 | `tiklocal/services/download_tools.py:204-243` | 要加锁 + 区分失败缓存；探测本身是 Popen，加锁会让首个请求多等一个进程启动 |
+| [P3] 启动清理按目录全删，不区分实例：两个实例共用媒体根时互删在飞临时目录 | `tiklocal/services/downloader.py:421-440` | 需要临时目录带实例标识（pid/实例 id），与已修实例锁配套 |
+| [P3] worker 收尾 `stdout.close()` 与 pump 线程竞争，pump 从不 join | `tiklocal/services/downloader.py:1091-1095` | 需要 pump 线程句柄 + 有界 join；当前最坏只是日志尾部丢几行 |
+| [P3] `_BIG_IMAGE_SLOT.acquire` 在 per-URI 锁内：leader 持 URI 锁等大图槽位，同图其它请求排在其后 | `tiklocal/services/thumbnail.py:641` | 改成先拿大图槽位再拿 URI 锁会反转锁序，需重新论证死锁面 |
+| [P3] `clear_cache` 不与生成中的缩略图协调：清理后仍有缩略图存活 | `tiklocal/services/thumbnail.py:376-401` | 需要与 inflight 表联动，属缓存目录布局调整（与第 27 轮 `.thumb-*` 临时文件同批） |
+| [P3] `_claim_legacy_adoption` 无锁双写：并发请求各写一次 `adopted.json` | `tiklocal/services/thumbnail.py:227-247` | 需要跨进程锁；单次写很小，冲突窗口窄 |
+| [P3] `RecommendService._candidate_cache` 无锁且删除后 TTL 内仍推荐已删 URI | `tiklocal/services/recommendation.py:62,79-87` | 需要缓存失效钩子（删除时清）或更短 TTL；属产品取舍 |
+| [P3] `radio.metadata_for_many` 每请求起 8 线程跑 ffprobe，8 并发最多 64 个进程 | `tiklocal/services/radio.py:250-259` | 需要全局进程池；电台页单用户场景下不触发 |
+| [P3] `trash.restore` 的 `exists→move` TOCTOU：输者抛 `FileNotFoundError` 变 500 | `tiklocal/services/trash.py:81-84` | 要改成 `os.replace` + 目标已存在判定；并发恢复同一条目属罕见操作 |
+| [P3] `apply_sources()` 就地多步改写共享 `LibraryService`，读侧无快照 | `tiklocal/services/media_sources_store.py:297-310` | 需要「构建新实例再原子替换」，牵动 `create_app` 的装配顺序 |
+
+本轮修掉的 2 条 P3 未进表：队头阻塞（`_dispatch_locked` 遇重试 job 时 `break` 挡住后续可派发任务，改为旋转到队尾）与 `_terminate_process()` 末尾无超时 `wait()`（改为 `wait(timeout=5)` + 捕 `OSError`/`TimeoutExpired`），详见 `round-28.md` 第四节。
+
 
 
 

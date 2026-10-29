@@ -289,6 +289,12 @@ class ThumbnailService:
             cached = self.cached_thumbnail(uri)
             if cached:
                 return cached, 'image/jpeg'
+            # The leader is still working (a >48 MP decode can hold the big-image slot
+            # for minutes). Queueing behind it used to make this request wait for the
+            # per-URI lock *and* another big-image slot, so one picture could pin two
+            # waitress workers for minutes; answer with the last usable frame instead.
+            stale = self._stale_thumbnail(uri)
+            return (stale, 'image/jpeg') if stale else (self.placeholder, 'image/png')
         try:
             generated = self.generate_thumbnail(uri)
             if generated:

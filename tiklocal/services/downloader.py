@@ -1,3 +1,4 @@
+import itertools
 import locale
 import logging
 import os
@@ -55,6 +56,8 @@ DOWNLOAD_HISTORY_LIMIT = 200
 COOKIE_MAX_UPLOAD_BYTES = 1024 * 1024
 COOKIE_MATCH_MODE = "filename_contains_domain"
 COOKIE_FILE_EXTENSIONS = {".txt", ".cookies"}
+#: `+=` is not atomic, so two threads could build the same cookie temp name.
+_COOKIE_TEMP_COUNTER = itertools.count(1)
 DOWNLOAD_ENGINES = {"yt-dlp", "gallery-dl", "tiktok-downloader"}
 USER_DOWNLOAD_ENGINES = {"yt-dlp", "gallery-dl"}
 DEFAULT_DOWNLOAD_ENGINE = "yt-dlp"
@@ -402,6 +405,9 @@ class DownloadManager:
         self.on_outputs = on_outputs
 
         self._lock = threading.Lock()
+        # Cookie uploads touch one file on disk; they do not need the job lock, but
+        # two uploads of the same name must not interleave (see upload_cookie_file).
+        self._cookie_lock = threading.Lock()
         self._started = False
         self._closed = False
         self._pending: deque[str] = deque()
@@ -604,6 +610,19 @@ class DownloadManager:
             self._jobs[job_id] = job
             self._job_order.insert(0, job_id)
             self._cancel_events[job_id] = threading.Event()
+            # jobs.json is trimmed to DOWNLOAD_HISTORY_LIMIT on save, but the in-memory
+            # copies were not: a queue of several hundred URLs kept every job dict, and
+            # every progress tick copied all of them under the lock. Trim terminal jobs
+            # past the same limit here so memory and disk agree.
+            while len(self._job_order) > DOWNLOAD_HISTORY_LIMIT:
+                stale_id = self._job_order[-1]
+                stale = self._jobs.get(stale_id)
+                if stale is not None and stale.get('status') not in TERMINAL_JOB_STATUS:
+                    break
+                self._job_order.pop()
+                self._jobs.pop(stale_id, None)
+                self._progress_persist_at.pop(stale_id, None)
+                self._cancel_events.pop(stale_id, None)
             try:
                 self._persist_locked()
             except Exception:
@@ -637,13 +656,26 @@ class DownloadManager:
         except ValueError as exc:
             raise ValueError(t('download.error.path_invalid')) from exc
 
-        if target.exists() and not replace:
-            raise ValueError(t('download.error.cookie_exists', name=safe_name))
+        with self._cookie_lock:
+            # Two uploads of the same name used to share one "<name>.tmp": the second
+            # open("wb") truncated the file the first was still writing, so both
+            # requests reported success and the cookie jar was left interleaved. The
+            # lock covers exists()->write->replace, and the temp name is unique per
+            # call so even a retry cannot collide.
+            if target.exists() and not replace:
+                raise ValueError(t('download.error.cookie_exists', name=safe_name))
 
-        tmp_path = target.with_suffix(target.suffix + ".tmp")
-        with tmp_path.open("wb") as f:
-            f.write(bytes(content))
-        os.replace(tmp_path, target)
+            tmp_path = target.with_name(
+                f'.{target.name}.{os.getpid()}.{next(_COOKIE_TEMP_COUNTER)}.tmp')
+            try:
+                with tmp_path.open("wb") as f:
+                    f.write(bytes(content))
+                os.replace(tmp_path, target)
+            finally:
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
         try:
             os.chmod(target, 0o600)
         except Exception:
@@ -939,18 +971,43 @@ class DownloadManager:
         if not self._started or self._closed:
             return
         limit = int(self._config['max_concurrent'])
+        deferred: deque[str] = deque()
         while self._pending and (limit == 0 or len(self._workers) < limit):
-            job_id = self._pending[0]
+            job_id = self._pending.popleft()
             if job_id in self._workers:
-                break  # An immediate retry must wait for the previous execution to finish.
-            self._pending.popleft()
+                # An immediate retry waits for the previous execution of *this* job to
+                # finish. Rotating it aside (instead of breaking) lets the jobs behind it
+                # use the free slot meanwhile: the old worker can still be inside
+                # on_outputs() or a 15 s taskkill.
+                deferred.append(job_id)
+                continue
             job = self._jobs.get(job_id)
             if not job or job['status'] != 'queued':
                 continue
             worker = threading.Thread(target=self._run_job, args=(job_id,),
                                       name=f'tiklocal-download-{job_id}', daemon=True)
             self._workers[job_id] = worker
-            worker.start()
+            try:
+                worker.start()
+            except BaseException:
+                # The only place that pops _workers is the worker's own finally, so a
+                # failed start() would leave a slot occupied forever: with
+                # max_concurrent=1 every later job then sits at "queued 0%" until a
+                # restart. Drop the registration and fail the job instead.
+                self._workers.pop(job_id, None)
+                job['status'] = 'failed'
+                job['failure_stage'] = 'start'
+                job['finished_at'] = utc_now_iso()
+                job['error_message'] = translate(
+                    str(job.get('locale') or DEFAULT_LOCALE), 'download.error.worker_start')
+                try:
+                    self._persist_locked()
+                except OSError:
+                    LOGGER.warning('Could not persist the failed start of %s', job_id)
+                LOGGER.exception('Could not start the download worker for %s', job_id)
+        if deferred:
+            # Put the retries back at the head, in their original order.
+            self._pending.extendleft(reversed(deferred))
 
     def _run_job(self, job_id: str) -> None:
         try:
@@ -1040,6 +1097,9 @@ class DownloadManager:
             if output_rel_list and self.on_outputs:
                 # Partial results (a failed playlist) must reach the index too, or the
                 # files that did download stay invisible until the next manual sync.
+                # register_uris() raises IndexBusyError when a full scan owns the index
+                # lock; that lands in the handler below, which is why the success block
+                # right after can honestly promise "visible before success".
                 self.on_outputs(output_rel_list)
             if return_code == 0:
                 # Do not expose a successful job until its outputs are visible in
@@ -1474,7 +1534,14 @@ class DownloadManager:
             if now - self._progress_persist_at.get(job_id, 0.0) < 1.0:
                 return
             self._progress_persist_at[job_id] = now
-            self._persist_locked()
+            try:
+                self._persist_locked()
+            except OSError:
+                # A progress tick is bookkeeping: jobs.json can be locked for a second
+                # by a virus scanner or a backup agent, and letting that exception escape
+                # killed the whole download and deleted the bytes already fetched (the
+                # engine's finally rmtree()s the temp dir). The next tick retries.
+                LOGGER.warning('Could not persist download progress for %s; will retry', job_id)
 
     def _persist_locked(self) -> None:
         jobs = [dict(self._jobs[job_id]) for job_id in self._job_order if job_id in self._jobs]
@@ -1535,7 +1602,17 @@ class DownloadManager:
                         process.kill()
         except ProcessLookupError:
             pass
-        process.wait()
+        except OSError:
+            # TerminateProcess can be refused (access denied for a child started by
+            # another user). The worker's finally still has to run: an exception here
+            # used to escape and leave the worker's slot occupied.
+            LOGGER.warning('Could not reap the download process', exc_info=True)
+        try:
+            process.wait(timeout=5)
+        except sp.TimeoutExpired:
+            LOGGER.warning('Download process %s did not exit within 5s', process.pid)
+        except OSError:
+            LOGGER.warning('Could not wait for the download process', exc_info=True)
 
     @staticmethod
     def _kill_process_tree_windows(pid: int) -> None:

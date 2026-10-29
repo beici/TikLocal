@@ -5,6 +5,7 @@ from pathlib import Path
 from tiklocal.config import normalize_media_sources
 from tiklocal.paths import get_database_path
 from tiklocal.services.database import AppDatabase
+from tiklocal.services.instance_lock import InstanceLockError, acquire_instance_lock
 from tiklocal.services.library import LibraryService, build_media_sources
 from tiklocal.services.thumbnail import ThumbnailService
 from .config import load_embedding_config
@@ -29,7 +30,22 @@ def run_vectorize(config, args, parser):
 
     library = LibraryService(media_path, media_sources=build_media_sources(media_path, media_sources or None))
     database = AppDatabase(get_database_path())
-    database.migrate()
+    # A pending migration must not run under a live server: its connections keep the
+    # old schema and DDL on a WAL database either fails or leaves a half-migrated
+    # file. The server holds this lock for its whole lifetime, so the conflict shows
+    # up here as a clear message instead of a corrupted index. Only the migration is
+    # guarded — the long vectorisation pass writes short transactions that SQLite
+    # serialises on its own, and blocking it would forbid preparing vectors while the
+    # site is up.
+    try:
+        migrate_lock = acquire_instance_lock(get_database_path().parent)
+    except InstanceLockError as exc:
+        print(f'Error: {exc}', file=sys.stderr)
+        sys.exit(1)
+    try:
+        database.migrate()
+    finally:
+        migrate_lock.close()
     indexer = MediaIndexer(library, ThumbnailService(media_path, library_service=library), database, embedding)
     status = indexer.status()
     limit = max(int(args.limit or 0), 0)

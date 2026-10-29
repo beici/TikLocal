@@ -443,6 +443,16 @@ Examples:
         # --execute disables dry-run.
         dry_run = not getattr(args, 'execute', False)
 
+        # Deleting files while a server serves them leaves the index pointing at
+        # files that no longer exist and favorites/collections holding dangling
+        # URIs. A dry run only reads, so it stays usable next to a running server.
+        if not dry_run:
+            try:
+                # Hold the handle for the whole command: closing it drops the lock.
+                _dedupe_lock = acquire_instance_lock(data_dir)
+            except InstanceLockError as exc:
+                _fatal(str(exc))
+
         stats = run_dedupe(
             media_root=media_path,
             file_type=getattr(args, 'type', 'all'),

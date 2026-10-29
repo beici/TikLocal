@@ -43,6 +43,7 @@
 | 25 | 2026-10-29 | 602P/8S/0F | 0/6/27/17（七域 50，去重 50；修复 15：P1 5 + P2 7 + P3 3，其中 5 条为复审追加，P1 中 1 条第 23 轮已修，转 backlog 40） | `fix: keep the source map, the big-image slot and the log file alive`，20 文件 `+636/-79` | [round-25](round-25.md) |
 | 26 | 2026-10-29 | 602P/8S/0F | 0/5/10/17（五域 32，去重 32；修复 15 + 缓解 1，撤销 2，驳回 1，转 backlog 13） | `fix: guard the outbound edges and the default credential`，16 文件 `+411/-74` | [round-26](round-26.md) |
 | 27 | 2026-10-29 | 602P/8S/0F | 1/2/21/28（八域 52，去重后 38；修复 19，转 backlog 19） | `fix: take the derived state with the deleted file`，20 文件 `+455/-27` | [round-27](round-27.md) |
+| 28 | 2026-10-29 | 604P/8S/0F | 0/0/19/30（五域 49，去重后 45：P2 15 + P3 30；修复 14：P2 12 + P3 2，转 backlog 17） | `fix: let the second writer wait its turn`，11 文件 `+377/-18` | [round-28](round-28.md) |
 
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
@@ -96,6 +97,8 @@
 第 26 轮结束后：`pytest -q` = **602 passed / 8 skipped / 0 failed**（本轮未新增用例，两个测试缝调整了替身写法）。视角换成「外部依赖与网络边界」——凡是越过进程边界的地方：外部二进制（yt-dlp / gallery-dl / ffmpeg / taskkill）、主动出站 HTTP（sidecar、头像、embedding）、被外部访问的入站面（`0.0.0.0` 绑定、反代头、TLS、`--dev`）、前端第三方资源。P0 为 0，P1 有 5 条：yt-dlp 从不传 `--ffmpeg-location`（只装 `imageio-ffmpeg` 时音视频分离站点静默丢音轨）、批量入队每条 spawn 一次 `--version`（5000 行时单请求半小时以上）、直链下载无累计字节上限（可写满媒体盘）、sidecar 作者 `avatar_url` 无主机校验（盲 SSRF + 把任意响应存成作者头像）、首次启动固定口令 `admin666` 配默认 `0.0.0.0`。前四条当轮修完，第五条按产品决策口径只做警告缓解并进 backlog。另外新增 `tiklocal/services/net_guard.py` 收口「拒绝回环/链路本地/元数据地址」与「逐跳校验重定向」，让直链下载和头像下载共用一套规则；`taskkill` 改成先杀进程树再回收父进程；`--dev` 在非回环绑定时改绑 `127.0.0.1`。两条复核后撤销（`output.css` 无漂移、模板全部走 `static_asset()`）、一条驳回（用户自配的 `embedding.base_url` 跟随 302，与已驳回的「yt-dlp 重定向内网」同类），其余 13 条转 backlog。下一轮建议视角是「数据生命周期与删除语义」。
 
 第 27 轮结束后：`pytest -q` = **604 passed / 8 skipped / 0 failed**（224.23s，新增 2 个回收站用例）。视角换成「数据生命周期与删除语义」，域不再按代码层切，而是按「删除一个文件会经过哪几个环节」切（移动文件、写回收站清单、删索引行、清派生数据），因此八域里 F1/F3 与 G1/G3 是同一批代码的两次独立复访。P0 有 1 条、P1 有 2 条：大小写不敏感文件系统上 `dedupe` 把同一文件同时算进 keep 与 delete，`--delete` 会把所有副本删光；「移除媒体源」会连同目录里的回收站一起删掉；删除正在播放的媒体时播放器没释放句柄，Windows 上服务端 `shutil.move` 拿到 `WinError 32`，用户看到「删除失败」而文件其实没动。P0/P1 全部当轮修完，另修 P2 8 条、P3 8 条（回收站 sidecar 孤儿、purge 不清元数据与索引状态表、元数据损坏静默清空、purge 后同名新文件继承旧收藏、合集页把网络错误显示成空合集、恢复被占用文件返回 500 等），转 backlog 19 条。这轮最值得记的教训是：**删除是一条链，不是一次调用**——同一个「文件没了」的事实有四个落点，任何一个漏掉都会在下一次同名文件落进来时变成幽灵状态。
+
+第 28 轮结束后：`pytest -q` = **604 passed / 8 skipped / 0 failed**（226.90s，本轮未新增用例，全部用手工探针验证并发行为）。视角换成「并发与多进程一致性」——不问「哪里写错了」，而问「谁在和谁同时动同一份状态」：waitress 的 8 个线程之间、CLI 与运行中的服务之间、下载 worker 与其子进程之间、SQLite 的多个连接之间。**P0 与 P1 都是 0**，这是前几轮把「单请求就能触发的错误路径」扫干净的直接结果：剩下的问题几乎都要第二个并发主体才会显形。P2 里最要紧的四条：索引重建期间完成的下载被 `register_uris()` 的 0.5 s 超时静默丢登记却仍报成功（改抛 `IndexBusyError`，job 落 `partial` 可重试）；进度写盘失败会把在飞下载整个判失败并删掉已下载字节（进度簿记不该有权力杀死传输）；`worker.start()` 抛异常会永久占住一个并发槽（`max_concurrent=1` 时此后全部排队到重启）；设置页两个标签页同时保存媒体目录会互相覆盖并让目录从运行中的索引消失（加 `_SOURCES_LOCK` 把读-改-写整段做成临界区）。另修 cookie 上传固定临时名互相截断、`MediaIndexStore.delete()` 两段事务、缩略图 follower 超时后重复抢锁、改文件夹后的重扫被静默跳过、下载目录运行中改写导致产物落在两个根之间等 8 条 P2，以及队头阻塞与 `_terminate_process()` 末尾无超时 `wait()` 两条 P3。三条手工探针（并发 cookie 上传、worker 启动失败、派发旋转）确认新逻辑成立。转 backlog 17 条，其中 `/api/activity` 在长写事务期间阻塞 15 s 后 500、读路径不在同一快照、`write_json_atomic` 不 `fsync` 三条优先。下一轮建议视角是「可观测性与故障诊断」。
 
 ## 目录
 

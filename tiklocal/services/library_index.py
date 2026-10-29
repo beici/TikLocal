@@ -223,8 +223,12 @@ class MediaIndexStore:
                 conn.execute(
                     "UPDATE media_index_state SET item_count = MAX(0, item_count - 1) WHERE id = 1"
                 )
-        if deleted:
-            self.forget_uri(uri)
+                # Same transaction as the media row: a second connection used to be a
+                # second transaction, so a lock conflict between them left the resume
+                # point, the affinity weight, the events and the vector behind — and the
+                # next file to reuse this name inherited all of it.
+                for table in ('playback_positions', 'media_events', 'media_affinity', 'media_vectors'):
+                    conn.execute(f"DELETE FROM {table} WHERE uri = ?", (uri,))
         return bool(deleted)
 
     def forget_uri(self, uri: str) -> int:
@@ -927,6 +931,17 @@ _MAX_PLAUSIBLE_FUTURE_SEC = 86400.0
 REGISTER_LOCK_TIMEOUT_SEC = 0.5
 
 
+class IndexBusyError(RuntimeError):
+    """A full scan held the index lock past ``REGISTER_LOCK_TIMEOUT_SEC``.
+
+    Returned-as-0 used to be indistinguishable from "nothing to index" (a finished
+    job routinely names stream files yt-dlp merged away), so the download reported
+    success while its output stayed unsearchable until someone ran a manual scan.
+    Raising lets the downloader take its ``failure_stage='index'`` path instead,
+    which keeps the files, marks the job partial and offers a re-index retry.
+    """
+
+
 def _safe_mtime_datetime(mtime: float) -> datetime.datetime:
     """A naive local datetime for ``mtime`` that never raises.
 
@@ -978,11 +993,17 @@ class LibraryIndexer:
         self.store = store
         self.on_change = lambda: None
         self._sync_lock = threading.Lock()
+        #: Set when a scan was skipped because one was already running. Without the
+        #: follow-up pass a folder change made during a long scan stayed unindexed
+        #: until the next restart: sync() answered "busy", the route reported success
+        #: and nothing rescanned the new folder.
+        self._rescan_requested = False
 
     def sync(self) -> dict:
         # A double click or two devices can start two full scans at once; the second
         # one would duplicate the I/O and can hit a busy database.
         if not self._sync_lock.acquire(blocking=False):
+            self._rescan_requested = True
             return {
                 'indexed': 0,
                 'deleted': 0,
@@ -991,7 +1012,11 @@ class LibraryIndexer:
                 'busy': True,
             }
         try:
-            return self._sync_locked()
+            result = self._sync_locked()
+            while self._rescan_requested:
+                self._rescan_requested = False
+                result = self._sync_locked()
+            return result
         finally:
             self._sync_lock.release()
 
@@ -1030,7 +1055,7 @@ class LibraryIndexer:
         # scan" by replace_snapshot(), which deletes every row outside its seen set.
         if not self._sync_lock.acquire(timeout=REGISTER_LOCK_TIMEOUT_SEC):
             LOGGER.warning('index scan still running; %d output(s) left for the next scan', len(uris))
-            return 0
+            raise IndexBusyError(f'index scan still running; {len(uris)} output(s) not registered')
         try:
             return self._register_uris_locked(uris)
         finally:
