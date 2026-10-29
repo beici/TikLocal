@@ -1,5 +1,6 @@
 import ipaddress
 import os
+import sqlite3
 import sys
 import signal
 import socket
@@ -16,6 +17,7 @@ from tiklocal.paths import get_data_dir
 from tiklocal.paths import get_auth_path
 from tiklocal.paths import get_media_sources_path
 from tiklocal.services.auth import AuthStore
+from tiklocal.services.database import DatabaseVersionError
 from tiklocal.services.instance_lock import InstanceLockError, acquire_instance_lock
 from tiklocal.services.library import build_media_sources, normalize_source_id
 from tiklocal.services.media_sources_store import MediaSourceStore, resolve_startup_sources
@@ -349,6 +351,8 @@ Examples:
 
     # serve command
     serve_parser = subparsers.add_parser('serve', help='Start the server')
+    serve_parser.add_argument('--version', action='version', version=f'TikLocal {__version__}',
+                              help='Print the version and exit')
     serve_parser.add_argument('media_root', nargs='?', help='Media root directory')
     serve_parser.add_argument('--host', default=None, help='Server bind address (default: 0.0.0.0)')
     serve_parser.add_argument('--port', type=int, default=None, help='Server port (default: 8000)')
@@ -686,7 +690,7 @@ Examples:
             if not tls_material.custom:
                 print("Trust: your browser warns once about the self-signed certificate; "
                       "install it on the device to stop that (see `tiklocal tls status`).")
-        print("Access authentication: enabled")
+        print(f"Access authentication: {'enabled' if app.extensions.get('auth_enabled') else 'disabled'}")
         if bootstrap and bootstrap.default_password:
             # Plain ASCII: a redirected stdout uses the locale encoding (cp1252 has no
             # box-drawing characters), and an UnicodeEncodeError here would abort the
@@ -752,6 +756,10 @@ Examples:
 
     app_config = {
         "MEDIA_ROOT": media_path,
+        # `media_path` is a stand-in (the first source's path) when the launch named
+        # its folders with --media-source and gave no directory of its own. Marking
+        # that keeps create_app() from adding a duplicate 'default' source there.
+        "MEDIA_ROOT_DERIVED_FROM_SOURCES": not media_root,
         "MEDIA_SOURCES": media_sources or None,
         "DOWNLOAD_SOURCE": normalize_source_id(download_source),
         "VISION_CONFIG": vision_config,
@@ -769,6 +777,12 @@ Examples:
         app = create_app(app_config)
     except ValueError as exc:
         parser.error(str(exc))
+    except (OSError, sqlite3.Error, DatabaseVersionError) as exc:
+        # Building the services opens the instance database and runs migrations.
+        # A read-only data directory, a full disk or a database written by a newer
+        # build used to surface as a bare traceback, after the banner had already
+        # said the server was starting; _fatal() writes the log and exits 1.
+        _fatal(f"Cannot open the instance data under {data_dir}: {exc}")
     # Keep the lock handle alive for the whole process lifetime.
     app.extensions['instance_lock'] = instance_lock
     bootstrap = app.extensions.get('auth_bootstrap')

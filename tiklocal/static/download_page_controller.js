@@ -417,6 +417,7 @@
   function renderJobs(jobs, { force = false } = {}) {
     const signature = jobsSignature(jobs);
     const hasActiveJobs = jobs.some((job) => ACTIVE_STATUSES.has(job.status));
+    historyLoaded = true;
     if (!force && signature === lastJobsSignature) {
       // 载荷没变也要续期：否则排队中/0% 阶段连续两轮相同就会让轮询链永久中断。
       schedulePolling(hasActiveJobs);
@@ -639,6 +640,26 @@
   }
 
   let pollBackoffMs = 0;
+  // The template ships a "loading" skeleton inside #history-list. Only a successful
+  // render replaces it, so a first request that fails (server still starting, offline,
+  // 500) left the page saying "loading" forever while the toast faded away.
+  let historyLoaded = false;
+
+  function renderHistoryError() {
+    const list = document.getElementById('history-list');
+    if (!list) return;
+    list.innerHTML = `
+      <div class="download-empty">
+        <div class="download-empty-icon"><i data-feather="alert-circle"></i></div>
+        <div class="download-empty-title">${escapeHtml(T('download.history_load_failed'))}</div>
+        <div class="download-empty-copy">
+          <button type="button" class="download-empty-retry" id="history-retry">${escapeHtml(T('common.retry'))}</button>
+        </div>
+      </div>`;
+    const retry = document.getElementById('history-retry');
+    if (retry) retry.addEventListener('click', () => refreshJobs({ force: true }));
+    if (window.feather) window.feather.replace();
+  }
 
   async function refreshJobs({ force = false } = {}) {
     try {
@@ -649,6 +670,7 @@
     } catch (error) {
       // 断网时后台轮询每 12 秒弹一条英文红条，还会把用户刚触发的提示挤掉；
       // 离线只静默等待恢复，非离线失败才退避提示。
+      if (!historyLoaded) renderHistoryError();
       if (navigator.onLine === false) {
         schedulePolling(false);
         return;

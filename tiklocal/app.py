@@ -415,7 +415,17 @@ def create_app(test_config=None):
         return response
 
     # Initialize Services
-    startup_sources = build_media_sources(app.config['MEDIA_ROOT'], app.config.get('MEDIA_SOURCES'))
+    # `tiklocal --media-source photos=/photos` on its own used to hand
+    # build_media_sources() both a placeholder MEDIA_ROOT (the first source's path)
+    # and that same list, so a second 'default' source appeared on the same folder:
+    # the settings page showed a duplicate row nobody could delete, downloads
+    # recorded @default/... while the scan registered @photos/..., and the two
+    # identities never saw each other's favourites. run.py marks that case; a plain
+    # MEDIA_ROOT plus extra named folders (a test config, say) keeps both.
+    startup_sources = build_media_sources(
+        None if app.config.get('MEDIA_ROOT_DERIVED_FROM_SOURCES') else app.config['MEDIA_ROOT'],
+        app.config.get('MEDIA_SOURCES'),
+    )
     # Folders edited on the settings page live in the instance directory and outrank
     # the launch configuration; otherwise a folder added there vanished on the next
     # start and a removed one came back. An unreadable list keeps the launch

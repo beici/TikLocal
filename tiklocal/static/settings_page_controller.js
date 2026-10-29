@@ -267,6 +267,13 @@
     } catch (_) {
       document.getElementById('download-dependency-copy').textContent = T('settings.dl.status_unavailable');
       document.getElementById('credential-summary').textContent = T('settings.dl.cred_unavailable');
+      // The list body is server-rendered with "正在加载凭据…" and only a successful
+      // response replaces it, so a failed request left that line there for good.
+      const list = document.getElementById('credential-list');
+      if (list) {
+        list.innerHTML = '<div class="credential-empty"></div>';
+        list.querySelector('.credential-empty').textContent = T('settings.dl.cred_unavailable');
+      }
     }
   }
 

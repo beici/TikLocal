@@ -117,6 +117,18 @@
     items.forEach(function (item) { container.appendChild(makeMediaTile(item, extraClass)); });
   }
 
+  // A rejected request leaves the template's skeleton tiles shimmering forever, so the
+  // shelf is replaced with one honest line instead of pretending the library is empty.
+  function renderShelfUnavailable(containerId) {
+    var container = byId(containerId);
+    if (!container) return;
+    container.replaceChildren();
+    var note = document.createElement('div');
+    note.className = 'home-empty';
+    note.appendChild(document.createTextNode(T('home.load_failed')));
+    container.appendChild(note);
+  }
+
   // Past years' media from today's date; the section stays hidden when there is nothing to remember.
   function renderMemories(data) {
     var years = (data && data.years) || [];
@@ -315,9 +327,16 @@
         renderFlow(recent, stats || {});
         renderRibbon('home-recent', recent.slice(0, 8), '');
         renderRibbon('home-rediscover', (rediscover.length ? rediscover : recent.slice().reverse()).slice(0, 3), 'rediscover-tile');
+      } else {
+        // The template ships six and three skeleton tiles; a rejected request used
+        // to leave them shimmering forever under a "could not load" banner.
+        renderShelfUnavailable('home-recent');
+        renderShelfUnavailable('home-rediscover');
       }
       if (results[3].status === 'fulfilled') {
         renderCollections((apiData(results[3].value) || {}).items || []);
+      } else {
+        renderShelfUnavailable('home-collections');
       }
       if (results[4].status === 'fulfilled') {
         renderMemories(apiData(results[4].value));

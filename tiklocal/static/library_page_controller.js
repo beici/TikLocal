@@ -1520,7 +1520,9 @@
     if (searchQuery) {
       setLoadingText(T('library.status.no_results', { query: searchQuery }), { clearSearch: true });
     } else {
-      setLoadingText(emptyMessage);
+      // Scope-only filters (favorite + a collection, big files, latest videos) have
+      // their own copy; the generic one claims the whole library is empty.
+      setLoadingText(currentEmptyMessage());
     }
   } else if (!flowSession.hasMore()) {
     setLoadingText(T('library.status.end'));

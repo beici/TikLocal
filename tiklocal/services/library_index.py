@@ -52,7 +52,11 @@ class MediaIndexStore:
                     # to abort the whole scan (and with it application startup).
                     LOGGER.warning('Skipping a file whose name is not valid UTF-8: %r', uri)
                     continue
-                if Path(uri).name != Path(uri).name.strip():
+                if Path(uri).name != Path(uri).name.rstrip():
+                    # Only trailing whitespace: Windows silently drops it on create,
+                    # so the name on disk and the name a downloader recorded disagree.
+                    # Leading spaces are legal and common in exported files; using
+                    # strip() here dropped those files from the index for good.
                     LOGGER.warning('Skipping a file with trailing whitespace in its name: %r', uri)
                     continue
                 values = self._record_values(record, now)

@@ -588,3 +588,21 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] `AbortSignal.timeout` 在旧 Safari（<16）缺失，会抛 TypeError | `tiklocal/static/download_page_controller.js:24`、`settings_page_controller.js:970` | 项目已要求现代浏览器，仅记录 |
 | [P3] `_defer_probe` 退避无上限，缺工具时每行都留一条 60s 到期时间 | `tiklocal/services/library_index.py:1390-1400` | 30s 轮询已缓解重复扫描，暂不改退避策略 |
 
+
+### 第 36 轮新增（13 条）
+
+| 描述 | 位置 | 为什么暂不修 |
+| --- | --- | --- |
+| [P3] `--help` 文案在 `serve`/顶层两套措辞，示例目录不一致 | `tiklocal/run.py:340-360` | 纯文案，需与 README 一起改 |
+| [P3] 配置路径错误提示只给目录，不给 `config.yaml` 示例 | `tiklocal/run.py:616-617` | 同上 |
+| [P2] 详情页没有「文件已不存在」状态，只有空播放器 | `tiklocal/templates/detail.html`、`detail_page_controller.js` | 需新增整块 UI 与 i18n，改动面大于本轮其它条 |
+| [P2] 字幕接口遇到非图片文件返回 502 `provider_failed` | `tiklocal/web/captions.py:120-140` | 语义变更（502→400）要同步前端与用例 |
+| [P3] 时间线空日期按钮会弹出空的时间气泡 | `tiklocal/static/library_page_controller.js:700-760` | 需先确认交互预期 |
+| [P3] 电台空态文案与库空态重复，看不出该做什么 | `tiklocal/i18n_pages_radio.py` | 文案类 |
+| [P3] 搜索「无结果」与「请求失败」共用一条文案 | `tiklocal/static/search_page_controller.js:210-240` | 要新增错误态分支与键 |
+| [P3] 下载列表错误态下仍渲染 `download.empty_copy` | `tiklocal/static/download_page_controller.js:430-470` | 与 Q3-1 同文件，留待下一轮统一整理 |
+| [P3] 死选择器 `.radio-empty-hint` 无对应 DOM | `tiklocal/static/radio.css:420-440` | 无功能影响 |
+| [P3] 死选择器 `.library-empty-icon` 无对应 DOM | `tiklocal/static/library.css:980-1000` | 无功能影响 |
+| [P3] 空态图标尺寸在三处不一致（40/44/48px） | `home.css`、`library.css`、`download.css` | 视觉微调，等设计统一 |
+| [P3] `download.empty_title` 在筛选为空时语义不准 | `tiklocal/static/download_page_controller.js:470-500` | 文案类 |
+| [P3] `.collections-empty` 选择器无消费方 | `tiklocal/static/collections.css:60-80` | 无功能影响 |

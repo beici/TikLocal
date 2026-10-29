@@ -11,16 +11,27 @@
 
   var UNDO_KEY = 'tiklocal:undo';
 
+  // The live region has to exist before the first message is inserted: a region and
+  // its first child landing in the same frame is commonly not announced, so the very
+  // first error toast (often the only one the user gets) was silent.
+  function ensureToastWrap() {
+    var wrap = document.querySelector('.ui-toast-wrap');
+    if (wrap) return wrap;
+    wrap = document.createElement('div');
+    wrap.className = 'ui-toast-wrap';
+    wrap.setAttribute('aria-live', 'polite');
+    wrap.setAttribute('aria-atomic', 'false');
+    document.body.appendChild(wrap);
+    return wrap;
+  }
+
+  if (document.body) ensureToastWrap();
+  else document.addEventListener('DOMContentLoaded', ensureToastWrap);
+
   // action: optional { label, run } rendered as a button; such toasts stay a little longer.
   function toast(message, type, action) {
     type = type || 'success';
-    var wrap = document.querySelector('.ui-toast-wrap');
-    if (!wrap) {
-      wrap = document.createElement('div');
-      wrap.className = 'ui-toast-wrap';
-      wrap.setAttribute('aria-live', 'polite');
-      document.body.appendChild(wrap);
-    }
+    var wrap = ensureToastWrap();
     var el = document.createElement('div');
     el.className = 'ui-toast ' + type;
     var copy = document.createElement('span');

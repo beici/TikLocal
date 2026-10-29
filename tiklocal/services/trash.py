@@ -2,12 +2,15 @@
 
 import datetime
 import json
+import logging
 import secrets
 import shutil
 from pathlib import Path
 
 TRASH_DIR = '.tiklocal-trash'
 RETENTION_DAYS = 30
+
+logger = logging.getLogger(__name__)
 
 
 def sidecar_paths(target: Path) -> list[Path]:
@@ -155,7 +158,16 @@ class TrashService:
             root = source.path / TRASH_DIR
             if not root.is_dir():
                 continue
-            for folder in root.iterdir():
+            try:
+                folders = list(root.iterdir())
+            except OSError as error:
+                # A trash directory can be listable by is_dir() and still refuse the
+                # listing (ACLs, a network share that dropped, a OneDrive placeholder).
+                # entries() runs during startup through purge_expired(), so letting
+                # this raise kept the whole server from booting on every attempt.
+                logger.warning('Cannot list the trash directory %s: %s', root, error)
+                continue
+            for folder in folders:
                 entry = self._read(folder)
                 if not entry:
                     continue
