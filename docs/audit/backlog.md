@@ -69,7 +69,7 @@
 - **432 `records()` → 窄列修了，LIMIT 不修。** `SELECT *` 换成 15 列的 `RECORD_COLUMNS`（`_to_library_record` 读的全部列），2 万行 192 ms → 135 ms，产出记录逐字段相等。**不加 LIMIT 是刻意的**：还在用它的三个调用方语义上都需要完整集合——tag feed 与深链 caption feed 在 Python 里匹配标题（标题由文件名派生，SQL 无法预过滤），作者页按文件名里解析出的发布时间排序。加 LIMIT 只会静默截断。docstring 里记了实测曲线：127 首文件 5 ms、8 千 60 ms、2 万 168 ms、5 万 585 ms；日常 Flow 根本不经它（走 `records_for_names` 取那 ~24 张）。
 - **702 flow 每请求物化整库 → 同 432，不修。** 这条说的就是 §432 那次调用；窄列之后 2 万文件仍要 ~135 ms，但那是「一次翻页多 0.1 秒」，不是「一次交互卡住」，而且用户这台机器 127 个文件上只有 5 ms。真要 2 万文件以上再谈，改法是 keyset 分页，改法留在原行。
 
-顺带更正两条同源条目：`web/library.py` 收藏页（第 540 行）与 `recommendation` 的 `load()` 已一并换成只读视图；`docs/audit/round-44.md` §十一 有这次的完整数字。
+顺带更正三条同源条目：`web/library.py` 收藏页分页（`favorites_only` 分支）、`web/settings.py` 的 `/api/library/stats`、以及 `recommendation` 的重复 `canonicalize_many`，都已换成只读视图；`docs/audit/round-44.md` §十一 有这次的完整数字。
 
 ## P2
 
