@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess as sp
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -209,6 +210,9 @@ def error_line(line: str) -> str:
 #: launch. A batch import asks once per line, so the answer is remembered briefly.
 _PROBE_TTL_SEC = 60.0
 _PROBE_CACHE: dict[tuple[str, str], tuple[float, str | None, str]] = {}
+#: Per-key single-flight guards for probe_binary (see the comment there).
+_PROBE_LOCKS: dict[tuple[str, str], threading.Lock] = {}
+_PROBE_LOCKS_GUARD = threading.Lock()
 
 #: A windowed launch (pythonw, a shortcut) would flash a console for every probe,
 #: every job and every taskkill; a 5000-line batch import flashed hundreds.
@@ -224,30 +228,36 @@ def probe_binary(command: str, *, refresh: bool = False) -> tuple[str | None, st
         return None, ""
     display = ' '.join(prefix)
     key = (command, display)
-    now = time.monotonic()
-    cached = _PROBE_CACHE.get(key)
-    if cached is not None and not refresh and now - cached[0] < _PROBE_TTL_SEC:
-        return cached[1], cached[2]
-    # The first launch of a freshly installed tool can be slow on Windows.
-    for timeout in (15, 20):
-        try:
-            out = sp.check_output([*prefix, "--version"], text=True, encoding="utf-8", errors="replace", timeout=timeout,
-                                  stderr=sp.STDOUT, **NO_WINDOW_KWARGS)
-            lines = [line for line in (out or "").strip().splitlines() if line.strip()]
-            result = (display, (lines[0] if lines else ""))
-            _PROBE_CACHE[key] = (now, result[0], result[1])
-            return result
-        except Exception:
-            continue
-    # A configured path that does not exist used to be reported as "available" with
-    # an "unknown" version, so the settings page said "ready" until the first job
-    # died with WinError 2.
-    candidate = Path(prefix[0])
-    if candidate.is_absolute() and not candidate.exists():
-        _PROBE_CACHE[key] = (now, None, "")
-        return None, ""
-    _PROBE_CACHE[key] = (now, display, "")
-    return display, ""
+    # One probe per tool at a time: eight request threads arriving together used to
+    # start eight ``--version`` subprocesses each, and a hung binary parked every
+    # waitress worker for the full 35 s probe budget.
+    with _PROBE_LOCKS_GUARD:
+        key_lock = _PROBE_LOCKS.setdefault(key, threading.Lock())
+    with key_lock:
+        now = time.monotonic()
+        cached = _PROBE_CACHE.get(key)
+        if cached is not None and not refresh and now - cached[0] < _PROBE_TTL_SEC:
+            return cached[1], cached[2]
+        # The first launch of a freshly installed tool can be slow on Windows.
+        for timeout in (15, 20):
+            try:
+                out = sp.check_output([*prefix, "--version"], text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                                      stderr=sp.STDOUT, **NO_WINDOW_KWARGS)
+                lines = [line for line in (out or "").strip().splitlines() if line.strip()]
+                result = (display, (lines[0] if lines else ""))
+                _PROBE_CACHE[key] = (now, result[0], result[1])
+                return result
+            except Exception:
+                continue
+        # A configured path that does not exist used to be reported as "available" with
+        # an "unknown" version, so the settings page said "ready" until the first job
+        # died with WinError 2.
+        candidate = Path(prefix[0])
+        if candidate.is_absolute() and not candidate.exists():
+            _PROBE_CACHE[key] = (now, None, "")
+            return None, ""
+        _PROBE_CACHE[key] = (now, display, "")
+        return display, ""
 
 
 #: Command lines built by this module use options the tools only learned later:

@@ -189,6 +189,14 @@ def _ffmpeg_powers(source: Path, argv: list[str]) -> list[float] | None:
     worker.join(DECODE_TIMEOUT_SEC)
     if worker.is_alive():
         _kill_process(process)
+        # Closing the pipe is what unblocks a reader stuck in a kernel-mode read
+        # (TerminateProcess cannot interrupt a dead SMB share). Without it the
+        # thread, both pipe handles and the Popen object leaked per timed-out track.
+        try:
+            process.stdout.close()
+        except OSError:
+            pass
+        worker.join(5.0)
         return None
     try:
         process.stdout.close()

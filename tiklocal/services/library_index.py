@@ -1483,15 +1483,33 @@ class MediaProbeWorker:
         # being retried first on every wake, which used to starve the whole library.
         self._backoff: dict[str, tuple[int, float]] = {}
         self.failures = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        threading.Thread(target=self._loop, name="media-probe", daemon=True).start()
+        # Two probe threads would race on the same rows and double the ffprobe load;
+        # a second call (a factory run twice in one process) must be a no-op.
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._loop, name="media-probe", daemon=True)
+        self._thread.start()
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """Ask the probe thread to finish so exit does not orphan a child ffprobe."""
+        self._stop.set()
+        self._wake.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout)
 
     def wake(self) -> None:
         self._wake.set()
 
     def _defer_probe(self, uri: str, reason: str, base_delay: float = 5.0) -> None:
         attempts = self._backoff.get(uri, (0, 0.0))[0] + 1
+        # Unbounded doubling overflowed a float after ~1024 failed passes and took
+        # the whole probe run down with it; 12 attempts is already ~1.7 hours.
+        attempts = min(attempts, 12)
         delay = min(300.0, base_delay * (2 ** (attempts - 1)))
         self._backoff[uri] = (attempts, time.monotonic() + delay)
         if uri not in self._warned:
@@ -1503,6 +1521,7 @@ class MediaProbeWorker:
     def run_once(self, batch: int = 50, budget_sec: float | None = None) -> int:
         """Probe until nothing is left (or the time budget is spent); return how many files were read."""
         done = 0
+        stalled = 0
         deadline = time.monotonic() + budget_sec if budget_sec else None
         # Without ffprobe (the bundled imageio-ffmpeg build) or ffmpeg, a video's
         # size is unknown rather than unmeasurable: keep probed_mtime unset so a
@@ -1515,7 +1534,11 @@ class MediaProbeWorker:
             if len(self._backoff) > 400:
                 for stale in [u for u, (_, at) in self._backoff.items() if at <= now][:200]:
                     self._backoff.pop(stale, None)
-            skip = tuple(uri for uri, (_, at) in self._backoff.items() if at > now)[:400]
+            skip = tuple(
+                uri
+                for uri, (_, at) in sorted(self._backoff.items(), key=lambda item: item[1][1])
+                if at > now
+            )[:400]
             rows = self.store.unprobed(batch, exclude=skip)
             if not rows:
                 break
@@ -1545,14 +1568,20 @@ class MediaProbeWorker:
                 results.append((width, height, row["mtime"], row["uri"]))
             if not results:
                 # The whole batch failed or was deferred. The exclusion list makes the
-                # next query start deeper, so a bad head no longer starves the rest.
+                # next query start deeper, so a bad head no longer starves the rest —
+                # but when every file in the batch is backed off, re-querying returns
+                # the same rows forever. Stop this pass and let the loop sleep.
+                stalled += 1
+                if stalled >= 3:
+                    break
                 continue
+            stalled = 0
             self.store.set_dimensions(results)
             done += len(results)
         return done
 
     def _loop(self) -> None:
-        while True:
+        while not self._stop.is_set():
             self._wake.clear()
             done = 0
             try:

@@ -59,6 +59,9 @@ _PROFILE_LOCK = threading.Lock()
 #: 20k track library used to keep 20k entries for the life of the process.
 METADATA_CACHE_LIMIT = 2000
 
+#: Guards the OrderedDict above; probing must happen outside it (see metadata_for).
+_METADATA_CACHE_LOCK = threading.Lock()
+
 
 class RadioProfileStore:
     """Persist light listening feedback for local radio selection."""
@@ -246,16 +249,21 @@ class RadioService:
             return AudioMetadata()
 
         cache_key = str(path)
-        cached = self._metadata_cache.get(cache_key)
-        if cached and cached[0] == mtime:
-            self._metadata_cache.move_to_end(cache_key)
-            return cached[1]
+        # metadata_for_many probes with up to 8 threads; an unguarded move_to_end()
+        # raced with another thread's popitem() and raised KeyError, which turned the
+        # whole /api/radio/items page into a 500. Probing stays outside the lock.
+        with _METADATA_CACHE_LOCK:
+            cached = self._metadata_cache.get(cache_key)
+            if cached and cached[0] == mtime:
+                self._metadata_cache.move_to_end(cache_key)
+                return cached[1]
 
         metadata = self._probe_audio_metadata(path)
-        self._metadata_cache[cache_key] = (mtime, metadata)
-        self._metadata_cache.move_to_end(cache_key)
-        while len(self._metadata_cache) > METADATA_CACHE_LIMIT:
-            self._metadata_cache.popitem(last=False)
+        with _METADATA_CACHE_LOCK:
+            self._metadata_cache[cache_key] = (mtime, metadata)
+            self._metadata_cache.move_to_end(cache_key)
+            while len(self._metadata_cache) > METADATA_CACHE_LIMIT:
+                self._metadata_cache.popitem(last=False)
         return metadata
 
     def metadata_for_many(self, paths: list[Path]) -> list[AudioMetadata]:

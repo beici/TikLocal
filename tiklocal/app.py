@@ -1,4 +1,5 @@
 import os
+import atexit
 import datetime
 import gc
 import gzip
@@ -501,6 +502,9 @@ def create_app(test_config=None):
     app.extensions["media_probe"] = media_probe
     if not app.config.get('TESTING'):
         media_probe.start()
+        # A probe pass can be inside an ffprobe child when the server exits; stopping
+        # the thread first keeps the child from outliving us and holding media handles.
+        atexit.register(media_probe.stop)
     if index_sync_result["unavailable_sources"]:
         app.logger.warning(
             "Media source unavailable; preserving its existing index: %s",

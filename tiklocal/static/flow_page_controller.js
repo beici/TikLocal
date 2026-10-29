@@ -1040,6 +1040,22 @@
       }
     }
 
+    // Dropping the element from the DOM is not enough: a <video> keeps its buffered
+    // data and a decoder slot as long as it has a src. The feed used to leave one
+    // per swiped item (70-100 of them), which is what "media_error after a while"
+    // looked like on iOS. dataset.src is kept so ensureVideoSrc() can re-attach it.
+    function releaseVideoElement(videoEl) {
+      if (!videoEl) return;
+      try { videoEl.pause(); } catch (error) { /* already detached */ }
+      videoEl.muted = true;
+      if (videoEl.hasAttribute('src')) {
+        videoEl.removeAttribute('src');
+        try { videoEl.load(); } catch (error) { /* ignore */ }
+      }
+      videoEl._startReady = false;
+      videoEl._startPromise = null;
+    }
+
     function waitForVideoState(videoEl, eventNames, condition, timeoutMs = 8000) {
       if (condition()) return Promise.resolve();
       return new Promise((resolve, reject) => {
@@ -1145,7 +1161,7 @@
       return item;
     }
 
-    function clearPreviousState(prevItem) {
+    function clearPreviousState(prevItem, nextIndex) {
       magnifier.toggle(false);
       endBoost();
       stopLivePlayback();
@@ -1153,15 +1169,22 @@
       if (!prevItem) return;
       prevItem.el.classList.remove('active');
       prevItem.el.style.display = 'none';
+      // Release the decoder once the item is out of reach: keeping the immediate
+      // neighbours attached makes swiping back instant, releasing the rest bounds
+      // the number of live <video> elements no matter how long the session runs.
+      const prevIndex = feedItems.indexOf(prevItem);
+      const farAway = typeof nextIndex !== 'number' || prevIndex < 0 || Math.abs(prevIndex - nextIndex) > 3;
       if (prevItem.type === 'video') {
         prevItem.el.pause();
         prevItem.el.muted = true;
+        if (farAway) releaseVideoElement(prevItem.el);
       } else {
         // 相册（image_group）里的子视频建 DOM 时就自动播了，切走必须一起暂停，
         // 否则后台会有多路视频持续解码/循环播放。
         prevItem.el.querySelectorAll('video').forEach((video) => {
           video.pause();
           video.muted = true;
+          if (farAway) releaseVideoElement(video);
         });
       }
     }
@@ -1174,7 +1197,7 @@
       clearTimeout(skipTimer);
       skipTimer = null;
       const previousActivity = finishActivity();
-      clearPreviousState(prevItem);
+      clearPreviousState(prevItem, safeIndex);
 
       flowSession.setIndex(safeIndex);
       const item = currentItem();
@@ -1675,7 +1698,15 @@
         if (feedItems.length > 100) {
           const removeCount = 30;
           const removed = flowSession.dropHead(removeCount);
-          removed.forEach((entry) => entry.el.remove());
+          removed.forEach((entry) => {
+            // The element is about to leave the document; drop its media first so the
+            // decoder and buffer go with it instead of waiting for GC.
+            if (entry?.el) {
+              if (entry.type === 'video') releaseVideoElement(entry.el);
+              else entry.el.querySelectorAll('video').forEach(releaseVideoElement);
+              entry.el.remove();
+            }
+          });
         }
         if (feedItems.length) {
           hideFlowStatus();

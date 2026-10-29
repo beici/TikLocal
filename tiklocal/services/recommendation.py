@@ -14,6 +14,9 @@ FORGOTTEN_DAYS = 180
 # favourite test normalises each URI; a short cache keeps a page burst cheap while
 # a newly imported file still shows up within a couple of seconds.
 CANDIDATE_TTL_SEC = 2.0
+# Two file types across MAX_SOURCES (24) plus a little headroom for a source that was
+# just removed but is still referenced by an in-flight request.
+MAX_CANDIDATE_CACHE = 64
 
 # Beyond this many picks the O(picks * pool) diversity reshuffle stops paying off; the
 # remaining items follow one seed-stable weighted ordering instead.
@@ -84,6 +87,14 @@ class RecommendService:
             return cached[1]
         candidates = self._candidates(file_type, source_id)
         self._candidate_cache[key] = (now, candidates)
+        # A removed source used to keep its whole candidate list for the life of the
+        # process, and re-adding the same folder under a new id leaked another copy.
+        if len(self._candidate_cache) > MAX_CANDIDATE_CACHE:
+            live = {source.id for source in getattr(self.library, 'sources', None) or []}
+            for stale_key in [item for item in self._candidate_cache if item[1] not in live]:
+                self._candidate_cache.pop(stale_key, None)
+            while len(self._candidate_cache) > MAX_CANDIDATE_CACHE:
+                self._candidate_cache.pop(next(iter(self._candidate_cache)))
         return candidates
 
     def get_weighted_selection(self, file_type='video', limit=20, seed=None, source_id='',

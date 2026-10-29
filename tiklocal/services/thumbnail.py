@@ -1,3 +1,4 @@
+import functools
 import hashlib
 import io
 import itertools
@@ -74,8 +75,10 @@ _BIG_IMAGE_SLOT = threading.BoundedSemaphore(1)
 
 #: How long a big image waits for that slot before giving up. Long enough for a
 #: slow 100 MP decode plus the save, short enough that a wedged decoder cannot
-#: park every request for a tile that will never appear.
-_BIG_IMAGE_WAIT_SEC = 180.0
+#: park every request for a tile that will never appear. This wait happens while
+#: the caller holds its per-output lock, so a large value also blocks *other*
+#: tiles that hash to the same lock: keep it well under a request timeout.
+_BIG_IMAGE_WAIT_SEC = 20.0
 
 #: `+=` is not atomic: two threads could build the same temporary name, and the
 #: loser's replace would publish the other frame as its own thumbnail.
@@ -718,6 +721,7 @@ class ThumbnailService:
             return False
 
 
+@functools.lru_cache(maxsize=32)
 def radio_artwork_bytes(uri: str) -> bytes:
     palettes = [
         ("#466b61", "#a88756", "#d7d2c4"),

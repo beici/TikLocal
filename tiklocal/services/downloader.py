@@ -1321,10 +1321,14 @@ class DownloadManager:
         # library so a cancel or timeout cannot leave hidden junk behind.
         temp_dir = (self.media_root / DOWNLOAD_TMP_DIR / job_id).resolve()
         temp_dir.mkdir(parents=True, exist_ok=True)
-        # yt-dlp opens --cookies read-write and dumps the jar back on exit, so two
-        # concurrent jobs sharing the imported file would truncate each other.
-        cookie_for_job = self._private_cookie_copy(cookie_path, temp_dir)
+        # The copy belongs inside the try: when the source cookie jar is held by
+        # antivirus or the media root turned read-only between the existence check
+        # and the copy, the failure used to escape before `finally` and left one
+        # .tiklocal-download-tmp/<job_id> behind per retry (invisible to the scanner).
         try:
+            # yt-dlp opens --cookies read-write and dumps the jar back on exit, so two
+            # concurrent jobs sharing the imported file would truncate each other.
+            cookie_for_job = self._private_cookie_copy(cookie_path, temp_dir)
             ffmpeg_bin = resolve_tool("ffmpeg")
             cmd = yt_dlp_command(yt_dlp_bin, self.media_root, url, allow_playlist=allow_playlist,
                                  cookie_path=cookie_for_job, temp_dir=temp_dir,
@@ -1603,7 +1607,8 @@ class DownloadManager:
             finally:
                 lines.put(None)
 
-        threading.Thread(target=pump, name=f"download-pump-{job_id}", daemon=True).start()
+        pump_thread = threading.Thread(target=pump, name=f"download-pump-{job_id}", daemon=True)
+        pump_thread.start()
 
         timed_out = False
         canceled = False
@@ -1641,11 +1646,17 @@ class DownloadManager:
         # Bounded wait: _terminate_process gives up after a few seconds, and an
         # unkillable tool must not park this worker (and its queue slot) forever.
         try:
-            return process.wait(timeout=10), error_message
-        except subprocess.TimeoutExpired:
+            return_code = process.wait(timeout=10)
+        except sp.TimeoutExpired:
             LOGGER.warning('Download process %s ignored termination; abandoning it', process.pid)
-            return 1, error_message or translate(
+            return_code = 1
+            error_message = error_message or translate(
                 self._job_locale(job_id), 'download.error.canceled')
+        # The pump owns the stdout pipe, and the caller closes it in `finally`.
+        # Closing underneath a blocked read raised ValueError on every cancel and
+        # could park the worker inside CloseHandle on Windows, so let it drain first.
+        pump_thread.join(timeout=5.0)
+        return return_code, error_message
 
     def _job_locale(self, job_id: str | None) -> str:
         """Locale the job was queued in (worker threads have no request context).
@@ -1690,12 +1701,22 @@ class DownloadManager:
         """Persist the job list; the state lock is held only for the snapshot copy."""
         with self._persist_lock:
             with self._lock:
-                jobs = [dict(self._jobs[job_id]) for job_id in self._job_order if job_id in self._jobs]
+                jobs = [self._history_copy(job_id) for job_id in self._job_order if job_id in self._jobs]
             self.history_store.save(jobs)
 
     def _persist_locked(self) -> None:
-        jobs = [dict(self._jobs[job_id]) for job_id in self._job_order if job_id in self._jobs]
+        jobs = [self._history_copy(job_id) for job_id in self._job_order if job_id in self._jobs]
         self.history_store.save(jobs)
+
+    def _history_copy(self, job_id: str) -> dict[str, Any]:
+        job = dict(self._jobs[job_id])
+        if job.get("status") == "success":
+            # A finished gallery job carries a few dozen CDN URLs in its payload; the
+            # payload is only ever read to retry a failed job, but it was rewritten on
+            # every progress tick of every later job (0.15-1.3 MB per tick on a full
+            # history) and shipped to the browser by list_jobs.
+            job.pop("download_payload", None)
+        return job
 
     def _mark_canceled_locked(self, job: dict[str, Any]) -> None:
         job["status"] = "canceled"
@@ -1843,7 +1864,13 @@ class DownloadManager:
             try:
                 shutil.move(str(source_path), str(target))
             except OSError as error:
-                target.unlink(missing_ok=True)
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    # A viewer can hold the freshly created placeholder; raising here
+                    # escaped into the caller's finally, which deleted the already
+                    # downloaded file. A leftover 0-byte name is the lesser evil.
+                    LOGGER.warning('Could not remove the reserved name %s', target_name)
                 LOGGER.warning('Could not move %s into the library: %s', target_name, error)
                 return ''
         return self._to_media_relative(str(target))

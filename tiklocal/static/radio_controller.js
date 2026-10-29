@@ -637,6 +637,13 @@
     if (scene) scene.setRunning(sceneActive && shouldMove);
     if (sceneActive || !shouldMove) {
       els.radioAtmosphereVideo.pause();
+      // A shader room draws over the video. Leaving the src attached kept one
+      // decoder and its buffer alive for the whole listening session; dropping it
+      // lets applyAtmosphereSource() re-attach when a video room comes back.
+      if (sceneActive && els.radioAtmosphereVideo.hasAttribute('src')) {
+        els.radioAtmosphereVideo.removeAttribute('src');
+        els.radioAtmosphereVideo.load();
+      }
       els.radioPage.classList.remove('is-atmosphere-moving');
       return;
     }

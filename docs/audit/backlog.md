@@ -694,3 +694,25 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] `collection_picker.open()` 无重入守卫，双击并发两个 `open()` 各发 2 个 GET | `tiklocal/static/collection_picker.js:232-236`、`:210-230` | 结果幂等，只是重复请求 |
 | [P3] `loadAuthorSources()` 无代际，旧请求晚失败会把列表清空 | `tiklocal/static/settings_page_controller.js:1263-1272` | 窗口窄、可刷新恢复 |
 | [P3] 合集移除操作不参与 `organizeBusy` 互斥，只禁自身按钮 | `tiklocal/static/library_page_controller.js:1210-1222` | 与整理操作并发时会重复提交，结果幂等 |
+
+### 第 40 轮新增（17 条）
+
+| 问题 | 位置 | 为什么暂不修 |
+| --- | --- | --- |
+| [P1] `records()` 无 LIMIT，flow 每请求物化整库（19k 行 ≈ 35-40 MB / ~1 s） | `tiklocal/services/library_index.py:410-423`、`tiklocal/web/flow.py:460-464` | 要动 flow 的选片与折叠语义，需单独一轮 |
+| [P2] 每源新建线程池，`shutdown(wait=True)` 在异常时会白跑 19k 任务并长期持 `_sync_lock` | `tiklocal/services/library_index.py:1411-1417` | 改成有界提交要重排扫描结构 |
+| [P2] `time_states()` 每次扫描/每次下载都建全表 dict（19k 行 ≈ 10 MB） | `tiklocal/services/library_index.py:862-872` | 要改成按需查询 + 索引 |
+| [P2] `image_random` 每页全量排序 + shuffle（19k 行 ≈ 30 ms/页） | `tiklocal/services/library_index.py:664-685` | 需加确定性随机序列列（迁移） |
+| [P3] 无 `wal_checkpoint`/`journal_size_limit`，`-wal` 只增不减 | `tiklocal/services/database.py:517-535` | 改动涉及每次连接的开销权衡 |
+| [P3] `_rescan_requested` 循环无次数上限，连点设置页会跑三趟全量扫描 | `tiklocal/services/library_index.py:1230-1237` | 只是白跑 CPU，结果幂等 |
+| [P3] `connect()` 的 `rollback()` 自身失败会覆盖原始异常文本 | `tiklocal/services/database.py:507-515` | 损坏库判定依赖原始文本，改动需谨慎 |
+| [P3] `url_list.push()` 固定 `.tmp` 名且无 `finally` unlink，失败会把临时文件留在用户目录 | `tiklocal/services/url_list.py:283-291` | 单实例写入，冲突概率低 |
+| [P3] 启动清理不校验归属，同进程第二个 manager 会删掉第一个在跑的目录 | `tiklocal/services/downloader.py:456-468` | 单实例部署下不可达 |
+| [P3] 波形磁盘缓存无上限、无孤儿清理（19k 首 ≈ 23 MB） | `tiklocal/services/radio_energy.py:75-108` | 磁盘占用而非内存，需先定保留策略 |
+| [P3] 全局锁包住 `Image.open`（文件系统 I/O），同桶请求串行 | `tiklocal/services/thumbnail.py:103-109` | 需改成「先无锁打开，撞上限再重开」 |
+| [P3] 三处锁内做整份 JSON 读写，共享冲突时 P99 从 3 ms 拉到 1.4 s | `tiklocal/services/metadata.py:29-36`、`radio.py:92-108`、`author_profiles.py:87-95` | 需要读写分离或 WAL 式日志 |
+| [P3] `collect_candidates()` 每页重建全量候选（19k 首 ≈ 8-10 MB/页） | `tiklocal/services/radio.py:209-234` | 需先有候选缓存失效协议 |
+| [P3] `authors_dir()` 每次调用 `mkdir`，5000 作者页面 2-3 万次系统调用 | `tiklocal/services/author_profiles.py:51-62` | 单次开销小，量级才显 |
+| [P3] 相册子视频三条移除路径只 `remove()`，不释放 src | `tiklocal/static/flow_page_controller.js:1428-1439` | 与已修的 U4-1 同源，下轮一起改 |
+| [P3] `radio_scene.destroy()` 不 `deleteProgram`/`deleteTexture`，每次文档销毁泄漏 10-40 MB GPU | `tiklocal/static/radio_scene.js:422-429` | 单页生命周期内只泄漏一次 |
+| [P3] `list_jobs` 仍把 `download_payload` 发给浏览器（本轮只改了落盘侧） | `tiklocal/web/downloads.py` | 需要在 API 层做投影，牵动下载页字段 |
