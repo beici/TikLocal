@@ -128,8 +128,19 @@ def _prune_quarantine(path: Path) -> None:
             continue
 
 
-def read_json_file(path: Path, default: object, *, expected_type: type | tuple[type, ...] = dict) -> object:
-    """Read a JSON store, quarantining (never silently discarding) corrupt bytes."""
+def read_json_file(
+    path: Path,
+    default: object,
+    *,
+    expected_type: type | tuple[type, ...] = dict,
+    max_version: int | None = None,
+) -> object:
+    """Read a JSON store, quarantining (never silently discarding) corrupt bytes.
+
+    ``max_version`` refuses a store written by a newer build instead of reading it
+    as far as this one understands and then saving its own shape back over it: a
+    shared data directory used by two versions lost the other version's fields.
+    """
 
     try:
         raw = path.read_text(encoding='utf-8')
@@ -170,4 +181,16 @@ def read_json_file(path: Path, default: object, *, expected_type: type | tuple[t
     if not isinstance(value, expected_type):
         quarantine_corrupt_file(path)
         return default
+    if max_version is not None and isinstance(value, dict):
+        try:
+            version = int(value.get('version') or 0)
+        except (TypeError, ValueError):
+            version = 0
+        if version > max_version:
+            # Not corruption: a newer build owns this file. Keep it byte-for-byte
+            # and let the caller fall back, otherwise the next save overwrites it.
+            raise StoreUnreadableError(
+                f'{path.name} was written by a newer TikLocal (store version {version}, '
+                f'this build understands {max_version}); refusing to overwrite it.'
+            )
     return value

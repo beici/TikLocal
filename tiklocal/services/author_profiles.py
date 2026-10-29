@@ -11,6 +11,7 @@ cache is cold or the sidecar is offline.
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import os
@@ -62,9 +63,43 @@ def avatar_path(source_id: str) -> Path:
     return authors_dir() / f'{_safe_key(source_id)}.jpg'
 
 
+def _legacy_key(source_id: str) -> str:
+    """The pre-0.8.40 key: every non-ASCII character became ``_``."""
+    return re.sub(r'[^A-Za-z0-9_.-]+', '_', str(source_id or '').strip()) or 'default'
+
+
+def existing_profile_path(source_id: str) -> Path:
+    """The profile on disk, falling back to the pre-hash key when it exists.
+
+    Non-ASCII source ids used to share one ``_.json``; a build that started hashing
+    them would otherwise show an empty page for every author synced before the fix.
+    """
+    path = profile_path(source_id)
+    if path.is_file():
+        return path
+    legacy = authors_dir() / f'{_legacy_key(source_id)}.json'
+    return legacy if legacy.is_file() else path
+
+
+def existing_avatar_path(source_id: str) -> Path:
+    path = avatar_path(source_id)
+    if path.is_file():
+        return path
+    legacy = authors_dir() / f'{_legacy_key(source_id)}.jpg'
+    return legacy if legacy.is_file() else path
+
+
 def _safe_key(source_id: str) -> str:
-    cleaned = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(source_id or '').strip())
-    return cleaned or 'default'
+    raw = str(source_id or '').strip()
+    cleaned = re.sub(r'[^A-Za-z0-9_.-]+', '_', raw)
+    if not cleaned:
+        return 'default'
+    if cleaned != raw:
+        # Two non-ASCII source ids both collapse to "_", so their author profiles and
+        # avatars overwrote each other and the page showed the wrong nickname. The
+        # suffix keeps the name readable while making the key unique again.
+        cleaned = f'{cleaned}-{hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]}'
+    return cleaned
 
 
 def douyin_id_from_folder(folder_name: str) -> str:
@@ -74,7 +109,7 @@ def douyin_id_from_folder(folder_name: str) -> str:
 
 
 def load_profile(source_id: str) -> dict:
-    path = profile_path(source_id)
+    path = existing_profile_path(source_id)
     try:
         data = json.loads(path.read_text(encoding='utf-8'))
     except (OSError, ValueError):
@@ -260,5 +295,5 @@ def resolve_profile(source_id: str, *, folder_name: str = '') -> dict:
         'aweme_count': profile.get('aweme_count'),
         'avatar_url': str(profile.get('avatar_url') or ''),
         'profile_url': str(profile.get('profile_url') or ''),
-        'has_avatar': avatar_path(source_id).is_file(),
+        'has_avatar': existing_avatar_path(source_id).is_file(),
     }

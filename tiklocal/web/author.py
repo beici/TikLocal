@@ -217,7 +217,7 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
     @app.route('/author/<source_id>/avatar')
     def author_avatar(source_id):
         _source_or_404(source_id)
-        cached = author_profiles.avatar_path(source_id)
+        cached = author_profiles.existing_avatar_path(source_id)
         if cached.is_file():
             return send_file(cached, mimetype='image/jpeg', max_age=AVATAR_MAX_AGE)
         bundled = Path(current_app.static_folder or '') / author_profiles.DEFAULT_AVATAR_FILENAME

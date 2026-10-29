@@ -551,6 +551,14 @@ class MediaIndexStore:
                 total += int(row[0] if row else 0)
         return total
 
+    def source_row_count(self, source_id: str) -> int:
+        """How many indexed rows a source owns, without loading any of them."""
+        with self.database.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM media_items WHERE source_id = ?", (str(source_id),)
+            ).fetchone()
+        return int(row[0] if row else 0)
+
     def on_days(
         self,
         month_days: list[str],
@@ -1261,6 +1269,21 @@ class LibraryIndexer:
                     # that as "the source is now empty" deleted every row and swept
                     # its playback positions and watch history for good.
                     raise OSError(errno.ENOENT, 'source vanished during scan', str(source.path))
+                if not paths and self.store.source_row_count(source.id):
+                    # Nothing at all came back while the index still holds rows for
+                    # this source: a filter (cloud placeholders, junctions) or an ACL
+                    # swallowed the whole tree. Deleting here would sweep its resume
+                    # points and watch history too, and neither a snapshot nor the
+                    # trash can bring those back. A folder the user really emptied has
+                    # no entries left, so a genuine "deleted everything" still syncs.
+                    try:
+                        emptied = next(os.scandir(source.path), None) is None
+                    except OSError:
+                        emptied = False
+                    if not emptied:
+                        raise OSError(
+                            errno.ENOENT, 'source scanned empty but its index is not', str(source.path),
+                        )
                 records = self._apply_douyin_pairing(records)
             except OSError as error:
                 failures[source.id] = str(error)

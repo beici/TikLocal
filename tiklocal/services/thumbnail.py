@@ -207,6 +207,16 @@ class ThumbnailService:
         """Pre-root-key cache layout: plain sha1(canonical uri)."""
         return self.thumb_dir / (hashlib.sha1(key.encode('utf-8')).hexdigest() + '.jpg')
 
+    def _v1_path_for_key(self, key: str) -> Path:
+        """Round 03-13 layout: sha1(root key | uri) without the format version.
+
+        Nothing reads these any more, and nothing deleted them either: every media
+        file the user removed left its old preview behind for good (0.8-1.5 GB in the
+        reported library, all counted in the settings cache size).
+        """
+        digest = hashlib.sha1(f'{self._root_key}|{key}'.encode('utf-8')).hexdigest()
+        return self.thumb_dir / (digest + '.jpg')
+
     def _cached_path_for_key(self, key: str) -> Path | None:
         canonical = self._path_for_key(key)
         legacy = self._legacy_path_for_key(key)
@@ -217,6 +227,12 @@ class ThumbnailService:
             except OSError:
                 continue
         else:
+            # Neither live layout has this preview: drop the round 03-13 leftover if
+            # one is still sitting there, so the cache cannot only grow.
+            try:
+                self._v1_path_for_key(key).unlink(missing_ok=True)
+            except OSError:
+                pass
             return None
         if candidate == legacy:
             if not self._claim_legacy_adoption():
@@ -520,7 +536,7 @@ class ThumbnailService:
     def delete_thumbnail(self, uri: str) -> bool:
         removed = False
         for key in self.library.legacy_candidates(self.library.canonicalize_uri(uri)):
-            for path in (self._path_for_key(key), self._legacy_path_for_key(key)):
+            for path in (self._path_for_key(key), self._legacy_path_for_key(key), self._v1_path_for_key(key)):
                 try:
                     path.unlink()
                     removed = True

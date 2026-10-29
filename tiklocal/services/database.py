@@ -319,6 +319,18 @@ def _migrate_011_simplify_media_vectors(conn: sqlite3.Connection) -> None:
         # partially restored backup, a manual cleanup). Without this guard the
         # CREATE below raised "table media_vectors already exists", which is not one
         # of the damaged-database markers, so the app refused to start forever.
+        #
+        # ``photo_groups`` was created by this same step, so a bookmark lost between
+        # the two left the table missing while the version said "applied": the /flow
+        # related-groups query then failed with "no such table" on every request.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS photo_groups (
+              position INTEGER NOT NULL,
+              rank INTEGER NOT NULL,
+              uri TEXT NOT NULL,
+              PRIMARY KEY (position, rank)
+            )
+        """)
         return
     conn.execute("""
         CREATE TABLE media_vectors (
@@ -413,7 +425,9 @@ def _migrate_015_add_search_text(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(media_items)").fetchall()}
     if 'search_text' not in columns:
         conn.execute('ALTER TABLE media_items ADD COLUMN search_text TEXT')
-    rows = conn.execute('SELECT uri, filename, rel_path FROM media_items').fetchall()
+    rows = conn.execute(
+        'SELECT uri, filename, rel_path FROM media_items WHERE search_text IS NULL'
+    ).fetchall()
     updates = [
         (normalize_search_text(f"{row['filename'] or ''} {row['rel_path'] or ''}"), row['uri'])
         for row in rows
@@ -456,7 +470,14 @@ def _migrate_017_index_capture_and_source(conn: sqlite3.Connection) -> None:
         'CREATE INDEX IF NOT EXISTS idx_media_items_monthday '
         'ON media_items(substr(captured_local_date, 6, 5))'
     )
-    conn.execute('ANALYZE')
+    try:
+        conn.execute('ANALYZE')
+    except sqlite3.DatabaseError:
+        # Statistics are an optimisation, never a correctness requirement: a full
+        # disk or a busy write lock must not roll this migration back and leave the
+        # instance unable to start (every retry would fail the same way). The index
+        # sync runs ANALYZE again after its next snapshot.
+        LOGGER.warning('migration 017: ANALYZE failed, keeping the previous statistics', exc_info=True)
 
 
 MIGRATIONS = [

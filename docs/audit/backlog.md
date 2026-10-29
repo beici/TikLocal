@@ -752,3 +752,13 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] `/api/activity` 无幂等键，重试会自造一次 skip + impression | `tiklocal/web/library.py` | 需要客户端生成事件 id 并落库去重 |
 | [P3] `/flow` 只在加载时读 `douyin_mode`，跨标签页切换不生效 | `tiklocal/static/flow_page_controller.js` | 与上一条同属跨标签页同步，一起做 |
 | [P3] 合集选择器 `count ± 1` 不用服务端 `item_count` | `tiklocal/static/collection_picker.js:216-229` | 只在并发增删时短暂偏差，刷新即正 |
+
+### 第 43 轮新增（5 条）
+
+| 问题 | 位置 | 为什么暂不修 |
+| --- | --- | --- |
+| [P3] 旧版 `favorite.json`（v1 单文件收藏）仍被接受，与 `favorites.json` 并存时行为未定义 | `tiklocal/services/favorites.py` | 需要先确认是否还有用户在用旧文件名，删兼容会静默丢收藏 |
+| [P3] 存储文件的**类型**变化（list → dict）被当成损坏隔离 | `tiklocal/services/json_storage.py` | 隔离是安全侧；区分「旧格式」与「真损坏」需要每类存储自己的迁移函数 |
+| [P3] 已删除的 HTTPS 相关 CLI 开关没有别名提示 | `tiklocal/run.py` | 属产品决定（是否长期保留旧写法），需同步帮助文本与文档 |
+| [P2] 设置页保存时读 store 失败会丢掉 `removed_ids`，被删目录下次启动复活 | `tiklocal/web/settings.py:167-173` | 需要改成「读失败即中止保存」，会改变现有错误路径语义，留待专门一轮 |
+| [P3] 内嵌元数据只读头部 64 KB 的上限没有版本标记 | `tiklocal/services/embedded_metadata.py` | 与缓存键绑定，改上限会让所有旧缓存失效（一次性重扫），收益低 |

@@ -85,6 +85,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.language.zh': '中文',
         'settings.language.en': 'English',
         'settings.language.changed': '语言已切换',
+'settings.language.cookie_blocked': '浏览器拦截了 Cookie，语言切换没有生效。请允许本站 Cookie 后重试。',
         # ---- settings page messages (JS) ----
         'settings.request_failed': '请求失败',
         'settings.sync.no_scan': '尚未完成扫描',
@@ -368,6 +369,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.language.zh': '中文',
         'settings.language.en': 'English',
         'settings.language.changed': 'Language updated',
+        'settings.language.cookie_blocked': 'Your browser blocked the cookie, so the language did not change. Allow cookies for this site and try again.',
         # ---- settings page messages (JS) ----
         'settings.request_failed': 'Request failed',
         'settings.sync.no_scan': 'No scan completed yet',

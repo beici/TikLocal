@@ -74,7 +74,7 @@ class MediaSourceStore:
         (an ``OSError``) instead of returning an empty list: the caller must fall
         back to the launch configuration, never to "no folders at all".
         """
-        payload = read_json_file(self.store_path, None, expected_type=dict)
+        payload = read_json_file(self.store_path, None, expected_type=dict, max_version=STORE_VERSION)
         if not isinstance(payload, dict):
             return None
         raw_sources = payload.get('sources')

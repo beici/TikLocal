@@ -127,6 +127,11 @@
     try {
       const stored = Number(window.localStorage.getItem(key));
       if (PAGE_SIZES.includes(stored)) return stored;
+      // A value from an older build (or a hand edit) is not one of ours: rewrite it
+      // once instead of silently discarding the user's choice on every page load.
+      if (window.localStorage.getItem(key) !== null) {
+        window.localStorage.setItem(key, String(PAGE_SIZES[0]));
+      }
     } catch (_) {}
     return PAGE_SIZES[0];
   }

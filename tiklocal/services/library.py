@@ -205,10 +205,24 @@ class LibraryService:
                         folders.remove(hidden)
                 # A junction/symlink can point outside the library (or back into an
                 # ancestor and loop forever); its files would also be indexed under a
-                # host absolute path and never load.
-                folders[:] = [
-                    name for name in folders if not _is_reparse_dir(Path(directory) / name)
-                ]
+                # host absolute path and never load. Record the prefix rather than
+                # dropping it silently: when every subfolder is a cloud placeholder or
+                # a junction the source scans as empty, and an empty scan used to
+                # delete the whole source (rows, resume points, watch history).
+                keep: list[str] = []
+                for name in folders:
+                    child = Path(directory) / name
+                    if not _is_reparse_dir(child):
+                        keep.append(name)
+                        continue
+                    if skipped is not None:
+                        try:
+                            relative = os.path.relpath(child, source.path)
+                        except ValueError:
+                            relative = ''
+                        if relative and relative != '.':
+                            skipped.append(f'@{source.id}/{Path(relative).as_posix().rstrip("/")}/')
+                folders[:] = keep
             paths.extend(
                 Path(directory) / name for name in files
                 if Path(name).suffix.lower() in extensions

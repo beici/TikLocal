@@ -349,6 +349,25 @@ def _domain_candidates(host: str) -> list[str]:
     return candidates
 
 
+def _salvage_download_config(data: dict[str, Any]) -> dict[str, Any]:
+    """Keep every field that validates, drop only the ones that do not.
+
+    ``validate_download_config`` answers for the payload as a whole, so a single
+    hand-edited bad value (``max_concurrent: "abc"``) made the settings page show —
+    and the next save persist — every default, losing a perfectly good cookie dir,
+    gallery archive path and TikTok section along with it.
+    """
+    validated, error = validate_download_config(data, partial=True)
+    if error is None:
+        return validated or {}
+    salvaged: dict[str, Any] = {}
+    for key in data:
+        single, single_error = validate_download_config({key: data[key]}, partial=True)
+        if single_error is None and single:
+            salvaged.update(single)
+    return salvaged
+
+
 class DownloadConfigStore:
     def __init__(self, store_path: Path):
         self.store_path = store_path
@@ -366,7 +385,7 @@ class DownloadConfigStore:
         env_cookie_dir = str(os.environ.get("TIKLOCAL_COOKIE_DIR", "")).strip()
         if env_cookie_dir:
             defaults["cookie_dir"] = env_cookie_dir
-        validated, _ = validate_download_config(data, partial=True)
+        validated = _salvage_download_config(data)
         merged = _merge_download_config(defaults, validated)
         if isinstance(data.get("updated_at"), str):
             merged["updated_at"] = data["updated_at"]

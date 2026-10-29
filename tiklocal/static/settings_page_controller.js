@@ -513,7 +513,17 @@
     } catch (_) {
       // The cookie below is what the server renders from; storage is only a device hint.
     }
-    document.cookie = 'lang=' + encodeURIComponent(locale) + ';path=/;max-age=31536000;samesite=lax';
+    const cookie = 'lang=' + encodeURIComponent(locale) + ';path=/;max-age=31536000;samesite=lax';
+    document.cookie = cookie;
+    if (document.cookie.indexOf('lang=' + encodeURIComponent(locale)) === -1) {
+      // A blocked cookie means the reload comes straight back in the old language:
+      // say so instead of reloading into the same page with no explanation.
+      window.TikLocalUI?.toast(
+        window.TikLocalI18n?.t('settings.language.cookie_blocked') || 'settings.language.cookie_blocked',
+        'error'
+      );
+      return;
+    }
     window.location.reload();
   }));
   syncLanguageButtons();

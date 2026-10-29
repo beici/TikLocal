@@ -311,7 +311,7 @@ def main():
                 pass
     # Read the configuration file.
     config = load_config()
-    validate_config_types(config)
+    argv = sys.argv[1:]
 
     # Normalize argv to support the following forms.
     # 1) tiklocal                      -> serve
@@ -319,7 +319,6 @@ def main():
     # 3) tiklocal --port 9000          -> serve --port 9000
     # 4) tiklocal thumbs /path         -> thumbs /path
     # 5) tiklocal /path thumbs         -> thumbs /path
-    argv = sys.argv[1:]
     if '-h' not in argv and '--help' not in argv:
         # The two documented forms are "tiklocal thumbs /path" and
         # "tiklocal /path thumbs": the subcommand is the first word, or the second
@@ -331,7 +330,10 @@ def main():
         elif len(argv) >= 2 and argv[1] == 'thumbs' and not argv[0].startswith('-'):
             argv.pop(1)
             argv.insert(0, 'thumbs')
-        elif len(argv) == 0 or argv[0] not in ('serve', 'thumbs', 'dedupe', 'vectorize', 'auth', 'tls'):
+        elif len(argv) == 0:
+            # No arguments at all: the default command is serve.
+            argv.insert(0, 'serve')
+        elif argv[0] not in ('serve', 'thumbs', 'dedupe', 'vectorize', 'auth', 'tls'):
             # A word that *looks* like a command but is not one used to be rewritten
             # into "serve <word>", so `tiklocal migrate` failed with "Media directory
             # does not exist: migrate" -- pointing at the argument instead of the
@@ -350,6 +352,12 @@ def main():
                 raise SystemExit(2)
             # Default to serve when no known subcommand is present.
             argv.insert(0, 'serve')
+
+    # Validate the config file only once argv is known to be a real command: a wrong
+    # type used to abort `tiklocal --help` and hide the "did you mean" hints behind a
+    # message about a file the caller was not asking about.
+    if not ({'-h', '--help', '--version'} & set(argv)):
+        validate_config_types(config)
 
     # Parse commands and options.
     parser = argparse.ArgumentParser(
@@ -667,7 +675,10 @@ Examples:
         if not media_path.is_dir():
             _fatal(f"Path is not a directory: {media_root}")
     else:
-        media_path = Path(media_sources[0]['path'])
+        # The documented ``media_sources: path: ~/media`` form must reach the
+        # filesystem expanded, or a first launch derives MEDIA_ROOT and the start
+        # banner from ``<cwd>\~\media``.
+        media_path = Path(str(media_sources[0]['path'])).expanduser()
 
     unavailable_sources = []
     for source in media_sources:

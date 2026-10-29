@@ -42,7 +42,10 @@ FORBIDDEN_SUFFIXES = frozenset({'.json', '.db', '.sqlite', '.sqlite3', '.yaml', 
 
 def normalize_url(raw: str) -> str:
     """Return a cleaned URL, or '' when the line is not a usable http(s) URL."""
-    text = str(raw or '').strip()
+    # Notepad and PowerShell's ``Out-File`` prepend a UTF-8 BOM, and ``str.strip()``
+    # does not treat U+FEFF as whitespace: the first line parsed with the scheme
+    # "\ufeffhttps", was rejected, and disappeared for good on the next save.
+    text = str(raw or '').replace('\ufeff', '').strip()
     if not text or text.startswith('#'):
         return ''
     if len(text) > MAX_URL_LENGTH:

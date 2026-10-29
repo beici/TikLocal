@@ -57,7 +57,7 @@ class RadioEnergyService:
         source = self.library.resolve_path(uri)
         if source is None or not source.is_file():
             return None
-        cache = self._cache_path(uri)
+        cache = self._cache_path(uri, source)
         cached = self._read_cache(cache, source)
         if cached is not None:
             return cached
@@ -72,8 +72,12 @@ class RadioEnergyService:
         self._write_cache(cache, envelope)
         return envelope
 
-    def _cache_path(self, uri: str) -> Path:
-        key = self.library.canonicalize_uri(uri)
+    def _cache_path(self, uri: str, source: Path) -> Path:
+        # The canonical URI is `@source/rel` and says nothing about where the source
+        # points, so after switching MEDIA_ROOT the same key named a different file;
+        # when the new file was older the mtime check passed and the radio drew the
+        # previous library's waveform. Salt the key with the resolved path.
+        key = f'{self.library.canonicalize_uri(uri)}|{source}'
         return self.cache_dir / (hashlib.sha1(key.encode('utf-8')).hexdigest() + '.json')
 
     @staticmethod

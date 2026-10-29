@@ -247,7 +247,7 @@ def register_settings_routes(
         return {'success': True, 'message': message, 'data': _source_payload()}
 
     def _scan_after_change() -> dict:
-        scan = {'indexed': 0, 'deleted': 0, 'busy': False, 'unavailable': [], 'error': ''}
+        scan = {'indexed': 0, 'deleted': 0, 'busy': False, 'unavailable_sources': [], 'source_errors': {}, 'error': ''}
         if library_indexer is None:
             return scan
         try:
