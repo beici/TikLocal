@@ -302,6 +302,12 @@
     const tile = document.createElement('article');
     tile.className = 'media-tile';
     tile.dataset.index = String(index);
+    // A mouse is not the only way into the grid: the cards have to be tabbable and
+    // named, otherwise keyboard and screen-reader users cannot open any media here
+    // (the timeline above already renders real <button>s for the same reason).
+    tile.tabIndex = 0;
+    tile.setAttribute('role', 'button');
+    tile.setAttribute('aria-label', T('home.view_media', { name: String(item.name || '') }));
     const ratio = getTileAspectRatio(item);
 
     if (item.type === 'video') {
@@ -352,6 +358,13 @@
         return;
       }
       openViewer(index);
+    });
+    // Space and Enter are what a keyboard user presses on a card; .click() reuses the
+    // branch above so selection mode keeps working from the keyboard too.
+    tile.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
+      event.preventDefault();
+      tile.click();
     });
     return tile;
   }
@@ -686,8 +699,10 @@
     onFavoriteChange: (value, name) => {
       if (currentItem()?.name === name) updateFavoriteButton(value);
     },
-    onSourceChange: (sourceMeta) => {
-      updateSourceButton(sourceMeta);
+    onSourceChange: (sourceMeta, name) => {
+      // A slow lookup for the item that was open a moment ago must not relabel the
+      // button of the item on screen now (the favorite callback guards the same way).
+      if (currentItem()?.name === name) updateSourceButton(sourceMeta);
     },
     onCaptionClear: () => {
       clearCaption();

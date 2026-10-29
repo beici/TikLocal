@@ -38,6 +38,7 @@
 | 20 | 2026-10-27 | 484P/6S/0F | 0/0/7/3（确认 10，全部修复；data-layer 域未交付） | `fix: own legacy thumbnails, expire device tokens and keep ranged media off-thread` | [round-20](round-20.md) |
 | 21 | 2026-10-29 | 579P/7S/0F | 0/0/12/24（五域 35 + 独立复审 1 = 36，驳回 1，成立 35，修复 9，转 backlog 26） | `fix: align the port probe, unlock --dev and bound bad request bodies`，14 文件 `+331/-44` | [round-21](round-21.md) |
 | 22 | 2026-10-29 | 591P/7S/0F | 0/3/30/35（七域 68 + 独立复审 9 = 77，修复 18，驳回 1，转 backlog 54） | `fix: keep canceled downloads indexed, bound the password store and stop the history rebuild`，17 文件 | [round-22](round-22.md) |
+| 23 | 2026-10-29 | 602P/8S/0F | 0/7/25/21（七域 53，去重 51：P1 6 + P2 24 + P3 21；修复 24，复审另提 4 条阻塞项并当轮修完，转 backlog 27） | `fix: hand the keyboard back to buttons, dialogs and the feed`，17 文件 `+415/-31` | [round-23](round-23.md) |
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
 
@@ -80,6 +81,8 @@
 第 21 轮结束后：`pytest -q` = **591 passed / 7 skipped / 0 failed**（307.71s，新增 12 个用例，全部并入既有测试文件：`test_tls.py` 5 条 + `test_search.py` 3 条 + `test_auth.py` 2 条 + `test_radio_client.py` 2 条）。第 20 轮之后新增 HTTPS/媒体来源/统一搜索三块功能，套件规模从 494 涨到 579，本轮再 +12。
 
 第 22 轮结束后：`pytest -q` = **602 passed / 8 skipped / 0 failed**（317.17s，新增 12 个用例：`tests/test_round22_regressions.py`）。本轮把审查视角从「新代码 + 安全」轮换到「数据完整性 / 并发与资源泄漏 / 性能」，因此 P0 仍为 0 但 P1 有 3 条（详情页删除按钮 ReferenceError、下载页每 2.2 s 重建历史列表、`records()` 全表物化压在详情页与 `/flow`），全部当轮修完。独立复审另指出 4 条「本轮修复本身有问题」（`neighbors()` 漏活照片、`AuthStore._load` 的 `exists()` 吞掉共享冲突、`_prune()` 会清掉仍在生效的限流块、`chmod` 在 `replace` 之后），也当轮改正——这类「修完了但没修对」只有独立复审能抓到。
+
+第 23 轮结束后：`pytest -q` = **602 passed / 8 skipped / 0 failed**（213.71s，本轮未新增用例）。视角再换到「前端状态机 + 可访问性与多语言」，域的划分也改成按功能切。P0 为 0，P1 有 6 条（flow 空格键同时触发点赞与暂停、explore 网格卡片不可聚焦、图片详情页按钮被全局 `preventDefault` 吞掉、下载页「进行中」列表每 2.2 s 整块重建、关闭的合集弹层仍可 Tab 进入、换账号后串上一个用户的收听记录），全部当轮修完。因为没有 JS 运行时测试，验证改为**真实 Chromium 冒烟**（断言 DOM 与事件行为，不断言源码文本），覆盖 `/flow`、`/flow?tag=…`（375×812）、`/library?view=explore`、`/image`、`/settings`，控制台零 error；独立复审提出的 4 条阻塞项（键盘守卫过宽吞掉方向键、收藏键空格处理器落在抖音分支、图片详情同一处、tag 流隐藏页头丢掉移动端菜单入口）也当轮修完并复验。
 
 ## 目录
 

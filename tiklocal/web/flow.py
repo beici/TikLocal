@@ -662,12 +662,9 @@ def register_flow_routes(
 ):
     @app.route('/flow')
     def flow_view():
-        return render_template(
-            'flow.html', menu='flow',
-            tag=normalize_tag(request.args.get('tag', '')),
-            start=str(request.args.get('start', '')).strip(),
-            caption=str(request.args.get('caption', '')).strip(),
-        )
+        # The feed controller reads tag/start/caption from the URL itself, so passing
+        # them into the template only looked like they were being used.
+        return render_template('flow.html', menu='flow')
 
     @app.route('/api/feed/mix')
     def api_feed_mix():

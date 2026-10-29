@@ -247,7 +247,7 @@
   <div id="quick-controls" class="is-hidden">
     <span class="quick-time" id="quick-time-current">00:00</span>
     <div class="quick-progress-wrap">
-      <input type="range" id="quick-progress" min="0" max="100" step="0.1" value="0" />
+      <input type="range" id="quick-progress" min="0" max="100" step="0.1" value="0" aria-label="{{ t('radio.progress_aria') }}" />
       <div class="quick-progress-track"></div>
       <div class="quick-progress-fill" id="quick-progress-fill"></div>
     </div>
@@ -265,7 +265,7 @@
         <button type="button" class="quick-zoom-btn active" data-level="2.5">2.5x</button>
         <button type="button" class="quick-zoom-btn" data-level="5">5x</button>
       </div>
-      <button id="quick-magnifier-toggle" class="quick-btn" type="button" title="{{ t('library.quick.magnifier') }}">
+      <button id="quick-magnifier-toggle" class="quick-btn" type="button" title="{{ t('library.quick.magnifier') }}" aria-pressed="false">
         <i data-feather="search"></i>
       </button>
     </div>
@@ -299,13 +299,13 @@
   </div>
 </div>
 
-<div id="quick-collection-modal" class="quick-collection-modal" aria-hidden="true">
+<div id="quick-collection-modal" class="quick-collection-modal" role="dialog" aria-modal="true" aria-labelledby="quick-collection-title" aria-hidden="true">
   <div class="quick-collection-card">
     <div class="coll-drag-handle"></div>
     <div class="quick-collection-header">
       <div class="quick-collection-title-row">
-        <h3>{{ t('library.collection.add') }}</h3>
-        <button id="quick-collection-close" type="button" class="quick-collection-close">
+        <h3 id="quick-collection-title">{{ t('library.collection.add') }}</h3>
+        <button id="quick-collection-close" type="button" class="quick-collection-close" aria-label="{{ t('common.close') }}">
           <i data-feather="x"></i>
         </button>
       </div>
@@ -341,7 +341,6 @@
     initialSeed: {{ mode_seed | tojson }},
     minMb: {{ min_mb }},
     emptyMessage: {{ empty_message | tojson }},
-    libraryView: {{ library_view | default('explore') | tojson }},
     timelineMonth: {{ timeline_month | default('') | tojson }},
   };
 </script>

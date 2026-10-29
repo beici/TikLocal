@@ -233,6 +233,13 @@
     function hideFlowStatus() {
       clearTimeout(flowLoadingTimer);
       flowLoadingTimer = null;
+      // The overlay only fades out (opacity), so any button showFlowStatus() left
+      // visible stayed focusable: Tab reached invisible controls and Enter followed
+      // a link out of the feed.
+      flowStatusRetry.hidden = true;
+      flowStatusNext.hidden = true;
+      flowStatusLibrary.hidden = true;
+      flowStatusActions.hidden = true;
       flowStatus.classList.remove('is-visible');
       flowStatus.setAttribute('aria-hidden', 'true');
     }
@@ -2194,6 +2201,17 @@
       }]);
     });
 
+    // #favorite-btn is an <a role="button">: Enter activates it for free, Space does
+    // not, and Space is the key a screen-reader user presses for a button. This lives
+    // outside the Douyin block below so the shortcut also works in the plain feed.
+    favoriteBtn.addEventListener('keydown', (event) => {
+      if (event.key !== ' ' && event.key !== 'Spacebar') return;
+      event.preventDefault();
+      // Without this the document handler reads the same Space as play/pause.
+      event.stopPropagation();
+      favoriteBtn.click();
+    });
+
     if (douyinModeOn && douyinFavoriteBtn) {
       // The Douyin chrome mirrors the existing controls, whose favorite and
       // collection state also flips asynchronously, so react to class changes
@@ -2217,6 +2235,9 @@
         element.addEventListener('keydown', (event) => {
           if (event.key !== ' ' && event.key !== 'Spacebar') return;
           event.preventDefault();
+          // Without this the document handler below sees the same Space and toggles
+          // play/pause too, so one press both liked the work and paused the video.
+          event.stopPropagation();
           element.click();
         });
       });
@@ -2307,6 +2328,11 @@
         if (target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) {
           return;
         }
+        // A focused button or link owns Space: it has to activate the button, and
+        // the preventDefault() below would cancel that activation. Only Space is
+        // exempt -- the arrows still have to seek and page while a toolbar button
+        // holds focus, otherwise clicking "mute" once would disable them.
+        if (event.key === ' ' && target.closest('button, a[href], [role="button"]')) return;
       }
       if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && currentVideo()) {
         event.preventDefault();

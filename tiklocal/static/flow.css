@@ -623,12 +623,16 @@ body.immersive-mode .floating-dock {
   flex-direction: column;
   gap: 8px;
   opacity: 0;
+  /* opacity alone left the collapsed buttons in the tab order: Tab walked into
+     invisible controls that changed playback speed when pressed. */
+  visibility: hidden;
   pointer-events: none;
   transform: translateX(8px);
   transition: all 0.2s ease;
 }
 .zoom-options.show {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
   transform: translateX(0);
 }
@@ -789,11 +793,16 @@ body.immersive-mode .caption-panel:not(.is-hidden) {
   justify-content: center;
   padding: 16px;
   opacity: 0;
+  /* opacity alone keeps the closed dialog in the tab order: Tab walked into the
+     aria-hidden subtree (close button, collection items, name input) and the focus
+     ring disappeared. library.css fixes the same modal the same way. */
+  visibility: hidden;
   pointer-events: none;
-  transition: opacity 0.22s;
+  transition: opacity 0.22s, visibility 0.22s;
 }
 .collection-modal.active {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
 }
 .collection-modal-card {
@@ -999,6 +1008,20 @@ body.douyin .mobile-app-header,
 body.douyin .controls-sidebar,
 body.douyin #custom-controls,
 body.douyin .caption-panel { display: none; }
+
+/* A ?tag= feed shows the same top bar without Douyin mode, and the fixed mobile
+   header (z-index 242) painted its centred wordmark straight over the centred topic
+   name. Hiding the header would have cost the only menu trigger below 768px (the dock
+   is hidden there), so on narrow screens the top bar moves down instead and the header
+   keeps its row. Douyin mode hides the header itself, and immersive mode fades it, so
+   neither needs the offset. */
+@media (max-width: 767px) {
+  body.tag-feed:not(.douyin):not(.immersive-mode) .douyin-topbar {
+    top: calc(46px + var(--app-nav-safe-top));
+    height: 52px;
+    padding-top: 0;
+  }
+}
 
 body.douyin .douyin-topbar,
 body.tag-feed .douyin-topbar { display: flex; }

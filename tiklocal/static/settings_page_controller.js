@@ -448,10 +448,29 @@
 
   const douyinModeToggle = document.getElementById('douyin-mode-toggle');
   if (douyinModeToggle) {
-    douyinModeToggle.checked = window.localStorage.getItem('douyin_mode') === '1';
+    // Storage throws when the browser blocks it; an unguarded read here would abort the
+    // rest of this controller (folder list, first paint) before any of it runs.
+    const storedDouyinMode = () => {
+      try {
+        return localStorage.getItem('douyin_mode') === '1';
+      } catch (_) {
+        return false;
+      }
+    };
+    douyinModeToggle.checked = storedDouyinMode();
     douyinModeToggle.addEventListener('change', () => {
-      window.localStorage.setItem('douyin_mode', douyinModeToggle.checked ? '1' : '0');
+      try {
+        localStorage.setItem('douyin_mode', douyinModeToggle.checked ? '1' : '0');
+      } catch (_) {
+        // Without storage the switch still applies to this page.
+      }
       TikLocalUI.toast(douyinModeToggle.checked ? T('settings.douyin.enabled') : T('settings.douyin.disabled'));
+    });
+    // Other pages read the stored flag live, so this switch must follow a change made in
+    // another tab instead of showing the opposite of what is actually stored.
+    window.addEventListener('storage', (event) => {
+      if (event.key !== 'douyin_mode') return;
+      douyinModeToggle.checked = storedDouyinMode();
     });
   }
 
@@ -468,7 +487,11 @@
   languageButtons.forEach((button) => button.addEventListener('click', () => {
     const locale = button.dataset.localeChoice;
     if (!locale || locale === currentLocale) return;
-    window.localStorage.setItem('tiklocal:lang', locale);
+    try {
+      window.localStorage.setItem('tiklocal:lang', locale);
+    } catch (_) {
+      // The cookie below is what the server renders from; storage is only a device hint.
+    }
     document.cookie = 'lang=' + encodeURIComponent(locale) + ';path=/;max-age=31536000;samesite=lax';
     window.location.reload();
   }));

@@ -384,6 +384,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('keydown', (e) => {
     // e.target is the document itself when nothing has focus: closest() would throw.
     if (!(e.target instanceof Element) || e.target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') || !promptModal.classList.contains('hidden')) return;
+    // A focused control keeps its own Enter/Space: preventing the default here made
+    // every button on this page unusable from the keyboard (detail_page_controller.js
+    // already lets button/a through for the same reason). The arrows and 'f' are not
+    // the button's keys, so they still have to work while a button holds focus.
+    if ((e.key === ' ' || e.key === 'Enter') && e.target.closest('button, a[href], summary, [role="menuitem"]')) return;
     if (fullscreenModal.classList.contains('hidden')) {
       switch(e.key) {
         case ' ':

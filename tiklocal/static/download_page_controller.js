@@ -5,6 +5,7 @@
   let pollTimer = null;
   let lastJobsSignature = '';
   let lastHistorySignature = '';
+  let lastActiveKey = '';
   let dependencyMeta = { yt_dlp_available: false, gallery_dl_available: false, ffmpeg_available: false, tiktok_downloader: null };
   let selectedEngine = 'yt-dlp';
   let selectedTab = 'post';
@@ -370,6 +371,41 @@
     ].join(':')).join('|');
   }
 
+  // The active list sits inside an aria-live region and is polled every 2.2 s while
+  // something runs. Replacing its markup on each tick destroyed the focused "Cancel"
+  // button — a keyboard user could never cancel a running job — and made the screen
+  // reader announce every row again. Only a structural change rebuilds it; progress
+  // is written into the nodes that are already there.
+  function activeKey(jobs) {
+    return jobs.map((job) => [
+      job.id, job.status, job.engine, job.url, job.file_count,
+    ].join(':')).join('|');
+  }
+
+  function updateActiveNode(node, job) {
+    const copy = node.querySelector('.download-job-copy');
+    if (copy) copy.textContent = statusCopy(job);
+    const bar = node.querySelector('.download-progress');
+    if (!bar) return;
+    const percent = Math.max(0, Math.min(100, Number(job.progress_percent) || 0));
+    bar.setAttribute('aria-valuenow', percent.toFixed(0));
+    const fill = bar.querySelector('.download-progress-bar');
+    if (fill) fill.style.width = `${percent.toFixed(1)}%`;
+  }
+
+  function syncActiveList(container, activeJobs, force) {
+    const key = activeKey(activeJobs);
+    if (!force && key === lastActiveKey) {
+      [...container.querySelectorAll('article[data-job-id]')].forEach((node) => {
+        const job = activeJobs.find((entry) => String(entry.id) === node.dataset.jobId);
+        if (job) updateActiveNode(node, job);
+      });
+      return;
+    }
+    lastActiveKey = key;
+    container.innerHTML = activeJobs.map((job) => renderJob(job)).join('');
+  }
+
   function renderJobs(jobs, { force = false } = {}) {
     const signature = jobsSignature(jobs);
     const hasActiveJobs = jobs.some((job) => ACTIVE_STATUSES.has(job.status));
@@ -390,7 +426,7 @@
 
     activeSection.hidden = activeJobs.length === 0;
     document.getElementById('active-count').textContent = activeJobs.length ? T('download.items_count', { n: activeJobs.length }) : '';
-    activeList.innerHTML = activeJobs.map((job) => renderJob(job)).join('');
+    syncActiveList(activeList, activeJobs, force);
     document.getElementById('history-count').textContent = historyJobs.length ? T('download.items_count', { n: historyJobs.length }) : '';
 
     const knownIds = new Set(historyJobs.map((job) => job.id));

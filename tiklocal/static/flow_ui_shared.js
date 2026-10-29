@@ -244,6 +244,9 @@
 
     function showUI(visible) {
       toggleBtn.classList.toggle(activeClass, visible);
+      // The on/off state lived only in a CSS class, so a screen reader never learned
+      // whether the lens was on; every caller funnels through here.
+      toggleBtn.setAttribute('aria-pressed', visible ? 'true' : 'false');
       zoomOptions.classList.toggle('show', visible);
       lens.classList.toggle('active', visible);
     }

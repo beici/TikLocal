@@ -216,4 +216,37 @@
 | [P3] 睡眠定时器每秒重建 `btnSleep.innerHTML` 且输出恒定（文案取配置值而非剩余时间），每秒一次 `getElementById` | `tiklocal/static/radio_controller.js:510-553` | 改单个 `setTimeout(deadline)` 即可；若要显示剩余时间则是 UI 决策 |
 | [P3] `playback_resume.js` 后台仍累计观看时长（`timeupdate` 采样无 `document.hidden` 判定）→ 服务端 `visible_ms` 虚高 | `tiklocal/static/playback_resume.js:47`、`:84-88` | 一行 `if (document.hidden) return;`，但会改变观看统计口径，需先确认产品预期 |
 
+## 第 23 轮新增（按严重度）
+
+本轮 51 条去重发现中修 24 条（6×P1 + 10×P2 + 8×P3），其余 27 条如下。P1 全部当轮修完，故下表从 P2 开始。**优先做**：CSRF token 跨标签冻结（第一行）与七个 `aria-modal` 弹层的焦点陷阱（第七行）。
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| **[P2] 优先** CSRF token 在脚本加载时冻结进内存：另一标签重新登录后 token 轮转，本标签所有写请求 403，而统一处理只拦 401 → 收藏/删除/进度静默失败直到手动刷新 | `tiklocal/static/csrf_fetch.js:4-5`、`tiklocal/static/base.js:157` | 需要「403 且已知 token 轮转过」的判定与自动刷新策略，直接 reload 会丢当前滚动位置与播放进度；先要确定哪些页面允许刷新 |
+| [P2] `hideFlowStatus()` 只移除 `is-visible`，不复位 retry/next/library/actions 的 `hidden` → 不可见按钮仍可 Tab 聚焦、回车会导航离开 | `tiklocal/static/flow_page_controller.js:233-238` | 与「弹层焦点归还」同批做更安全：复位 `hidden` 后焦点可能落在已隐藏元素上，需要同时安排焦点落点 |
+| [P2] 切换条目时 `onSourceChange` 丢弃 name 参数，`updateSourceButton` 也不校验 → 慢响应把「来源」按钮指向上一条的 URL | `tiklocal/static/library_page_controller.js:636-647`、`:689-690` | 一行加 `currentItem()?.name === name` 守卫即可，但要在真实慢网络下验证（本地响应太快无法复现） |
+| [P2] 提示词弹层 `role="dialog" aria-modal="true"` 但打开不移动焦点、无 Tab 陷阱、关闭不归还焦点 | `tiklocal/static/image_detail_page_controller.js:293-301`、`tiklocal/templates/image_detail.html:172` | 需要通用焦点陷阱工具（本轮只做了 6 条 P1 里的可见性修复），一次性覆盖 7 处弹层 |
+| [P2] 全屏层无 role/aria-modal、打开不移动焦点、Esc 后焦点落在已隐藏的关闭键上 | `tiklocal/static/image_detail_page_controller.js:172-203`、`tiklocal/templates/image_detail.html:145` | 同上，且全屏层与浏览器原生 Fullscreen API 的焦点行为要一起验 |
+| [P2] 首页「那年今日」链接用 `firstChild.nodeValue` 覆盖文案，链接与无障碍名只剩日期 | `tiklocal/static/home_page_controller.js:119` | 需要新增 i18n 键（带日期占位符），而本轮约束是「不改 i18n 键」；文案措辞需产品确认 |
+| **[P2] 优先** 七个 `aria-modal` 弹层只切 `hidden`、无 Tab 焦点陷阱（设置页 5 个、作者页 2 个、下载删除确认 1 个、媒体信息弹层、Quick Viewer）；同一批文件里作者页还有裸 `localStorage` 未包 try | `tiklocal/static/settings_page_controller.js`、`static/author_page_controller.js`、`static/download_page_controller.js:714-750`、`templates/flow.html:183`、`templates/library.html:232` | 做成一个 `trapFocus(container, {onClose, returnFocus})` 工具最省事，但要先统一 7 处弹层的打开/关闭回调形状；作者页裸 `localStorage` 属同一批改动 |
+| [P2] 电台 `role="listbox"` 只处理 Escape，方向键无效 | `tiklocal/static/radio_controller.js:214-219` | 需要按 listbox 语义补 roving tabindex + Home/End，属可访问性专项 |
+| [P2] `#station-options` 自 `fc4551a` 起恒为 `class="hidden"`，切换入口不存在 | `tiklocal/templates/radio.html:160` | 需产品决策：恢复电台切换入口，还是删掉这段 DOM |
+| [P2] 作者同步后整列重建，覆盖另一行未提交的输入 | `tiklocal/static/settings_page_controller.js:963-995`、`:1045` | 与第 22 轮「同步后重建列表」同源，需要「按行更新 + 脏值保护」的列表渲染改造 |
+| [P2] 电台页 `height: 100dvh; overflow: hidden; align-content: center`，横屏手机底部控制条被裁掉一半且整页不可滚 | `tiklocal/static/radio.css:36-39`、`:48-60` | 需要真机/视口模拟验证（本轮只验了 1280×900）；`100dvh` 与移动浏览器工具栏的交互也要一并测 |
+| [P2] Quick Viewer 的 5 个 46px 按钮在 ≤420px 高视口被 `overflow: hidden` 裁掉最上面的倍速键 | `tiklocal/static/library.css:503-516` | 同上，需多视口验证；可能要把按钮组改为可换行或横向滚动，属布局决策 |
+| [P3] 图片详情页的键盘守卫放在按钮守卫之后（Escape 分支在按钮上失效） | `tiklocal/static/library_page_controller.js:941-945` | 一行调整顺序即可，但与 #3 的焦点落点问题一起改更稳 |
+| [P3] 合集弹层 `restoreFocus` 不判可见性，焦点落到 body | `tiklocal/static/collections_page_controller.js:85-89`、`:117`、`:137` | 需 `isVisible(el)` 工具，与焦点陷阱同批做 |
+| [P3] 年份弹层选中后焦点掉回 body、无 Esc、无 `aria-expanded` | `tiklocal/static/library_timeline_controller.js:202-206` | 与焦点陷阱同批；`aria-expanded` 要同步到触发按钮 |
+| [P3] 缩放按钮的 aria-label 覆盖百分比且数值变化不播报 | `tiklocal/static/image_viewer_controller.js:31-34` | 需要 `aria-live` 或 `aria-valuetext` 方案，需真机读屏验证 |
+| [P3] `.mode-tabs` 是普通 div 带 aria-label（被忽略），无 `aria-pressed` | `tiklocal/templates/library.html:60-64` | 需要把 div 改成 tablist 或按钮组，会牵动 CSS 选择器 |
+| [P3] live region 与内容同帧插入，首个提示被静默 | `tiklocal/static/ui_feedback.js:17-22` | 需 `requestAnimationFrame` 或延时插入，属可访问性细节，需读屏实测 |
+| [P3] `/favorite` 的底部补偿为 0，`.organize-bar` 固定悬浮压住最后一排卡片 | `tiklocal/static/library.css:1-3`、`:1125-1141` | 需多视口验证；补偿值与 organize-bar 实际高度耦合 |
+| [P3] 设置页写 `tiklocal:lang` 但全站无人读取（i18n 读 `<html lang>`） | `tiklocal/static/settings_page_controller.js:471` | 删一行即可，但要确认没有第三方脚本或未来计划依赖该键 |
+| [P3] `ui_feedback.js` 的 `removeItem` 在 `JSON.parse` 之后，损坏值永久驻留 | `tiklocal/static/ui_feedback.js:83-85` | 一行调整顺序；属极低频路径 |
+| [P3] `tiklocal:vt-from` 在守卫之前写入且从不删除，产生与操作无关的 hero 过渡 | `tiklocal/static/page_transitions.js:34` | 需理清 View Transition 的生命周期，属动画细节 |
+| [P3] 语言切换 else 分支的 `setItem` 无 try，存储被禁时跳过主题按钮同步 | `tiklocal/static/settings_page_controller.js:80` | 与已修的抖音开关同类，漏了这一处；一行即可 |
+| [P3] `pagehide` 上报活动后置空 `activeActivity`，bfcache 恢复时无 `pageshow` 重建 → 当前条目 visible_ms 丢失 | `tiklocal/static/flow_page_controller.js:2384-2386` | 需要与 `flow_media_actions_controller.js:35` 的 pageshow 处理对齐；观看统计口径要先确认 |
+| [P3] 导入 textarea 无 label / aria-label | `tiklocal/templates/download.html:66` | 需要新增 i18n 键（本轮约束不改键），或复用现有文案 |
+| [P3] 后台仍累计观看时长（`timeupdate` 采样无 `document.hidden` 判定） | `tiklocal/static/playback_resume.js:47`、`:84-88` | 与第 22 轮同条合并（会改变观看统计口径） |
+
 

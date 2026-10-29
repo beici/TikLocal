@@ -165,6 +165,26 @@ window.addEventListener('pageshow', (event) => {
   };
 })();
 
+// 退出登录只清了服务端 cookie，浏览器里还留着上一个账号的收听记录与最近曲目
+// （`radio_position` / `radio_recent_tracks` 存的是媒体库里的文件名，也就是私有路径）。
+// 同一浏览器换个账号登录后，首页「继续收听」会显示上一个人的文件，电台还会把这些
+// 名字拼进 `?exclude=` 发给服务端。两个退出入口（停靠栏与抽屉菜单）都是普通表单提交，
+// 在提交前清掉即可；主题/语言/抖音模式是这台设备的偏好，与账号无关，保留。
+(() => {
+  const ACCOUNT_KEYS = ['radio_position', 'radio_recent_tracks'];
+  document.querySelectorAll('form[action$="/logout"]').forEach((form) => {
+    form.addEventListener('submit', () => {
+      ACCOUNT_KEYS.forEach((key) => {
+        try {
+          localStorage.removeItem(key);
+        } catch (error) {
+          // 存储被禁用时本来就没有可清的东西。
+        }
+      });
+    });
+  });
+})();
+
 // 断网/切网后各页只做「报错 + 等用户动作」，网络恢复也不会自动重拉，用户会以为应用坏了。
 // 这里只负责广播：页面监听 `tiklocal:online` 后重跑自己的首屏加载。
 window.addEventListener('online', () => {

@@ -6,7 +6,7 @@
 {% endblock %}
 
 {% block content %}
-<span id="main" tabindex="-1" aria-hidden="true"></span>
+<span id="main" tabindex="-1"></span>
 <div id="container">
   <div id="feed-container">
     <div id="video-start-cover" class="video-start-cover" aria-hidden="true">
@@ -40,7 +40,7 @@
   <div id="custom-controls">
     <span class="time-display" id="time-current">00:00</span>
     <div class="progress-container">
-      <input type="range" id="video-progress" min="0" max="100" step="0.1" value="0">
+      <input type="range" id="video-progress" min="0" max="100" step="0.1" value="0" aria-label="{{ t('radio.progress_aria') }}">
       <div class="progress-track"></div>
       <div class="progress-fill" id="progress-fill"></div>
     </div>
@@ -68,22 +68,22 @@
         <button type="button" class="zoom-btn active" data-level="2.5">2.5x</button>
         <button type="button" class="zoom-btn" data-level="5">5x</button>
       </div>
-      <button type="button" class="action-btn" id="magnifier-toggle" title="{{ t('flow.magnifier.title') }}">
+      <button type="button" class="action-btn" id="magnifier-toggle" title="{{ t('flow.magnifier.title') }}" aria-pressed="false">
         <i data-feather="search"></i>
       </button>
     </div>
 
-    <a href="#" class="action-btn" id="favorite-btn" data-value="">
+    <a href="#" class="action-btn" id="favorite-btn" role="button" aria-pressed="false" aria-label="{{ t('flow.favorite.add') }}" data-value="">
       <svg class="heart-outline" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
       <svg class="heart-filled" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
     </a>
 
-    <button type="button" class="action-btn" id="collection-btn" title="{{ t('flow.collection.add') }}">
+    <button type="button" class="action-btn" id="collection-btn" title="{{ t('flow.collection.add') }}" aria-label="{{ t('flow.collection.add') }}">
       <i data-feather="bookmark"></i>
-      <span class="collection-count" id="collection-count">0</span>
+      <span class="collection-count" id="collection-count" aria-hidden="true">0</span>
     </button>
 
-    <a href="#" class="action-btn" id="info-btn">
+    <a href="#" class="action-btn" id="info-btn" aria-label="{{ t('flow.info.title') }}">
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
     </a>
   </div>
@@ -193,13 +193,13 @@
   </div>
 </div>
 
-<div id="collection-modal" class="collection-modal" aria-hidden="true">
+<div id="collection-modal" class="collection-modal" role="dialog" aria-modal="true" aria-labelledby="collection-modal-title" aria-hidden="true">
   <div class="collection-modal-card">
     <div class="coll-drag-handle"></div>
     <div class="collection-modal-header">
       <div class="collection-modal-title-row">
-        <h3>{{ t('flow.collection.add') }}</h3>
-        <button id="collection-modal-close" type="button" class="collection-modal-close">
+        <h3 id="collection-modal-title">{{ t('flow.collection.add') }}</h3>
+        <button id="collection-modal-close" type="button" class="collection-modal-close" aria-label="{{ t('common.close') }}">
           <i data-feather="x"></i>
         </button>
       </div>

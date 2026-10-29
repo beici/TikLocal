@@ -12,6 +12,15 @@ body:not([data-nav-context="favorite"]) {
 [data-theme="dark"] .library-toolbar-wrap {
   background: linear-gradient(to bottom, rgba(17, 24, 39, 0.98) 72%, rgba(17, 24, 39, 0));
 }
+/* The fixed mobile header stays on screen while the page scrolls, so a toolbar
+   pinned to top: 0 slid underneath it and the view switch in its first row could
+   not be tapped — the header's nav trigger covered it. The offset applies exactly
+   where that header is rendered (app_navigation.css hides it from 768x600 up). */
+@media (max-width: 767px), (max-height: 599px) {
+  .library-toolbar-wrap {
+    top: calc(58px + var(--app-nav-safe-top));
+  }
+}
 .library-toolbar {
   max-width: 760px;
   margin: 0 auto;
