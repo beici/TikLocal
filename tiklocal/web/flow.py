@@ -210,13 +210,35 @@ def build_author_caption(name: str, sources_by_id: dict | None = None, record: d
     return item
 
 
+def _capture_epoch(record: dict) -> float:
+    """When the media was taken; the file time is only a fallback.
+
+    The memory card used ``mtime_ts`` while "on this day" used the capture time, so a
+    photo taken in 2019 and copied in 2024 was labelled "this week 2024" in one place
+    and filed under 2019 in the other.
+    """
+    try:
+        captured = float(record.get('captured_at') or 0)
+    except (TypeError, ValueError):
+        captured = 0.0
+    if captured > 0:
+        return captured
+    try:
+        return float(record.get('mtime_ts') or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def build_memory_card(records: list[dict], profiles: dict, rng: random.Random, now: datetime.datetime) -> dict | None:
     """Images from one past week that have not been shown for a while; callers pass year-old images."""
     weeks: dict[tuple[int, int], list[dict]] = {}
     for record in records:
         if shown_within(profiles.get(record['name']), FORGOTTEN_DAYS, now):
             continue
-        week = datetime.date.fromtimestamp(record['mtime_ts']).isocalendar()[:2]
+        taken = _capture_epoch(record)
+        if taken <= 0:
+            continue
+        week = datetime.date.fromtimestamp(taken).isocalendar()[:2]
         weeks.setdefault(week, []).append(record)
     weeks = {week: items for week, items in weeks.items() if len(items) >= 3}
     if not weeks:
@@ -226,8 +248,8 @@ def build_memory_card(records: list[dict], profiles: dict, rng: random.Random, n
     items = weeks[rng.choice(same_week or sorted(weeks))]
     if len(items) > 8:
         items = rng.sample(items, 8)
-    items.sort(key=lambda item: item['mtime_ts'])
-    first = datetime.date.fromtimestamp(items[0]['mtime_ts'])
+    items.sort(key=_capture_epoch)
+    first = datetime.date.fromtimestamp(_capture_epoch(items[0]))
     return {
         'type': 'image_group',
         'name': f"memory:{items[0]['name']}",
@@ -651,7 +673,7 @@ def build_mix_feed_page(
         year_ago = now.timestamp() - 365 * 86400
         old_images = [
             record for record in records
-            if record.get('media_type') == 'image' and 0 < float(record.get('mtime_ts') or 0) <= year_ago
+            if record.get('media_type') == 'image' and 0 < _capture_epoch(record) <= year_ago
         ]
         profiles = activity_store.profiles_for([record['name'] for record in old_images]) if activity_store else {}
         memory = build_memory_card(old_images, profiles, random.Random(f"{seed}:memory:{page}"), now)

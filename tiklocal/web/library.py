@@ -361,8 +361,28 @@ def register_library_routes(
             records = media_index.on_days([f"{day:%m-%d}" for day in week], str(today.year), per_year=8)
         years = {}
         for record in records:
-            year = record['captured_local_date'][:4]
-            group = years.setdefault(year, {'year': int(year), 'years_ago': today.year - int(year), 'items': []})
+            captured = str(record.get('captured_local_date') or '')
+            if len(captured) < 10:
+                continue
+            year = captured[:4]
+            group = years.get(year)
+            if group is None:
+                try:
+                    captured_date = datetime.date.fromisoformat(captured[:10])
+                except ValueError:
+                    continue
+                # Count real days, not calendar years: with the week window open on
+                # Jan 1 a photo from Dec 30 is two days old, and "1 年前 · 2025" was
+                # a lie that showed up every New Year.
+                days_ago = max(0, (today - captured_date).days)
+                group = {
+                    'year': int(year),
+                    'years_ago': days_ago // 365,
+                    'days_ago': days_ago,
+                    'date': captured[:10],
+                    'items': [],
+                }
+                years[year] = group
             if len(group['items']) < 8:
                 group['items'].append(serialize_library_item(record))
         return {'success': True, 'data': {'date': today.isoformat(), 'window': window, 'years': list(years.values())}}

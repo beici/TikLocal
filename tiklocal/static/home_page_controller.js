@@ -123,28 +123,39 @@
     if (!years.length) return;
     var date = new Date(data.date + 'T12:00:00');
     var day = date.toLocaleDateString(dateLocale(), { month: 'long', day: 'numeric' });
+    var first = years[0];
+    var firstDate = new Date(String(first.date || data.date) + 'T12:00:00');
+    var firstAgo = years[0].years_ago;
     byId('memories-kicker').textContent = years.length === 1
-      ? day + ' · ' + agoLabel(years[0].years_ago)
+      ? day + ' · ' + (firstAgo >= 1 ? agoLabel(firstAgo) : dayLabel(first.date))
       : T('home.memories.across', { date: day, n: years.length });
     byId('memories-title').textContent = data.window === 'day'
       ? T('home.memories.title_day')
       : T('home.memories.title_week');
-    var first = years[0];
-    var month = data.date.slice(5, 7);
+    // The week window can reach into the neighbouring month, so both the link target
+    // and its label follow the month the first memory was actually taken in.
+    var month = String(first.date || data.date).slice(5, 7);
     var link = byId('memories-link');
     link.href = '/library?view=explore&month=' + first.year + '-' + month;
-    link.firstChild.nodeValue = date.toLocaleDateString(dateLocale(), { month: 'long' }) + ' ' + first.year + ' ';
+    link.firstChild.nodeValue = firstDate.toLocaleDateString(dateLocale(), { month: 'long' }) + ' ' + first.year + ' ';
 
     var container = byId('home-memories-list');
     container.replaceChildren();
     years.forEach(function (group) {
       group.items.forEach(function (item) {
         var tile = makeMediaTile(item, '');
-        tile.querySelector('.media-tile-copy').textContent = agoLabel(group.years_ago) + ' · ' + group.year;
+        tile.querySelector('.media-tile-copy').textContent =
+          (group.years_ago >= 1 ? agoLabel(group.years_ago) : dayLabel(group.date)) + ' · ' + group.year;
         container.appendChild(tile);
       });
     });
     byId('home-memories').hidden = false;
+  }
+
+  function dayLabel(value) {
+    var date = new Date(String(value || '') + 'T12:00:00');
+    if (isNaN(date.getTime())) return '';
+    return date.toLocaleDateString(dateLocale(), { month: 'long', day: 'numeric' });
   }
 
   function agoLabel(years) {

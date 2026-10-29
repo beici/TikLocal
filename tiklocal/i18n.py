@@ -1,4 +1,4 @@
-﻿"""Lightweight zh/en translations for templates and client scripts.
+"""Lightweight zh/en translations for templates and client scripts.
 
 Locale resolution order: ``lang`` cookie (manual selection, per device) >
 ``Accept-Language`` header > Chinese default. The settings page writes both a
@@ -168,6 +168,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.trash.summary_other': '共 {count} 项 · {size}；保留 {days} 天后删除。',
         'settings.trash.retention': '已删除媒体将在此保留 {days} 天。',
         'settings.trash.days_left': '剩余 {days} 天',
+        'settings.trash.days_left_one': '剩余 {days} 天',
         'settings.trash.restore': '恢复',
         'settings.trash.restoring': '正在恢复…',
         'settings.trash.restored': '已恢复 {name}',
@@ -447,6 +448,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.trash.summary_other': '{count} items · {size}. Kept for {days} days, then removed.',
         'settings.trash.retention': 'Deleted media stays here for {days} days.',
         'settings.trash.days_left': '{days} days left',
+        'settings.trash.days_left_one': '{days} day left',
         'settings.trash.restore': 'Restore',
         'settings.trash.restoring': 'Restoring…',
         'settings.trash.restored': 'Restored {name}',

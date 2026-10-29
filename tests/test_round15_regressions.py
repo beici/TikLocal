@@ -61,6 +61,19 @@ def test_future_filename_date_falls_back_to_the_filesystem(tmp_path):
     assert payload['captured_local_date'].startswith('2024-02-02')
 
 
+def test_future_mtime_does_not_pin_a_phantom_year(tmp_path):
+    """A file copied from a machine with a wrong clock is as untrusted as a future EXIF date."""
+    target = tmp_path / 'clip.mp4'
+    target.write_bytes(b'\x00' * 16)
+    future = datetime.datetime.now().timestamp() + 86400 * 400
+    os.utime(target, (future, future))
+
+    payload = discover_capture_time(target, 'video', future)
+    assert payload['time_source'] == 'filesystem_mtime'
+    captured = datetime.datetime.fromisoformat(payload['captured_local_date'])
+    assert (datetime.datetime.now() - captured).total_seconds() < 120
+
+
 def test_utc_helpers_keep_the_z_suffix_without_utcnow():
     for helper in (collections._utc_now_iso, download_sources.utc_now_iso):
         value = helper()

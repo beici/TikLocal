@@ -240,7 +240,8 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
             retry_after = limiter.retry_after(client_key)
             if retry_after:
                 minutes = max(1, (retry_after + 59) // 60)
-                error = t('login.error_too_many', minutes=minutes)
+                key = 'login.error_too_many_one' if minutes == 1 else 'login.error_too_many'
+                error = t(key, minutes=minutes)
                 status = 429
                 # Every device behind one proxy shares remote_addr, so a lockout
                 # here can mean "someone else on the network guessed wrong".

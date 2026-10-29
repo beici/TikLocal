@@ -47,6 +47,7 @@
 | 29 | 2026-10-29 | 606P/8S/0F | 0/4/21/18（五域 49 + 自查 2 = 51，去重 43；修复 14：P1 4 + P2 9 + P3 1，转 backlog 29） | `fix: say why the library is empty and why the file is gone`，19 文件 `+651/-36` | [round-29](round-29.md) |
 | 30 | 2026-10-29 | 606P/8S/0F | 3/13/22/17（五域 56，去重 54；修复 9：P0 1 + P1 1 + P2 6 + P3 1，转 backlog 45） | `fix: stop resolving the same path twice`，10 文件 `+280/-40` | [round-30](round-30.md) |
 | 31 | 2026-10-29 | 606P/8S/0F | 0/4/12/8（五域 24，去重 24；修复 10：P1 4 + P2 6，转 backlog 14） | `fix: give the reader an index that fits the query`，12 文件 `+357/-27` | [round-31](round-31.md) |
+| 32 | 2026-10-29 | 610P/8S/0F | 0/2/11/20（五域 33，去重 33；修复 13：P1 2 + P2 8 + P3 3，转 backlog 20） | `fix: read the capture time where it is actually stored`，16 文件 `+364/-44` | [round-32](round-32.md) |
 
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
@@ -109,8 +110,10 @@
 
 第 31 轮收尾：`pytest -q` = **610 passed / 8 skipped / 0 failed**（200.96s，新增 4 个用例）。视角换成「规模下的读取路径」——不问「逻辑对不对」，而问「一万条、十万条时还对不对、多快」：索引是否被查询用上、每页是否重复算同一件事、可达集是否被硬截断。五域（索引读取、推荐与混合流、搜索与聚合、数据库索引与迁移、主审自查）在真实 schema 上灌 2 万～10 万行合成数据，用 `EXPLAIN QUERY PLAN` + min-of-3 计时取证。**P0 为 0，P1 有 4 条**：默认 Feed 的尾段只从 1500 条的采样池里取，1 万条库有 83% 的文件永远不可达；每页用 `limit=end+1` 重算整段确定性序列（第 10 页 684ms）；blog 过滤与每源封面每次 10 万行回表（112ms，而 `/library` 每次都调）；「大文件」页的 `COUNT` 走不含 `media_type` 的索引，455ms 里 452ms 是回表。四条当轮修完，另修 P2 6 条（无统计信息时默认页建整库临时 B 树 90MB、`source_id` 无索引、视频 tab 不过滤类型、`offset` 越界后无限重复、那年今日 `substr` 全表扫、`image_random` 整表取行再洗牌 1028ms/89.6MB），转 backlog 14 条。这轮最值得记的两条教训：**索引和统计信息必须同批上线**——只加 `ANALYZE` 会让 1 万条的月视图翻成全表扫（0.14 → 6.0ms/页），只加索引则统计信息缺失时 SQLite 仍选错索引；**`ANALYZE` 不能放在快照事务里**——事务内改写统计表后，紧随的 `DELETE` 在测试环境抛 `unable to open database file`，把它挪到事务外并降级为 warning 才稳。另外顺手清掉一个测试脆弱点：第 12 轮那个 i18n 用例用 `MEDIA_ROOT=Path('.')` 建 app，每次运行都扫整个仓库。
 
-## 目录
+第 32 轮收尾：`pytest -q` = **614 passed / 8 skipped / 0 failed**（208.56s，新增 4 个用例）。视角换成「时间与时区」——不问「显示对不对」，而问「这个时间是从哪来的、换机器/换时区之后还对不对、'多少年前'和日期边界是否自洽」。五域（拍摄时间抽取、时间缓存、展示层、时区与 DST、主审自查）在真实 schema 上验证。**P0 为 0，P1 有 2 条**：EXIF 的 `DateTimeOriginal` 从未被读到（Pillow 的 `Exif.get()` 只读 IFD0，而该标签在 Exif 子 IFD 0x8769），于是所有导出/编辑过的照片以「高置信度」落进文件修改时间那个月；下载作品的创建时间字段名不匹配（读 `create_timestamp`、写 `create_time`），`format_timestamp_slug(None)` 回落字面量 `1970-01-01 00.00.00`，索引器按文件名采信后所有下载作品堆进 1970 章节。两条当轮修完，另修 P2 8 条（墙钟与 epoch 都由扫描时区决定导致换时区永不重算、`time_metadata_version` 的 `>= 1` 判据让版本号退化成布尔、回忆卡按 mtime 选片与时间线口径矛盾、`on_days`/`timeline_months` 缺 1970 下界、`years_ago` 用日历年差把两天前标成「1 年前」、未来 mtime 不钳制、在途补丁自身残留的「0 年前」标题与链接月份不符）与 P3 3 条（`1 day left`/`1 minute` 复数、DST 不存在时刻的缓存收敛、详情页改调 `post_date_of`），转 backlog 20 条。这轮最值得记的两条教训：**缓存判据要能被推翻**——`>= 1` 这种写法把版本号变成布尔，看起来有版本、实际永远不失效；**比较时间要比到它真正代表的东西**——`captured_local_date` 是墙钟、`captured_at` 是瞬时，跨时区后二者必然分裂，只有把「同一天的墙钟」作为判据才能既自愈又不误判。
 
+
+## 目录
 
 - `round-NN.md`：每轮审查报告（发现、复现、处置、检索、修复、验证）
 - `round-NN-rX.md`：某一轮里单个域的审查明细（本轮起用于保留域级表格）

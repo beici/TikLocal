@@ -466,6 +466,7 @@ class MediaIndexStore:
                       ) AS _rn
                       FROM media_items
                       WHERE media_type IN ('video', 'image', 'live')
+                        AND captured_at > 0
                         AND capture_year < ?
                         AND substr(captured_local_date, 6, 5) IN ({placeholders})
                     ) WHERE _rn <= ?
@@ -478,6 +479,7 @@ class MediaIndexStore:
                     f"""
                     SELECT * FROM media_items
                     WHERE media_type IN ('video', 'image', 'live')
+                      AND captured_at > 0
                       AND capture_year < ?
                       AND substr(captured_local_date, 6, 5) IN ({placeholders})
                     ORDER BY captured_at DESC, uri
@@ -608,8 +610,9 @@ class MediaIndexStore:
                   COUNT(DISTINCT {month_expr}) AS month_count
                 FROM media_items
                 WHERE media_type IN ('image', 'video', 'live')
+                  AND captured_at > 0
                 GROUP BY year
-                HAVING year IS NOT NULL
+                HAVING year IS NOT NULL AND year <> ''
                 ORDER BY year DESC
                 """
             ).fetchall()
@@ -623,9 +626,10 @@ class MediaIndexStore:
                   MAX(mtime) AS latest_mtime
                 FROM media_items
                 WHERE media_type IN ('image', 'video', 'live')
+                  AND captured_at > 0
                   {before_clause}
                 GROUP BY month_key
-                HAVING month_key IS NOT NULL
+                HAVING month_key IS NOT NULL AND month_key <> ''
                 ORDER BY month_key DESC
                 LIMIT ?
                 """,
@@ -766,7 +770,7 @@ class MediaIndexStore:
             str(record.get("captured_local_date") or "")[:7],
             str(record.get("time_source") or "filesystem_mtime"),
             str(record.get("time_confidence") or "fallback"),
-            int(record.get("time_metadata_version") or 1),
+            int(record.get("time_metadata_version") or TIME_METADATA_VERSION),
             now, now,
             (str(record["live_video_uri"]) if record.get("live_video_uri") else None),
             (str(record["album_key"]) if record.get("album_key") else None),
@@ -886,6 +890,15 @@ _FILENAME_DATE_PATTERNS = (
 )
 
 
+#: Bumped whenever the capture-time derivation changes. ``_capture_is_current``
+#: compares it with ``==``: a ``>= 1`` check turned the version into a boolean, so
+#: raising it would never have invalidated a single cached row.
+#:
+#: 2: read DateTimeOriginal from the Exif sub-IFD instead of IFD0, and treat the
+#:    file-modified tag (306) as a low-confidence hint.
+TIME_METADATA_VERSION = 2
+
+
 def _capture_payload(value: datetime.datetime, source: str, confidence: str) -> dict:
     # A timestamp outside the platform range (mtime 0 from an unzipped archive, or
     # a pre-1970 file) makes timestamp() raise on Windows, which used to abort the
@@ -899,7 +912,7 @@ def _capture_payload(value: datetime.datetime, source: str, confidence: str) -> 
         "captured_local_date": value.strftime("%Y-%m-%dT%H:%M:%S"),
         "time_source": source,
         "time_confidence": confidence,
-        "time_metadata_version": 1,
+        "time_metadata_version": TIME_METADATA_VERSION,
     }
 
 
@@ -919,14 +932,27 @@ def _image_capture_time(path: Path) -> dict | None:
     try:
         with Image.open(path) as image:
             exif = image.getexif()
-            for tag, source in (
-                (36867, "exif_original"),
-                (36868, "exif_digitized"),
-                (306, "exif_datetime"),
-            ):
-                parsed = _parse_embedded_datetime(exif.get(tag))
+            try:
+                sub_ifd = exif.get_ifd(0x8769) or {}
+            except Exception:
+                sub_ifd = {}
+            # DateTimeOriginal/Digitized live in the Exif sub-IFD (0x8769) on every
+            # camera and phone. ``exif.get(tag)`` only reads IFD0, so asking it for
+            # 36867 always missed and the code fell through to tag 306 (the
+            # file-modified time): an export or "save as" stamped the export date
+            # onto the whole batch, marked "high" confidence.
+            for tag, source in ((36867, "exif_original"), (36868, "exif_digitized")):
+                parsed = _parse_embedded_datetime(sub_ifd.get(tag))
                 if parsed:
                     return _capture_payload(parsed, source, "high")
+            for tag, source in ((36867, "exif_original"), (36868, "exif_digitized")):
+                parsed = _parse_embedded_datetime(exif.get(tag))
+                if parsed:
+                    return _capture_payload(parsed, source, "medium")
+            parsed = _parse_embedded_datetime(exif.get(306))
+            if parsed:
+                # 306 is rewritten by every editor and exporter, so it is a weak hint.
+                return _capture_payload(parsed, "exif_datetime", "low")
     except Exception:
         return None
     return None
@@ -999,6 +1025,48 @@ def _clamp_future(payload: dict) -> dict:
     return {}
 
 
+def _clamp_future_mtime(mtime: float) -> float:
+    """Cap a filesystem mtime that sits in the future.
+
+    ``_clamp_future`` drops a future EXIF or filename date, but the filesystem
+    fallback went through unclamped: a file copied from a machine with a wrong
+    clock (or a NAS with clock skew) pinned a phantom future year to the top of
+    the timeline and stayed there until its mtime changed.
+    """
+    if mtime > time.time() + _MAX_PLAUSIBLE_FUTURE_SEC:
+        return time.time()
+    return mtime
+
+
+def _capture_is_current(existing: dict) -> bool:
+    """Whether a cached capture record still describes this file under this timezone.
+
+    ``captured_local_date`` is a wall clock and ``captured_at`` the epoch of the
+    same instant, both computed under the timezone the scan ran in. Moving the
+    instance (or the library) to a machine with another offset left the two columns
+    pointing at different calendar days, and the unchanged check below used to
+    trust the row forever, so nothing ever recomputed it.
+    """
+    if int(existing.get("time_metadata_version") or 0) != TIME_METADATA_VERSION:
+        return False
+    local_date = str(existing.get("captured_local_date") or "")
+    if not local_date:
+        return False
+    captured_at = float(existing.get("captured_at") or 0.0)
+    if captured_at <= 0:
+        # Unknown capture time: the wall clock came from the same fallback as now.
+        return True
+    try:
+        local = datetime.datetime.fromtimestamp(captured_at)
+    except (OSError, OverflowError, ValueError):
+        return False
+    # Compare the calendar day, not the second: a wall clock that does not exist in
+    # this timezone (the hour skipped by a spring-forward transition) is normalised
+    # by timestamp(), so the round trip lands an hour off and a strict comparison
+    # would re-probe that file on every scan forever.
+    return local.strftime("%Y-%m-%d") == local_date[:10]
+
+
 def discover_capture_time(path: Path, media_type: str, mtime: float) -> dict:
     if media_type == "image":
         embedded = _clamp_future(_image_capture_time(path) or {})
@@ -1008,7 +1076,7 @@ def discover_capture_time(path: Path, media_type: str, mtime: float) -> dict:
     if filename_value:
         return filename_value
     return _capture_payload(
-        _safe_mtime_datetime(mtime),
+        _safe_mtime_datetime(_clamp_future_mtime(mtime)),
         "filesystem_mtime",
         "fallback",
     )
@@ -1236,8 +1304,7 @@ class LibraryIndexer:
         unchanged = (
             int(existing.get("size_bytes") or -1) == int(stat.st_size)
             and float(existing.get("mtime") or -1) == float(stat.st_mtime)
-            and bool(existing.get("captured_local_date"))
-            and int(existing.get("time_metadata_version") or 0) >= 1
+            and _capture_is_current(existing)
         )
         capture = {
             "captured_at": float(existing.get("captured_at") or stat.st_mtime),

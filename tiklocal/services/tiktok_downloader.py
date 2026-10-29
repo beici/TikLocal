@@ -466,14 +466,27 @@ def sanitize_filename_component(text: Any, limit: int = 60) -> str:
 
 
 def format_timestamp_slug(timestamp: Any) -> str:
-    """Format a unix timestamp as ``YYYY-MM-DD HH.MM.SS`` for filenames."""
+    """Format a unix timestamp as ``YYYY-MM-DD HH.MM.SS`` for filenames.
+
+    Returns '' when the value is missing or out of range. The old fallback wrote the
+    literal ``1970-01-01 00.00.00``, and the indexer trusts a filename date over the
+    file time, so every work downloaded without a creation time landed in a phantom
+    January 1970 chapter of the timeline.
+    """
     try:
-        value = int(timestamp)
+        value = float(timestamp)
     except (TypeError, ValueError):
-        value = 0
+        return ""
+    if value > 1e11:  # milliseconds from a sidecar that speaks in millis
+        value /= 1000.0
     if value <= 0:
-        value = 0
-    return time.strftime("%Y-%m-%d %H.%M.%S", time.localtime(value)) if value else "1970-01-01 00.00.00"
+        return ""
+    try:
+        return time.strftime("%Y-%m-%d %H.%M.%S", time.localtime(value))
+    except (OSError, OverflowError, ValueError):
+        # time.localtime raises on Windows for out-of-range values; one broken work
+        # must not abort the batch the caller is enqueueing.
+        return ""
 
 
 def normalize_work_items(raw_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -491,11 +504,17 @@ def normalize_work_items(raw_items: list[dict[str, Any]]) -> list[dict[str, Any]
             continue
         work_id = str(raw_item.get("id") or "").strip()
         desc = sanitize_filename_component(raw_item.get("desc")) or sanitize_filename_component(work_id) or "work"
+        # The sidecar spells the creation time ``create_time`` (see docs/tiktok-
+        # downloader.md); ``create_timestamp`` never existed, so every filename got
+        # the 1970 placeholder.
+        create_timestamp = raw_item.get("create_timestamp")
+        if create_timestamp in (None, ""):
+            create_timestamp = raw_item.get("create_time") or raw_item.get("createTimestamp")
         works.append(
             {
                 "id": work_id,
                 "desc": desc,
-                "create_timestamp": raw_item.get("create_timestamp"),
+                "create_timestamp": create_timestamp,
                 "downloads": downloads,
                 "post_type": classify_post_type(raw_item, len(downloads)),
             }
@@ -517,13 +536,16 @@ def guess_download_extension(url: str, post_type: str = "视频") -> str:
 
 def build_work_filename(naming: dict[str, Any], index: int, total: int, extension: str) -> str:
     """Build a filename matching the ``date-type-owner-title`` douyin convention."""
-    parts = [
-        naming.get("created_at") or "1970-01-01 00.00.00",
+    # No creation time means no date prefix at all: a placeholder date would be
+    # trusted by the indexer as the capture day, and the file time is the honest
+    # answer instead.
+    parts = [str(naming.get("created_at") or "").strip()]
+    parts.extend([
         naming.get("post_type") or "视频",
         sanitize_filename_component(naming.get("owner"), limit=40) or "douyin",
         sanitize_filename_component(naming.get("desc"), limit=80) or "work",
-    ]
-    stem = "-".join(parts)
+    ])
+    stem = "-".join(part for part in parts if part)
     if total > 1:
         stem = f"{stem}_{index}"
     return f"{stem}{extension}"

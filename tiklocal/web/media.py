@@ -18,7 +18,7 @@ from tiklocal.services.embedded_metadata import read_embedded_generation
 from tiklocal.services.library import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from tiklocal.services.media_info import probe_media_duration
 from tiklocal.web import json_body
-from tiklocal.web.media_payloads import media_urls
+from tiklocal.web.media_payloads import media_urls, post_date_of
 
 # Inline delivery is limited to formats the app itself renders; anything else in
 # the media library (svg, html, js) is downloaded as an opaque attachment.
@@ -660,7 +660,7 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
                 'width': width,
                 'height': height,
                 'duration_label': duration,
-                'post_date': str(record.get('captured_local_date') or '')[:10],
+                'post_date': post_date_of(record),
                 'album_index': (int(album_index) + 1) if album_index is not None else 0,
                 'album_size': album_size,
                 'live_video_uri': live_uri,

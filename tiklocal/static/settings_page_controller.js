@@ -897,7 +897,8 @@
       row.className = 'settings-row trash-item';
       row.innerHTML = `<span class="setting-icon"><i data-feather="${/\.(jpe?g|png|gif|webp|bmp)$/i.test(item.name) ? 'image' : 'film'}"></i></span><div class="settings-row-main"><div class="settings-row-title trash-name"></div><div class="settings-row-copy"></div></div>`;
       row.querySelector('.trash-name').textContent = item.name;
-      row.querySelector('.settings-row-copy').textContent = `${formatBytes(item.size)} · ${T('settings.trash.days_left', { days })}`;
+      const daysKey = days === 1 ? 'settings.trash.days_left_one' : 'settings.trash.days_left';
+      row.querySelector('.settings-row-copy').textContent = `${formatBytes(item.size)} · ${T(daysKey, { days })}`;
       const restore = document.createElement('button');
       restore.className = 'settings-action';
       restore.type = 'button';

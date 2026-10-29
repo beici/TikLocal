@@ -64,7 +64,10 @@ def test_timeline_prefers_embedded_and_filename_capture_dates(tmp_path, monkeypa
     photo = media_root / "old-memory.jpg"
     image = Image.new("RGB", (80, 60), (120, 80, 60))
     exif = Image.Exif()
-    exif[36867] = "2019:04:08 10:20:30"
+    # Camera-shaped files keep DateTimeOriginal in the Exif sub-IFD; writing it to
+    # IFD0 (as this test used to) is the shape no real camera produces.
+    exif[306] = "2020:02:03 04:05:06"
+    exif.get_ifd(0x8769)[36867] = "2019:04:08 10:20:30"
     image.save(photo, exif=exif)
     video = media_root / "VID_20210703_142233.mp4"
     video.write_bytes(b"video")
@@ -109,6 +112,20 @@ def test_timeline_prefers_embedded_and_filename_capture_dates(tmp_path, monkeypa
 
     monkeypatch.setattr(library_index_module, "_image_capture_time", fail_reopen)
     create_app({"TESTING": True, "MEDIA_ROOT": media_root, "APP_DATABASE": database})
+
+
+def test_edited_photo_keeps_the_modified_tag_as_a_weak_hint(tmp_path):
+    """An exporter rewrites tag 306, so it must not claim high confidence."""
+    photo = tmp_path / "exported.jpg"
+    image = Image.new("RGB", (40, 30), (10, 20, 30))
+    exif = Image.Exif()
+    exif[306] = "2020:02:03 04:05:06"
+    image.save(photo, exif=exif)
+
+    payload = library_index_module.discover_capture_time(photo, "image", 1_750_000_000)
+    assert payload["time_source"] == "exif_datetime"
+    assert payload["time_confidence"] == "low"
+    assert payload["captured_local_date"].startswith("2020-02-03")
 
 
 def test_api_library_items_supports_modes_search_and_sync(client, tmp_path):

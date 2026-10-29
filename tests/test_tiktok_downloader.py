@@ -243,9 +243,30 @@ def test_guess_download_extension():
 
 
 def test_format_timestamp_slug_handles_bad_input():
-    assert format_timestamp_slug(0) == "1970-01-01 00.00.00"
-    assert format_timestamp_slug("oops") == "1970-01-01 00.00.00"
-    assert format_timestamp_slug(1730000000) != "1970-01-01 00.00.00"
+    # A missing or unparseable creation time yields no date at all: the old
+    # "1970-01-01 00.00.00" placeholder was trusted by the indexer and pushed every
+    # such work into a phantom January 1970 chapter.
+    assert format_timestamp_slug(0) == ""
+    assert format_timestamp_slug("oops") == ""
+    assert format_timestamp_slug(1730000000) != ""
+    assert format_timestamp_slug(1730000000000) == format_timestamp_slug(1730000000)
+
+
+def test_works_without_a_creation_time_get_no_date_prefix():
+    works = normalize_work_items([{"id": "w1", "desc": "海边", "downloads": ["https://x/1.mp4"]}])
+    assert works[0]["create_timestamp"] is None
+    naming = {"created_at": format_timestamp_slug(works[0]["create_timestamp"]),
+              "post_type": "视频", "owner": "douyin", "desc": works[0]["desc"]}
+    assert build_work_filename(naming, 1, 1, ".mp4") == "视频-douyin-海边.mp4"
+
+
+def test_sidecar_create_time_is_accepted():
+    works = normalize_work_items([
+        {"id": "w1", "desc": "a", "create_time": 1730000000, "downloads": ["https://x/1.mp4"]},
+        {"id": "w2", "desc": "b", "createTimestamp": 1730000100, "downloads": ["https://x/2.mp4"]},
+    ])
+    assert works[0]["create_timestamp"] == 1730000000
+    assert works[1]["create_timestamp"] == 1730000100
 
 
 # --- seed + service orchestration -----------------------------------------

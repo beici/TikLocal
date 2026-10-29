@@ -493,3 +493,28 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] `_migrate_015` 是唯一不检查列是否存在的 `ADD COLUMN`，失败后每次启动都失败 | `tiklocal/services/database.py` | 需与迁移框架的「幂等」约定一起改 |
 | [P3] `_sweep_orphan_state` 用前缀 `LIKE` 清孤儿，四张表全扫 | `tiklocal/services/database.py` | 应改范围查询（`uri >= prefix AND uri < prefix+'\uffff'`），与索引方案同批 |
 | [P3] `idx_media_affinity_recent` 没有查询使用，纯写放大 | `tiklocal/services/database.py:120` | 确认无读取方后删除 |
+
+### 第 32 轮新增（20 条）
+
+| 条目 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| [P2] 未知拍摄时间的行内自相矛盾：`captured_local_date='1970-01-01'` 但 `captured_at>0` | `tiklocal/services/library_index.py` `_capture_payload` | 需要给"未知时间"单独一个哨兵值，会牵动索引列与前端展示 |
+| [P2] 视频分支完全不读 ffprobe `creation_time`，相机视频只能落 mtime | `tiklocal/services/media_info.py:45-68` | 需要给视频探测加字段并回填既有行，属数据迁移 |
+| [P2] 月视图按 `captured_at`、探索网格按 `mtime_ts`，同一张图两个入口可能落在不同月 | `tiklocal/web/library.py`、`tiklocal/static/library_page_controller.js` | 要先决定"月份按拍摄还是按修改"，属产品决策 |
+| [P3] 不读 `OffsetTimeOriginal`(36881)，跨时区拍摄的墙钟偏移丢失 | `tiklocal/services/library_index.py` `_image_capture_time` | 只有跨时区拍摄才有差异，样本少 |
+| [P3] 只有日期没有时刻时默认 12:00，与"当天 00:00"语义不一致 | 同上 | 与哨兵值/时间列方案同批改 |
+| [P3] 文件名时间分隔符不含点，`2024-01-01.12.00.00` 解析不到 | `tiklocal/services/tiktok_downloader.py` | 现有文件名由本项目生成，历史兼容收益低 |
+| [P3] 只屏蔽 `'1970-01-01'` 字符串，UTC 以西会漏出 `1969-12-31` | `tiklocal/web/media_payloads.py:25` | 只有负偏移时区触发 |
+| [P3] `captured_at or mtime` 把 0.0 换成负 mtime | `tiklocal/services/library_index.py:763` | 需与哨兵值方案一起改 |
+| [P3] EXIF 墙钟直接当本地时间转 epoch，跨时区导入整体偏移 | `_capture_payload` | 需要先读 `OffsetTimeOriginal` |
+| [P3] 推荐流时间窗用 365 天近似，闰年/DST 边界偏移一天 | `tiklocal/services/recommendation.py` | 边界误差一天，用户不可感 |
+| [P3] 回收站保留期按字符串比较 `deleted_at`，混入非 UTC 格式会误判 | `tiklocal/services/trash.py:96-100` | 现在 `deleted_at` 一律由本项目写 `+00:00` |
+| [P3] 缩略图指纹用 `datetime.fromtimestamp` 本地时间，换时区后全部失效重算 | `tiklocal/services/thumbnail.py` | 只发生一次，重算成本可接受 |
+| [P3] `_derive_device_name` 的版本号只写不读 | `tiklocal/services/device_auth.py` | 字段无读取方 |
+| [P3] `TIKLOCAL_TIMEZONE` 未设置时依赖宿主 TZ，容器里是 UTC | `tiklocal/run.py` | 需要引入 `zoneinfo` 与容器配置 |
+| [P3] `time_states()` 不返回时区列，无法诊断"这行是什么时区算的" | `tiklocal/services/library_index.py` | 需加列并回填 |
+| [P3] `_capture_payload` 对 1970 之前的文件写 `captured_at=0.0` | 同上 | 与哨兵值方案同批 |
+| [P3] `on-this-day` week 回退跨年时 `years_ago` 可能为 0（文案已兜） | `tiklocal/web/library.py` | 语义上仍不精确，需按真实年差计算 |
+| [P3] 复数文案只有 en 的 `_one` 变体，其他语言需 ICU | `tiklocal/i18n.py`、`tiklocal/i18n_pages_media.py` | 当前只有 zh/en 两套 |
+| [P3] 首页 kicker 与磁贴的"多少年前"逻辑重复 | `tiklocal/static/home_page_controller.js` | 需抽公共函数 |
+| [P3] `format_timestamp_slug` 无时区参数，依赖进程 TZ | `tiklocal/services/tiktok_downloader.py` | 与本轮 `TIKLOCAL_TIMEZONE` 同批 |
