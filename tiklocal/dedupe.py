@@ -1,4 +1,5 @@
 import hashlib
+import os
 import sys
 from pathlib import Path
 from tiklocal.services.library import VIDEO_EXTENSIONS, IMAGE_EXTENSIONS
@@ -29,11 +30,23 @@ def _get_file_extensions(file_type: str) -> set[str]:
 
 
 def _scan_files(root: Path, extensions: set[str]) -> list[Path]:
-    """Recursively scan for files with the requested extensions."""
-    files = []
+    """Recursively scan for files with the requested extensions.
+
+    ``glob`` is case-insensitive on Windows, so ``**/*.mp4`` already returns
+    ``*.MP4``: asking for the upper-case variant as well put every file in the list
+    twice, and the duplicate report then described each file as a copy of itself --
+    ``--execute`` deleted the very files it had printed as "keep".
+    """
+    seen: set[str] = set()
+    files: list[Path] = []
     for ext in extensions:
-        files.extend(root.glob(f'**/*{ext}'))
-        files.extend(root.glob(f'**/*{ext.upper()}'))
+        for pattern in {f'**/*{ext}', f'**/*{ext.upper()}'}:
+            for path in root.glob(pattern):
+                key = os.path.normcase(str(path))
+                if key in seen:
+                    continue
+                seen.add(key)
+                files.append(path)
     return [f for f in files if TRASH_DIR not in f.parts]
 
 
@@ -112,6 +125,11 @@ def select_files_to_keep(
         to_keep.append(sorted_paths[0])
         to_delete.extend(sorted_paths[1:])
 
+    # A file can never be both kept and deleted. The scan used to hand the same path
+    # in twice, which made every file its own duplicate; even with that fixed, this
+    # guard keeps a future regression from turning a dry run into a wipe.
+    kept = {os.path.normcase(str(path)) for path in to_keep}
+    to_delete = [path for path in to_delete if os.path.normcase(str(path)) not in kept]
     return to_keep, to_delete
 
 
@@ -147,11 +165,14 @@ def delete_files(
         print(f'\nDeleting {total} files...')
 
     processed = 0
+    freed_bytes = 0
     for f in files:
         try:
             if f.exists():
+                size = f.stat().st_size
                 f.unlink()
                 deleted += 1
+                freed_bytes += size
         except Exception as e:
             failed += 1
             if show_progress:
@@ -168,7 +189,9 @@ def delete_files(
         'deleted': deleted,
         'failed': failed,
         'total': total,
-        'size_freed': total_size
+        # Only what actually went away: the pre-scan size included files that failed
+        # or were already gone, and reported "freed" gigabytes that were never freed.
+        'size_freed': freed_bytes
     }
 
 

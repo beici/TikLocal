@@ -2411,6 +2411,12 @@
       postActivity([finishActivity()], true);
     });
 
+    // 删除发生在详情页；从 bfcache 回来时 feedItems 还是删除前的列表，
+    // DOMContentLoaded 不会再跑，被删的那条会继续留在流里并播成黑屏。
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted) location.reload();
+    });
+
 
     await loadFeed();
     if (feedItems.length > 0) {

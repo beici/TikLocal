@@ -182,6 +182,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.trash.empty_action': '清空回收站',
         'settings.trash.emptying': '正在清空…',
         'settings.trash.emptied': '已永久删除 {count} 项',
+        'settings.trash.empty_partial': '已删除 {purged} 项，{failed} 项仍被占用，请关闭相关程序后重试。',
         'settings.trash.empty_failed': '清空失败，请稍后再试。',
         # ---- settings page copy (templates) ----
         'settings.overline': '本地偏好',
@@ -227,6 +228,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.library.source_added': '已添加「{name}」',
         'settings.library.source_updated': '已更新「{name}」',
         'settings.library.source_removed': '媒体目录已移除',
+        'settings.library.source_trash_not_empty': '这个目录的回收站里还有文件，请先清空回收站再移除目录。',
         'settings.library.source_scan_pending': '已保存；媒体库正在扫描，稍后会显示这些文件。',
         'settings.library.source_scan_done': '已重新扫描，共 {count} 个媒体。',
         'settings.library.source_error_generic': '媒体目录操作失败，请稍后重试。',
@@ -456,6 +458,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.trash.empty_action': 'Empty Trash',
         'settings.trash.emptying': 'Emptying…',
         'settings.trash.emptied': 'Deleted {count} items permanently',
+        'settings.trash.empty_partial': 'Deleted {purged} items; {failed} are still in use. Close them and try again.',
         'settings.trash.empty_failed': 'Failed to empty the trash. Please try again.',
         # ---- settings page copy (templates) ----
         'settings.overline': 'Local Preferences',
@@ -501,6 +504,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'settings.library.source_added': 'Added “{name}”',
         'settings.library.source_updated': 'Updated “{name}”',
         'settings.library.source_removed': 'Media folder removed',
+        'settings.library.source_trash_not_empty': 'This folder still has files in its trash; empty the trash before removing it.',
         'settings.library.source_scan_pending': 'Saved; the library is scanning and these files will show up shortly.',
         'settings.library.source_scan_done': 'Rescanned {count} items.',
         'settings.library.source_error_generic': 'Could not update the media folders. Try again.',

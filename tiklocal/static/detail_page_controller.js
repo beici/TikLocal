@@ -286,5 +286,21 @@ async function confirmDelete() {
     tone: 'danger'
   });
   if (!confirmed) return;
-  TikLocalUI.trash(detailBoot.deleteUrl, detailBoot.afterDeleteUrl);
+  // Windows keeps the open read handle of a playing video, and moving the file to
+  // the trash is a rename: on the page whose only content is that player, "close it
+  // and try again" left the user with nothing to close. Release the element first.
+  const player = document.getElementById('main-video');
+  const resumeSrc = player ? player.getAttribute('src') : null;
+  if (player) {
+    player.pause();
+    player.removeAttribute('src');
+    player.load();
+  }
+  const moved = await TikLocalUI.trash(detailBoot.deleteUrl, detailBoot.afterDeleteUrl);
+  if (!moved && player && resumeSrc) {
+    // The move failed (a lock, an expired session): the player was already torn down
+    // to release the handle, so put the source back instead of leaving a black frame.
+    player.setAttribute('src', resumeSrc);
+    player.load();
+  }
 }

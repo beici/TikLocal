@@ -1531,6 +1531,12 @@
     loadNextPage();
   });
 
+  // 删除发生在详情页；浏览器从 bfcache 恢复本页时拿到的是删除前的网格与
+  // `items` 数组，DOMContentLoaded 不会再触发，被删的卡片会留在原地并可点出 404。
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) location.reload();
+  });
+
   feather.replace();
   syncSearchUI();
   maybeOpenFocusedItem();

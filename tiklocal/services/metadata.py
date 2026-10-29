@@ -1,9 +1,8 @@
-import json
 from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from tiklocal.services.json_storage import write_json_atomic
+from tiklocal.services.json_storage import read_json_file, write_json_atomic
 
 
 class ImageMetadataStore:
@@ -13,17 +12,10 @@ class ImageMetadataStore:
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _load(self) -> dict[str, Any]:
-        try:
-            data = json.loads(self.store_path.read_text(encoding='utf-8'))
-        except FileNotFoundError:
-            return {}
-        except json.JSONDecodeError:
-            # Caption metadata is a derived cache: a truncated file only means the
-            # entries get regenerated, so a read must not surface as a 500.
-            return {}
-        if not isinstance(data, dict):
-            raise ValueError('Invalid media metadata file format')
-        return data
+        # read_json_file quarantines a corrupt store instead of handing back an empty
+        # dict that the next save would write over every caption. A store that cannot
+        # be read at all raises StoreUnreadableError, and no write path swallows it.
+        return read_json_file(self.store_path, {}, expected_type=dict)
 
     def get(self, key: str) -> dict[str, Any] | None:
         with self._lock:
@@ -42,6 +34,16 @@ class ImageMetadataStore:
             data[key] = value
             write_json_atomic(self.store_path, data)
             return value, True
+
+    def delete(self, key: str) -> bool:
+        """Drop one entry; returns whether it existed. Missing keys never write."""
+        with self._lock:
+            data = self._load()
+            if key not in data:
+                return False
+            data.pop(key, None)
+            write_json_atomic(self.store_path, data)
+            return True
 
     def update_many(self, updates: dict[str, dict], *, defaults: dict[str, dict] | None = None) -> dict[str, dict]:
         """Merge changed fields against the latest state; defaults only fill absent legacy fields."""

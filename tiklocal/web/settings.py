@@ -17,6 +17,7 @@ from tiklocal.services.media_sources_store import (
     retarget_thumbnail_service,
     update_source,
 )
+from tiklocal.services.trash import TRASH_DIR
 from tiklocal.web import json_body
 
 
@@ -250,6 +251,19 @@ def register_settings_routes(
 
     @app.delete('/api/library/sources/<source_id>')
     def api_remove_media_source(source_id):
+        # The trash lives inside each source folder, and the recycle bin only walks the
+        # sources that are still configured: removing a source with entries in its
+        # .tiklocal-trash made those files invisible, unrestorable and never expired,
+        # while the settings page reported an empty trash.
+        source = next((item for item in _media_sources() if item.id == source_id), None)
+        if source is not None:
+            trash_dir = Path(source.path) / TRASH_DIR
+            try:
+                pending = trash_dir.is_dir() and any(trash_dir.iterdir())
+            except OSError:
+                pending = False
+            if pending:
+                return {'success': False, 'error': t('settings.library.source_trash_not_empty')}, 409
         try:
             sources = remove_source(
                 _media_sources(), source_id, protected_ids=(_download_target_id(),),

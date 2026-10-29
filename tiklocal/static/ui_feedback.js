@@ -67,14 +67,18 @@
   }
 
   // Moves a file to the trash, then continues to nextUrl where the Undo toast appears.
+  // Resolves true once the file is in the trash (the page is being replaced by then)
+  // and false when the request failed and the toast was already shown: callers that
+  // had to release a player to make the move possible rely on that answer.
   function trash(deleteUrl, nextUrl) {
     return fetch(deleteUrl, { method: 'POST', headers: { Accept: 'application/json' } })
       .then(readJson)
       .then(function (entry) {
         try { sessionStorage.setItem(UNDO_KEY, JSON.stringify({ id: entry.id, at: Date.now() })); } catch (_) {}
         location.replace(nextUrl || '/library');
+        return true;
       })
-      .catch(function (error) { toast(error.message || T('common.delete_failed'), 'error'); });
+      .catch(function (error) { toast(error.message || T('common.delete_failed'), 'error'); return false; });
   }
 
   function offerUndo() {

@@ -203,8 +203,15 @@
 
   async function loadCollections() {
     showState('loading');
-    const data = await api('/api/collections');
-    renderCards(data.items || []);
+    try {
+      const data = await api('/api/collections');
+      renderCards(data.items || []);
+    } catch (error) {
+      // Leaving the spinner up turned a failed refresh into a dead page: the state
+      // pane has a retry button only in the error state.
+      showState('error');
+      throw error;
+    }
   }
 
   function closeMenus(exceptId = '') {

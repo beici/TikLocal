@@ -925,6 +925,12 @@
       runButton(button, T('settings.trash.emptying'), async () => {
         const data = await requestJson('/api/trash', { method: 'DELETE' });
         await loadTrash();
+        if (data.failed) {
+          // A locked file stays in the trash; "emptied N" alone read as success and
+          // the rows that survived looked like a rendering bug.
+          TikLocalUI.toast(T('settings.trash.empty_partial', { purged: data.purged, failed: data.failed }), 'error');
+          return;
+        }
         TikLocalUI.toast(T('settings.trash.emptied', { count: data.purged }));
       }).catch(() => TikLocalUI.toast(T('settings.trash.empty_failed'), 'error'));
     });
@@ -1216,10 +1222,12 @@
     if (event.persisted) window.location.reload();
   });
 
-  // 设置页的统计/下载状态在断网时只会显示「暂不可用」，恢复后自动补一次。
+  // 设置页的统计/下载/回收站在断网时只会显示「暂不可用」，恢复后自动补一次。
+  // 回收站卡片漏在这里时，恢复网络后仍停在「无法获取回收站状态」，恢复与清空整块不可用。
   window.addEventListener('tiklocal:online', () => {
     loadStats();
     loadDownloadSettings();
+    loadTrash();
   });
 
   loadStats();

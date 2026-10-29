@@ -10,6 +10,19 @@ TRASH_DIR = '.tiklocal-trash'
 RETENTION_DAYS = 30
 
 
+def sidecar_paths(target: Path) -> list[Path]:
+    """Metadata files a downloader wrote next to a media file.
+
+    yt-dlp leaves ``clip.info.json`` beside ``clip.mp4`` and
+    ``source_from_info_json`` reads both that and ``clip.mp4.info.json``. A delete
+    that moves only the media file leaves the page URL behind: it keeps describing
+    a file that is gone, and a later file reusing the name inherits it as its
+    provenance.
+    """
+    candidates = (target.with_suffix('.info.json'), Path(str(target) + '.info.json'))
+    return [path for path in candidates if path.is_file()]
+
+
 class TrashService:
     def __init__(self, library_service, retention_days: int = RETENTION_DAYS):
         self.library = library_service
@@ -25,11 +38,13 @@ class TrashService:
         now = datetime.datetime.now(datetime.timezone.utc)
         folder = source.path / TRASH_DIR / f"{now:%Y%m%d%H%M%S}-{secrets.token_hex(3)}"
         folder.mkdir(parents=True)
+        sidecars = sidecar_paths(target)
         entry = {
             'uri': self.library.canonicalize_uri(uri),
             'name': target.name,
             'size': target.stat().st_size,
             'deleted_at': now.isoformat(timespec='seconds'),
+            'sidecars': [path.name for path in sidecars],
         }
         # Write the metadata first: a file that moved while its entry.json failed to
         # write would sit in the trash unreachable, unlisted and never expired.
@@ -40,6 +55,19 @@ class TrashService:
         except OSError:
             shutil.rmtree(folder, ignore_errors=True)
             raise
+        # The media file is already safely in the trash; a sidecar that cannot move
+        # is left behind rather than failing the delete, and is dropped from the
+        # manifest so restore does not look for a file that is not there.
+        moved = []
+        for path in sidecars:
+            try:
+                shutil.move(str(path), str(folder / path.name))
+            except OSError:
+                continue
+            moved.append(path.name)
+        if moved != entry['sidecars']:
+            entry['sidecars'] = moved
+            (folder / 'entry.json').write_text(json.dumps(entry, ensure_ascii=False), encoding='utf-8')
         return {**entry, 'id': f"{source.id}.{folder.name}"}
 
     def restore(self, entry_id: str) -> str:
@@ -54,6 +82,18 @@ class TrashService:
             raise FileExistsError(entry['uri'])
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(folder / entry['name']), str(target))
+        for name in entry.get('sidecars') or []:
+            sidecar = folder / str(name)
+            if not sidecar.is_file():
+                continue
+            destination = target.with_name(str(name))
+            # Never overwrite a metadata file that was written while this entry sat
+            # in the trash; the older copy is dropped with the folder below.
+            if not destination.exists():
+                try:
+                    shutil.move(str(sidecar), str(destination))
+                except OSError:
+                    pass
         shutil.rmtree(folder, ignore_errors=True)
         return entry['uri']
 

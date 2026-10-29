@@ -131,7 +131,7 @@ def _iter_reader(reader, block_size: int = 64 * 1024):
 
 
 def register_media_routes(app, library_service, media_index, thumbnail_service, download_manager, trash_service, library_indexer,
-                          activity_store, favorite_service=None, collection_store=None):
+                          activity_store, favorite_service=None, collection_store=None, image_metadata=None):
     def neighbors(media_type, name):
         """Previous and next items in library order (newest first)."""
         return media_index.neighbors(media_type, name)
@@ -221,6 +221,13 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
 
     def purge(entry_id):
         uri = trash_service.purge(entry_id)
+        # A purge can run long after the delete: a new file may already sit on this
+        # URI (the same download name, restored from a backup). Its favourites,
+        # collection membership and captions are not the purged file's leftovers.
+        try:
+            reused = library_service.resolve_path(uri) is not None
+        except OSError:
+            reused = False
         try:
             for candidate in library_service.legacy_candidates(uri):
                 download_manager.delete_source_for_file(candidate)
@@ -233,13 +240,20 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             app.logger.warning('derived cleanup after purge failed for %s', uri, exc_info=True)
         # Saved lists are keyed by URI, so a leftover row silently re-attaches to the
         # next file that lands on the same name. Purge is the last point where the
-        # file is known to be gone for good.
+        # file is known to be gone for good -- unless the name is already taken again.
+        if reused:
+            return
         try:
             if favorite_service is not None:
                 favorite_service.set_favorite(uri, False)
             if collection_store is not None:
                 for collection in collection_store.list_for_media(uri):
                     collection_store.remove_items(collection['id'], [uri])
+            if image_metadata is not None:
+                # Captions are keyed by URI too: a stale entry would caption the next
+                # file that lands on this name, with text about a different picture.
+                for candidate in library_service.legacy_candidates(uri):
+                    image_metadata.delete(candidate)
         except Exception:  # noqa: BLE001 - derived cleanup must never fail the purge
             app.logger.warning('saved-list cleanup failed for %s', uri, exc_info=True)
 
@@ -249,6 +263,10 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
                 purge(entry_id)
             except (KeyError, OSError):
                 continue
+            except Exception:  # noqa: BLE001 - runs at startup; one bad entry must not stop the app
+                # purge_expired() runs while the routes are registered: a locked database
+                # or a damaged entry escaped create_app() and the server never started.
+                app.logger.warning('expired trash cleanup failed for %s', entry_id, exc_info=True)
 
     purge_expired()
 
@@ -295,6 +313,11 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
             return {'success': False, 'error': t('detail.error.not_in_trash')}, 404
         except FileExistsError:
             return {'error': t('detail.error.trash_conflict')}, 409
+        except OSError:
+            # The trashed file is unreadable or its original folder cannot be
+            # recreated (a locked directory on Windows): a conflict the user can
+            # clear, not a 500 with a raw path in the message.
+            return {'error': t('detail.error.trash_restore_failed')}, 409
         try:
             library_indexer.register_uris([uri])
         except Exception:  # noqa: BLE001

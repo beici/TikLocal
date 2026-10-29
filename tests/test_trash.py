@@ -82,6 +82,38 @@ def test_library_scan_skips_trash(client):
     assert [path.name for path in service.scan_source(service.sources[0])] == ['a b.jpg']
 
 
+def test_delete_takes_the_downloader_metadata_with_it(client):
+    media_root = client.application.config['MEDIA_ROOT']
+    sidecar = media_root / 'clip.mp4.info.json'
+    sidecar.write_text('{"webpage_url": "https://example.com/v/1"}', encoding='utf-8')
+
+    entry_id = trash_delete(client, 'clip.mp4')
+    assert not (media_root / 'clip.mp4').exists()
+    assert not sidecar.exists()
+
+    assert client.post(f'/api/trash/{entry_id}/restore').status_code == 200
+    assert sidecar.read_text(encoding='utf-8') == '{"webpage_url": "https://example.com/v/1"}'
+
+    # Purging takes the sidecar with the media file instead of leaving it orphaned,
+    # where it would describe a file that no longer exists.
+    entry_id = trash_delete(client, 'clip.mp4')
+    assert client.delete(f'/api/trash/{entry_id}').status_code == 200
+    assert not (media_root / 'clip.mp4').exists()
+    assert not sidecar.exists()
+
+
+def test_restore_of_a_locked_file_is_a_conflict(client, monkeypatch):
+    entry_id = trash_delete(client, 'clip.mp4')
+
+    def locked(self, target_id):
+        raise OSError(13, 'Permission denied')
+
+    monkeypatch.setattr(TrashService, 'restore', locked)
+    response = client.post(f'/api/trash/{entry_id}/restore')
+    assert response.status_code == 409
+    assert response.get_json()['error']
+
+
 def test_purge_of_locked_file_is_reported_as_conflict(client, monkeypatch):
     entry_id = trash_delete(client, 'clip.mp4')
 

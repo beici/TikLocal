@@ -63,6 +63,12 @@
 
     function apply() {
       if (states.get(video) !== state) return;
+      // The saved point belongs to the file that was there when it was written. A
+      // replacement that reuses the name keeps the URI but not the length, and
+      // seeking past the end lands on the last frame with a "resumed at" toast for
+      // a position that never existed in this clip.
+      var duration = Number(video.duration);
+      if (Number.isFinite(duration) && duration > 0 && position > duration - 1) position = 0;
       if (position > 0 && video.currentTime < 1) {
         video.currentTime = position;
         if (window.TikLocalUI) {

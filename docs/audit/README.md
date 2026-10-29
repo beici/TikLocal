@@ -42,6 +42,7 @@
 | 24 | 2026-10-29 | 602P/8S/0F | 0/4/26/19（七域 49，去重 46；修复 28：P1 4 + P2 19 + P3 5，转 backlog 18，并入既有 3） | `fix: log startup failures, keep partial downloads and stop the silent 500s`，21 文件 `+530/-113` | [round-24](round-24.md) |
 | 25 | 2026-10-29 | 602P/8S/0F | 0/6/27/17（七域 50，去重 50；修复 15：P1 5 + P2 7 + P3 3，其中 5 条为复审追加，P1 中 1 条第 23 轮已修，转 backlog 40） | `fix: keep the source map, the big-image slot and the log file alive`，20 文件 `+636/-79` | [round-25](round-25.md) |
 | 26 | 2026-10-29 | 602P/8S/0F | 0/5/10/17（五域 32，去重 32；修复 15 + 缓解 1，撤销 2，驳回 1，转 backlog 13） | `fix: guard the outbound edges and the default credential`，16 文件 `+411/-74` | [round-26](round-26.md) |
+| 27 | 2026-10-29 | 602P/8S/0F | 1/2/21/28（八域 52，去重后 38；修复 19，转 backlog 19） | `fix: take the derived state with the deleted file`，20 文件 `+455/-27` | [round-27](round-27.md) |
 
 
 第 01 轮结束后：`pytest -q` = **2 failed / 358 passed / 6 skipped**。剩余 2 个（`test_auth.py:61`、`test_radio_client.py:77`）都是断言 `stat.S_IMODE(...) == 0o600`，Windows 返回 `0o666`，属平台差异，不是产品 bug。
@@ -93,6 +94,8 @@
 第 25 轮结束后：`pytest -q` = **602 passed / 8 skipped / 0 failed**（241.13s，本轮未新增用例）。视角换成「内存与资源预算 + 长时运行稳定性」，七个域按资源归属切，域级明细另存 `round-25-r1.md`…`round-25-r5.md`。P0 为 0，P1 有 6 条（读失败把来源映射整表覆盖成单条、4 槽位并发解码大图峰值近 3 GB、`If-Range` 不匹配时全文件走生成器把 worker 钉死、话题流每翻一页重建全库并逐专辑查成员、两进程共写 `tiklocal.log` 时轮转失败后日志静默死亡，以及第 23 轮已修、本轮复核确认的电台偏好跨账号泄漏），当轮修完 5 条。修完 P2 5 条，其余 40 条转 backlog 并写明「为什么暂不修」。刻意不修一条：限流表满时新键不记录是第 21 轮加 `MAX_KEYS` 时的有意取舍（驱逐仍在封禁窗口内的地址比少记一次失败更糟），要改需换前缀聚合或全局令牌桶。下一轮建议视角是「外部依赖与网络边界」，那是唯一还没单独覆盖过的维度。
 
 第 26 轮结束后：`pytest -q` = **602 passed / 8 skipped / 0 failed**（本轮未新增用例，两个测试缝调整了替身写法）。视角换成「外部依赖与网络边界」——凡是越过进程边界的地方：外部二进制（yt-dlp / gallery-dl / ffmpeg / taskkill）、主动出站 HTTP（sidecar、头像、embedding）、被外部访问的入站面（`0.0.0.0` 绑定、反代头、TLS、`--dev`）、前端第三方资源。P0 为 0，P1 有 5 条：yt-dlp 从不传 `--ffmpeg-location`（只装 `imageio-ffmpeg` 时音视频分离站点静默丢音轨）、批量入队每条 spawn 一次 `--version`（5000 行时单请求半小时以上）、直链下载无累计字节上限（可写满媒体盘）、sidecar 作者 `avatar_url` 无主机校验（盲 SSRF + 把任意响应存成作者头像）、首次启动固定口令 `admin666` 配默认 `0.0.0.0`。前四条当轮修完，第五条按产品决策口径只做警告缓解并进 backlog。另外新增 `tiklocal/services/net_guard.py` 收口「拒绝回环/链路本地/元数据地址」与「逐跳校验重定向」，让直链下载和头像下载共用一套规则；`taskkill` 改成先杀进程树再回收父进程；`--dev` 在非回环绑定时改绑 `127.0.0.1`。两条复核后撤销（`output.css` 无漂移、模板全部走 `static_asset()`）、一条驳回（用户自配的 `embedding.base_url` 跟随 302，与已驳回的「yt-dlp 重定向内网」同类），其余 13 条转 backlog。下一轮建议视角是「数据生命周期与删除语义」。
+
+第 27 轮结束后：`pytest -q` = **604 passed / 8 skipped / 0 failed**（224.23s，新增 2 个回收站用例）。视角换成「数据生命周期与删除语义」，域不再按代码层切，而是按「删除一个文件会经过哪几个环节」切（移动文件、写回收站清单、删索引行、清派生数据），因此八域里 F1/F3 与 G1/G3 是同一批代码的两次独立复访。P0 有 1 条、P1 有 2 条：大小写不敏感文件系统上 `dedupe` 把同一文件同时算进 keep 与 delete，`--delete` 会把所有副本删光；「移除媒体源」会连同目录里的回收站一起删掉；删除正在播放的媒体时播放器没释放句柄，Windows 上服务端 `shutil.move` 拿到 `WinError 32`，用户看到「删除失败」而文件其实没动。P0/P1 全部当轮修完，另修 P2 8 条、P3 8 条（回收站 sidecar 孤儿、purge 不清元数据与索引状态表、元数据损坏静默清空、purge 后同名新文件继承旧收藏、合集页把网络错误显示成空合集、恢复被占用文件返回 500 等），转 backlog 19 条。这轮最值得记的教训是：**删除是一条链，不是一次调用**——同一个「文件没了」的事实有四个落点，任何一个漏掉都会在下一次同名文件落进来时变成幽灵状态。
 
 ## 目录
 

@@ -542,6 +542,7 @@ def create_app(test_config=None):
         app, library_service, media_index, thumbnail_service, download_manager,
         trash_service, library_indexer, activity_store,
         favorite_service=favorite_service, collection_store=collection_store,
+        image_metadata=metadata_store,
     )
     register_settings_routes(
         app, media_index, favorite_service, thumbnail_service, app_version,

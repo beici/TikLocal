@@ -129,6 +129,8 @@ class MediaIndexStore:
                     ).rowcount
                 else:
                     deleted += conn.execute("DELETE FROM media_items").rowcount
+            if deleted:
+                self._sweep_orphan_state(conn, configured_source_ids)
             conn.execute("DROP TABLE media_index_seen")
             item_count = int(conn.execute("SELECT COUNT(*) FROM media_items").fetchone()[0])
             conn.execute(
@@ -146,6 +148,27 @@ class MediaIndexStore:
             "deleted": max(deleted, 0),
             "last_synced_at": now,
         }
+
+    @staticmethod
+    def _sweep_orphan_state(conn, configured_source_ids: set[str] | None) -> None:
+        """Drop per-file state whose media row is gone.
+
+        ``playback_positions``, ``media_events`` and ``media_affinity`` are keyed by
+        URI, so they outlive the file: a resume point written for a deleted clip
+        made the next file that reused the name open at the wrong time, and rows
+        accumulated for every file deleted outside the app. Only sources that are
+        still configured are swept -- a source that is unplugged or removed from the
+        config keeps its history for when it comes back.
+        """
+        for source_id in sorted(str(value) for value in (configured_source_ids or ())):
+            escaped = source_id.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            pattern = f'@{escaped}/%'
+            for table in ('playback_positions', 'media_events', 'media_affinity', 'media_vectors'):
+                conn.execute(
+                    f"DELETE FROM {table} WHERE uri LIKE ? ESCAPE '\\'"
+                    " AND uri NOT IN (SELECT uri FROM media_items)",
+                    (pattern,),
+                )
 
     def upsert(self, records: list[dict]) -> int:
         if not records:
@@ -200,7 +223,24 @@ class MediaIndexStore:
                 conn.execute(
                     "UPDATE media_index_state SET item_count = MAX(0, item_count - 1) WHERE id = 1"
                 )
+        if deleted:
+            self.forget_uri(uri)
         return bool(deleted)
+
+    def forget_uri(self, uri: str) -> int:
+        """Drop every per-file row keyed by this URI and return how many went.
+
+        Deleting through the app only removed the media row, so the resume point, the
+        affinity weight, the event log and the similarity vector stayed behind and the
+        next file to land on the same name inherited all of it. The full-scan sweep
+        covers rows whose source was rescanned; the delete path has to forget the URI
+        itself, including the vector blob, which is never cheap to keep.
+        """
+        removed = 0
+        with self.database.connect() as conn:
+            for table in ('playback_positions', 'media_events', 'media_affinity', 'media_vectors'):
+                removed += conn.execute(f"DELETE FROM {table} WHERE uri = ?", (uri,)).rowcount
+        return removed
 
     def unprobed(self, limit: int = 50, exclude: tuple[str, ...] = ()) -> list[dict]:
         """Media whose dimensions were never read, or were read before the file changed.
@@ -1004,10 +1044,16 @@ class LibraryIndexer:
                 continue
             path = self.library.resolve_path(uri)
             if path is None or not path.is_file():
-                raise ValueError(f'Media output does not exist or is inaccessible: {uri}')
+                # One missing output must not cost the rest of the batch. yt-dlp
+                # reports every `Destination:` line, including the separate video
+                # and audio streams it deletes again after merging, so the list a
+                # finished job hands over routinely names files that are gone.
+                LOGGER.warning('Skipping a media output that no longer exists: %s', uri)
+                continue
             record = self._record_for_path(path, time_states)
             if record is None:
-                raise ValueError(f'Unable to register media output: {uri}')
+                LOGGER.warning('Unable to register media output: %s', uri)
+                continue
             records.append(record)
         records = self._apply_douyin_pairing(records)
         count = self.store.upsert(records)

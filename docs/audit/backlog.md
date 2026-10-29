@@ -335,5 +335,33 @@ P3：17 条（R1 3 / R2 3 / R3 1 / R4 3 / R5 2 / R6 1 / R7 4）。值得留意�
 
 驳回 1 条：`embedding.base_url` 的 302 跟随（`tiklocal/experiments/similarity/embedding.py:46`）——端点是用户自己在 `config.yaml` 里配的，与已驳回的「yt-dlp 重定向内网」同类；真正要防的是「响应内容决定 URL」，本轮已修那两条。
 
+### 第 27 轮新增（19 条）
+
+本轮视角是数据生命周期与删除语义，八域上报 52 条，14 条是跨域同一根因（缩略图指纹、
+purge 清理范围、回收站目录命名各被两到三个域独立命中），修 19 条后余下 19 条登记在此。
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| [P2] 改名/移动不迁移收藏与偏好键：`rename()` 只改 `media_items.uri`，收藏、合集成员、`media_state` 仍指旧 uri，改名即「取消收藏」 | `tiklocal/services/library_index.py:78-93` | 需要 uri 级联迁移 + 事务，且 CLI 改名与 web 改名共用同一段逻辑；误迁移会把两个文件的状态混在一起，要先定「同名冲突」语义 |
+| [P2] 缩略图指纹只看源文件 mtime：从别处拷来的文件（mtime 被保留）会命中另一张图留下的缓存，永远显示错图 | `tiklocal/services/thumbnail.py:383-395` | 正解是「mtime + size + inode」组合，需要先测扫描期成本；只加一项会让每次扫描多一次 stat，收益不确定 |
+| [P2] 实况照片（`.mov` 配对）不随主文件删除移动：iOS 导入的 `IMG_0001.HEIC` + `IMG_0001.MOV` 删一个留一个 | `tiklocal/web/media.py:200-233` | 需要先定义「配对」判定（同名不同扩展名 + 时长接近），再决定是否连带删除；错判会把两个独立视频当成一对 |
+| [P2] 下载历史删除不清理 sidecar：`delete_jobs()` 只删任务记录与索引，`*.info.json` 留在目录里 | `tiklocal/services/downloader.py:713-724` | 复用回收站的 `sidecar_paths()` 即可，但删除历史还要触发索引删除，属结构性改动，留到下一轮「删除语义」复访 |
+| [P2] 重试任务后 `output_files_rel` 重复累积：同一文件在列表里出现两次，删除时重复 move 触发 `FileExistsError` | `tiklocal/services/downloader.py:786-800` | 需要去重合并语义 + 旧数据迁移（已有 jobs.json 里就有重复） |
+| [P2] 取消与 worker 收尾的竞态：`cancel_job()` 置 `cancel_requested` 后 worker 仍可能写回 `running` | `tiklocal/services/downloader.py:900-960` | 需要状态机锁与「终态不可回退」断言，且测试要能稳定复现该竞态 |
+| [P2] 删除任务时 `_persist_locked()` 抛 `OSError`：内存已删、磁盘未删，接口 500 而重启后任务复活 | `tiklocal/services/downloader.py:660-725` | 三条删除路径都要快照回滚（`retry_job()` 已有先例），改动面大于当前收益 |
+| [P2] `preference_dimensions` 无界增长：每次偏好计算按 user×media 插行，孤儿行只增 | `tiklocal/services/database.py:631-684` | 需要按维度加 TTL 或上限，并决定「用户偏好」保留多久，属产品决策 |
+| [P2] `_persist_locked()` 每次全量写 `jobs.json`（含 `download_payload` 与 indent），任务多时每 2 s 一次整文件重写 | `tiklocal/services/downloader.py:433-470` | 改增量写要重做文件格式与恢复逻辑，风险高于当前 IO 成本 |
+| [P2] 移除媒体源时 `source.path` 字符串比较未 normcase：大小写或尾斜杠不同就匹配不到，静默无效 | `tiklocal/web/settings.py:60-80` | 需要统一路径比较工具（`os.path.normcase(os.path.abspath())`），牵动所有按路径查源的调用点 |
+| [P2] 回收站目录名 `.tiklocal-trash` 与用户自己的同名目录冲突时，该目录被当作回收站参与过期清理 | `tiklocal/services/trash.py:11` | 需要「隐藏目录 + 可配置名」的产品决策，改名还要迁移已有回收站 |
+| [P3] 资源超时与解码失败共用同一个 1 h `.fail` 标记：内存紧张时的超时把图钉死一小时 | `tiklocal/services/thumbnail.py:640-648` | 要按失败类型分档存储，需改缓存文件格式 |
+| [P3] `clear_cache()` 的 `*.jpg` glob 会匹配到正在生成的 `.thumb-*` 临时文件，清缓存把在飞的缩略图变成 1 h 占位符 | `tiklocal/services/thumbnail.py:520-535` | 需要把临时文件挪进独立子目录，属缓存目录布局调整 |
+| [P3] legacy 缩略图收养绕过 `THUMB_VERSION`：旧尺寸图被当作新缓存，直到源文件变动 | `tiklocal/services/thumbnail.py:300-330` | 需要一次性迁移（重命名或删除旧缓存），会让升级后首次打开变慢 |
+| [P3] `DecompressionBombError` 的图永远拿不到尺寸，每次扫描都重试一次解码 | `tiklocal/services/media_info.py:120-140` | 需要「失败也缓存」的负面缓存，要定 TTL 与失效条件 |
+| [P3] `photo_groups` 的 total 统计包含已删除行，末页可能为空 | `tiklocal/services/library_index.py:520-560` | 需要 total 与 rows 走同一份过滤条件，牵动分页契约 |
+| [P3] 字幕的 `prompt_version`/`prompt_hash` 只写不读：提示词改了仍命中旧缓存 | `tiklocal/services/captions.py:430-470` | 需要把版本纳入缓存键并决定旧缓存是否作废（会触发一次全量重生成） |
+| [P3] 详情页删除后浏览器「后退」回到 404：没有 `history.replaceState`，也没有 410 页面 | `tiklocal/static/detail_page_controller.js:1-60` | 需要决定后退落点（列表页锚点 or 提示页），属交互设计 |
+| [P3] 回收站列表无分页：条目多时一次返回全部并整块重建 DOM | `tiklocal/web/media.py:300-320` | 条目量小时无感；等回收站真正常驻上百条再做 |
+
+
 
 
