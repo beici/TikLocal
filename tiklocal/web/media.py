@@ -229,12 +229,17 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
         try:
             position, duration = float(payload.get('position')), float(payload.get('duration'))
         except (TypeError, ValueError):
-            return {'error': 'position and duration must be numbers'}, 400
+            app.logger.info('playback report rejected: position/duration are not numbers')
+            return {'success': False, 'error': t('media.error.playback_fields')}, 400
         if not (math.isfinite(position) and math.isfinite(duration)):
-            return {'error': 'position and duration must be finite'}, 400
+            app.logger.info('playback report rejected: position/duration are not finite')
+            return {'success': False, 'error': t('media.error.playback_fields')}, 400
         if not uri or not library_service.resolve_path(uri):
-            return {'error': 'Unknown media'}, 404
-        return {'saved': activity_store.save_position(uri, position, duration)}
+            # The file went away (deleted elsewhere, drive unplugged): the resume point
+            # is dropped and the user is told why instead of silently starting at 0.
+            app.logger.info('playback report ignored: unknown media')
+            return {'success': False, 'error': t('media.error.playback_unknown')}, 404
+        return {'success': True, 'saved': activity_store.save_position(uri, position, duration)}
 
     @app.route('/image')
     def image_view():

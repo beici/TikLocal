@@ -1243,10 +1243,18 @@ class LibraryIndexer:
                 # A rescan during a cold scan used to report only the second pass,
                 # which almost always finds nothing: the settings page then said
                 # "0 indexed" for a library it had just indexed.
+                # The failures are merged too: rebuilding the dict without them made
+                # a source that could not be reached look like a clean scan whenever
+                # a download finished during the scan (the common case).
+                merged_failures = dict(result.get('source_errors') or {})
+                merged_failures.update(again.get('source_errors') or {})
                 result = {
                     'indexed': int(result.get('indexed') or 0) + int(again.get('indexed') or 0),
                     'deleted': int(result.get('deleted') or 0) + int(again.get('deleted') or 0),
                     'last_synced_at': again.get('last_synced_at') or result.get('last_synced_at'),
+                    'unavailable_sources': list(merged_failures),
+                    'source_errors': merged_failures,
+                    'unavailable_names': [entry.get('name') or key for key, entry in merged_failures.items()],
                 }
             return result
         finally:
@@ -1286,7 +1294,16 @@ class LibraryIndexer:
                         )
                 records = self._apply_douyin_pairing(records)
             except OSError as error:
-                failures[source.id] = str(error)
+                # A source that vanished mid-scan used to disappear without a log
+                # line: the settings page then reported a successful rescan and
+                # nothing anywhere said which folder failed or why. The reason stays
+                # in the log (it carries an absolute path); the browser only gets a
+                # code and the folder's display name.
+                LOGGER.warning('source %s could not be scanned: %s', source.id, error)
+                failures[source.id] = {
+                    'code': 'missing' if error.errno == errno.ENOENT else 'unreadable',
+                    'name': source.name or source.id,
+                }
                 continue
             completed_sources.add(source.id)
             preserved.extend(skipped)
@@ -1301,6 +1318,10 @@ class LibraryIndexer:
             result['skipped_prefixes'] = list(preserved)
         result['unavailable_sources'] = list(failures)
         result['source_errors'] = failures
+        if failures:
+            # The toast has to name the folder the user recognises: "@videos" is an
+            # internal id, and a second folder called "videos" becomes "@videos-2".
+            result['unavailable_names'] = [entry.get('name') or key for key, entry in failures.items()]
         self.on_change()
         return result
 

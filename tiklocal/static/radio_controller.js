@@ -1091,10 +1091,27 @@
     els.radioPage.classList.add('has-error');
     setBuffering(false);
     if (els.trackMeta) {
-      els.trackMeta.textContent = '';
-      els.trackMeta.classList.remove('has-meta');
+      els.trackMeta.textContent = T('radio.load_failed_hint');
+      els.trackMeta.classList.add('has-meta', 'has-action');
+      // Nothing used to be offered here: the station list failed once and the only
+      // way back was a full page reload. The button goes in #track-meta because the
+      // old host (#upcoming-preview) is aria-hidden and never displayed — the retry
+      // existed in the DOM but no user could see or click it.
+      var retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'radio-retry';
+      retry.textContent = T('radio.retry');
+      retry.addEventListener('click', function () {
+        retry.disabled = true;
+        els.radioPage.classList.remove('has-error');
+        els.trackMeta.classList.remove('has-action');
+        loadStations()
+          .then(function () { return tune({ reset: true, loadFirst: true }); })
+          .catch(function (next) { showLoadError(next); });
+      });
+      els.trackMeta.appendChild(retry);
     }
-    els.upcomingPreview.innerHTML = '<li></li>';
+    els.upcomingPreview.innerHTML = '';
   }
 
   function readApi(response) {

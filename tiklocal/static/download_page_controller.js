@@ -721,7 +721,12 @@
   async function refreshSetup() {
     try {
       dependencyMeta = await api('/api/download/probe', { method: 'POST' });
-    } catch (_) {}
+    } catch (error) {
+      // Swallowing this left every engine looking unavailable with nothing on
+      // screen saying the check itself had failed.
+      dependencyMeta = null;
+      TikLocalUI.toast(TikLocalUI.errorText(error, 'download.probe_failed'), 'warning');
+    }
   }
 
   function updateDetectedSite(input) {

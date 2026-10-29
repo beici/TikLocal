@@ -28,7 +28,11 @@ def test_a_source_that_vanishes_mid_scan_keeps_its_rows(tmp_path, monkeypatch):
     assert payload['success'] is True
     errors = payload['data']['source_errors']
     assert errors, payload['data']
-    assert 'vanished' in next(iter(errors.values()))
+    # Round 44: the browser gets a code and the folder's display name; the reason
+    # (which names an absolute path) stays in the server log.
+    failure = next(iter(errors.values()))
+    assert failure['code'] == 'missing'
+    assert failure['name']
     sources = client.get('/api/library/sources').get_json()['data']['sources']
     assert sources[0]['item_count'] == 1
 

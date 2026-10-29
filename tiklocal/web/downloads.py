@@ -7,7 +7,7 @@ from tiklocal.services.downloader import (
     DEFAULT_DOWNLOAD_CONFIG, MASKED_SECRET, TERMINAL_JOB_STATUS, validate_download_config,
     validate_download_url,
 )
-from tiklocal.services.tiktok_downloader import TikTokDownloaderError
+from tiklocal.services.tiktok_downloader import TikTokDownloaderError, tiktok_user_message
 from tiklocal.services.url_list import UrlListStore, format_text, parse_text
 from tiklocal.web import json_body
 
@@ -335,7 +335,8 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             app.logger.warning('TikTok download enqueue rejected: %s', exc)
             return {'success': False, 'error': url_list_error_message(exc)}, 400
         except TikTokDownloaderError as exc:
-            return {'success': False, 'error': str(exc)}, 502
+            app.logger.warning('TikTok download enqueue failed: %s', exc)
+            return {'success': False, 'error': tiktok_user_message(exc)}, 502
         return {'success': True, 'data': data}
 
     @app.route('/api/download/tiktok/status')

@@ -84,6 +84,16 @@
   color: #bd6259;
 }
 
+/* A warning ("imported 5 of 8", "a scan is already running") used to borrow the
+   success check mark: the green tick said everything worked. */
+.ui-toast.warning {
+  border-color: rgba(180, 67, 59, 0.28);
+}
+
+.ui-toast.warning svg {
+  color: #b8862f;
+}
+
 .ui-toast.is-leaving {
   opacity: 0;
   transform: translateY(4px);

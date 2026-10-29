@@ -272,6 +272,7 @@ def register_settings_routes(
             # page used to get 'unavailable' here and report "rescanned 0 items" for
             # a folder that could not be reached at all.
             'unavailable_sources': list(result.get('unavailable_sources') or []),
+            'unavailable_names': list(result.get('unavailable_names') or []),
             'source_errors': dict(result.get('source_errors') or {}),
             'error': str(result.get('error') or ''),
         }

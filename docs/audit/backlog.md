@@ -762,3 +762,22 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] 已删除的 HTTPS 相关 CLI 开关没有别名提示 | `tiklocal/run.py` | 属产品决定（是否长期保留旧写法），需同步帮助文本与文档 |
 | [P2] 设置页保存时读 store 失败会丢掉 `removed_ids`，被删目录下次启动复活 | `tiklocal/web/settings.py:167-173` | 需要改成「读失败即中止保存」，会改变现有错误路径语义，留待专门一轮 |
 | [P3] 内嵌元数据只读头部 64 KB 的上限没有版本标记 | `tiklocal/services/embedded_metadata.py` | 与缓存键绑定，改上限会让所有旧缓存失效（一次性重扫），收益低 |
+
+### 第 44 轮新增（12 条）
+
+视角：错误信息与用户可理解性。本轮已把「服务端可行动文案 + 可复制 reference + 前端统一兜底」这条链路收口，以下 12 条是明确判定「改动面大于收益」而留下的。
+
+| 问题 | 位置 | 为什么暂不修 |
+| --- | --- | --- |
+| [P2] 缩略图生成失败只有占位图，界面不说明原因 | `tiklocal/services/thumbnail.py`、`/thumb` 的前端占位 | 要把原因带到浏览器，得先让 `/thumb` 的响应携带失败码（或占位图元数据），牵动缩略图缓存契约与全部调用页；占位图本身已能让页面继续用 |
+| [P2] `GET /api/download/urls` 返回绝对 `store_path` | `tiklocal/web/downloads.py` | `tests/test_download_urls.py:229` 已把该字段锁成契约，前端当前未使用；改契约需同步测试并确认无外部调用方 |
+| [P2] CLI 顶层未捕获异常仍打整段 traceback | `tiklocal/run.py` | `_fatal()` 只覆盖 `TikLocalError`，其余异常走 Python 默认钩子；收敛要重写入口的异常边界并确认各子命令的退出码契约 |
+| [P2] 部分 4xx 仍用英文常量 | `/media` 缺参、`/thumb` 缺参（`tiklocal/web/media.py`） | 这两个入口被 `<video>` / `<img>` 直接命中，改文案要连 i18n 键与既有断言一起动，属边角路径 |
+| [P2] `image_detail` / `detail` 页仍把 `error.message` 直接写入 DOM | `tiklocal/static/detail_page_controller.js`、`image_detail_page_controller.js` | 两页各有独立的错误渲染路径，统一到 `TikLocalUI.errorText` 需逐页实测，留待前端专项轮 |
+| [P2] 服务层部分异常仍以 `str(exc)` 冒泡到路由 | `tiklocal/services/*`（TikTok、下载两条链本轮已收口） | 其余异常要逐个类型定文案并补回归测试，属系统性工作，不宜在本轮夹带 |
+| [P2] 日志中的查询串（`uri=`、`q=`）未脱敏 | `tiklocal/logging_setup.py` | 现有 `redact_text()` 只认凭据键名；查询串整体脱敏会让排查变难，需按参数名白名单处理 |
+| [P3] `experiments/similarity.js` 的错误文案未走 helper | `tiklocal/static/experiments/similarity.js` | 实验特性，默认不加载；helper 已在全局，随后续重构一起改 |
+| [P3] 家目录/数据目录前缀未在日志中替换为 `~` | `tiklocal/logging_setup.py` | 属日志可读性；替换会改变既有日志文本，且需在启动时已知两个根目录 |
+| [P3] 客户端上报的 `stack` 仍可能含完整脚本 URL | `tiklocal/web/client_log.py` | 脚本 URL 是本机静态资源，泄漏面小于页面 URL（后者本轮已脱敏）；彻底处理要逐行过滤 |
+| [P3] 登出日志不含来源标签页信息 | `tiklocal/auth.py` | 需要前端在 `/logout` 表单里带来源标记，单机场景价值有限 |
+| [P3] `thumbs` 命令的失败摘要不含失败文件名 | `tiklocal/run.py`（`thumbs`） | 输出契约；补文件名要同时改摘要格式与脚本调用方的解析 |

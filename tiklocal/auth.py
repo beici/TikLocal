@@ -313,6 +313,9 @@ def configure_auth(app, auth_store, *, enabled: bool, device_auth_store=None) ->
 
     @app.post('/logout')
     def logout_view():
+        # Sign-ins were logged but sign-outs were not, so the one event that matters
+        # when someone else may have had the password left no trace at all.
+        _LOGGER.info('logout: session cleared for %s', request.remote_addr or 'unknown')
         session.clear()
         response = redirect(url_for('login_view'))
         # session.clear() drops the server-side payload but leaves the cookie in the

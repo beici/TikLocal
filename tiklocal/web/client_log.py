@@ -11,6 +11,8 @@ import time
 
 from flask import request
 
+from tiklocal.logging_setup import redact_text
+
 #: One page load can throw in a loop; 5 reports per load is plenty to identify
 #: the first failure and keeps a broken page from filling the log file.
 MAX_REPORTS_PER_MINUTE = 20
@@ -18,9 +20,11 @@ _FIELD_LIMITS = {'message': 300, 'source': 200, 'stack': 1500, 'url': 300}
 
 
 def _clean(value, limit: int) -> str:
-    # Newlines would let a crafted report forge extra log lines.
+    # Newlines would let a crafted report forge extra log lines, and a page URL or
+    # stack can carry a token (``?token=…``), so the text is redacted before it is
+    # truncated.
     text = str(value or '').replace('\r', ' ').replace('\n', ' ')
-    return text[:limit]
+    return redact_text(text)[:limit]
 
 
 def register_client_log_routes(app, logger=None):

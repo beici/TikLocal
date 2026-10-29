@@ -263,6 +263,20 @@ def validate_download_config(payload: Any, *, partial: bool = False) -> tuple[di
     return cleaned, None
 
 
+def download_failure_message(exc: BaseException) -> str:
+    """Text for a failed job: actionable, and never a path on this machine.
+
+    ``str(OSError)`` is "[WinError 32] The process cannot access the file because it
+    is being used by another process: 'C:\\Users\\…'" -- an absolute path in the
+    browser and no next step. The reason and the errno are what the user can act on.
+    Exceptions such as ``TimeoutError()`` stringify to '', so the type name is the
+    fallback: a failure is never silent.
+    """
+    if isinstance(exc, OSError) and exc.errno is not None:
+        return t('download.error.os_failure', reason=exc.strerror or type(exc).__name__, errno=exc.errno)
+    return str(exc) or f'{type(exc).__name__} while downloading.'
+
+
 def validate_download_url(payload: Any) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(payload, dict):
         return None, t('download.error.body_object')
@@ -1303,9 +1317,7 @@ class DownloadManager:
                     engine = job.get('engine') or DEFAULT_DOWNLOAD_ENGINE
                     job['error_message'] = f'{engine} was not found. Install it before using this engine.'
                 else:
-                    # Exceptions such as TimeoutError() stringify to ''; fall back to
-                    # the type name so the failure is never silent.
-                    job['error_message'] = str(exc) or f'{type(exc).__name__} while downloading.'
+                    job['error_message'] = download_failure_message(exc)
                 self._persist_locked()
         finally:
             with self._lock:

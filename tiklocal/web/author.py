@@ -34,6 +34,7 @@ from tiklocal.services.tiktok_downloader import (
     TikTokDownloaderError,
     normalize_profile_url,
     parse_profile_sec_uid,
+    tiktok_user_message,
 )
 from tiklocal.web.media_payloads import media_urls
 
@@ -251,7 +252,8 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             except ValueError as exc:
                 return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
             except TikTokDownloaderError as exc:
-                return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 502
+                app.logger.warning('author sidecar request failed: %s', exc)
+                return jsonify({'success': False, 'ok': False, 'error': tiktok_user_message(exc)}), 502
             except Exception:  # a sidecar hiccup must never become a 500 page
                 # The sidecar client's own text reads "HTTPConnectionPool(host=…,
                 # port=…): Max retries exceeded with url: /api/…", which handed any
@@ -275,7 +277,8 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         except ValueError as exc:
             return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
         except TikTokDownloaderError as exc:
-            return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 502
+            app.logger.warning('author sidecar request failed: %s', exc)
+            return jsonify({'success': False, 'ok': False, 'error': tiktok_user_message(exc)}), 502
         except Exception:  # a sidecar hiccup must never become a 500 page
             app.logger.warning('author refresh failed for %s', source_id, exc_info=True)
             return jsonify({'success': False, 'ok': False, 'error': t('author.refresh.error')}), 502
@@ -337,7 +340,8 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         except ValueError as exc:
             return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
         except TikTokDownloaderError as exc:
-            return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 502
+            app.logger.warning('author sidecar request failed: %s', exc)
+            return jsonify({'success': False, 'ok': False, 'error': tiktok_user_message(exc)}), 502
         except Exception:  # a sidecar hiccup must never become a 500 page
             app.logger.warning('author video sync failed for %s', source_id, exc_info=True)
             return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.unknown')}), 502
@@ -354,7 +358,8 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         except ValueError as exc:
             return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
         except TikTokDownloaderError as exc:
-            return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 502
+            app.logger.warning('author sidecar request failed: %s', exc)
+            return jsonify({'success': False, 'ok': False, 'error': tiktok_user_message(exc)}), 502
         except Exception:
             app.logger.warning('author candidate search failed', exc_info=True)
             return jsonify({'success': False, 'ok': False, 'error': t('author.refresh.error')}), 502
@@ -445,7 +450,7 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         except TikTokDownloaderError as exc:
             # The batch stopped early: keep the authors that already synced.
             synced = len([item for item in results if item.get('ok')])
-            return jsonify({'success': False, 'ok': False, 'error': str(exc), 'items': results, 'synced': synced}), 502
+            return jsonify({'success': False, 'ok': False, 'error': tiktok_user_message(exc), 'items': results, 'synced': synced}), 502
         except Exception:  # a sidecar hiccup must never become a 500 page
             # str(exc) leaked KeyError/TypeError text into the UI and gave the user
             # nothing actionable, so the detail goes to the log instead.

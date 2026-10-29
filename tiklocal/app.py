@@ -761,7 +761,10 @@ def create_app(test_config=None):
         )
         message = t('common.error.internal')
         if request.path.startswith('/api/'):
-            return {'success': False, 'error': message, 'reference': reference}, 500
+            # Every fetch helper in the UI reads only ``error``, so the reference sat
+            # unused in the JSON and no API failure was ever reportable. Appending it
+            # to the message puts the id on screen without touching a dozen callers.
+            return {'success': False, 'error': f'{message} ({reference})', 'reference': reference}, 500
         return render_template('error.html', status=500, message=f'{message} · {reference}'), 500
 
     return app

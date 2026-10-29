@@ -105,10 +105,14 @@
   }
 
   async function postJSON(action, body) {
+    // The sidecar fetches TikTok with its own timeouts, but a stalled proxy or a
+    // half-open socket left the promise pending: setBusy(true) then disabled every
+    // button until the page was reloaded.
     const response = await fetch(endpoint(action), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body || {}),
+      signal: window.tikTimeoutSignal ? window.tikTimeoutSignal(120000) : undefined,
     });
     const payload = await response.json().catch(() => ({}));
     return { status: response.status, payload };

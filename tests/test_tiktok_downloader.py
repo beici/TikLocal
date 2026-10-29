@@ -505,7 +505,10 @@ def test_tiktok_route_error_paths(tiktok_client, monkeypatch):
         "/api/download/tiktok", json={"url": "https://www.douyin.com/user/MS4wLjABAAAAxi"}
     )
     assert res.status_code == 502
-    assert "Unable to reach" in res.get_json()["error"]
+    # Round 44: a sidecar failure is answered with localized copy, and the sidecar's
+    # own host:port must not reach the browser.
+    error = res.get_json()["error"]
+    assert error and "192.168" not in error and "http://" not in error
 
 
 def test_tiktok_config_roundtrip(tiktok_client):

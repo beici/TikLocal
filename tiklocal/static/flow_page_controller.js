@@ -656,7 +656,10 @@
         data = payload.data || null;
       } catch (error) {
         if (mediaSheetIsOpen()) {
-          mediaSheetBody.replaceChildren(infoRow(T('flow.info.path'), error.message || T('common.error.internal')));
+          // error.message may carry an absolute path or a browser string; the sheet
+          // only ever shows localized copy and the detail goes to the console.
+          console.warn('flow info sheet failed', error);
+          mediaSheetBody.replaceChildren(infoRow(T('flow.info.path'), TikLocalUI.errorText(error, 'common.error.internal')));
         }
         return;
       }

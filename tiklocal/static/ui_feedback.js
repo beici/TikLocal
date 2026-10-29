@@ -28,6 +28,32 @@
   if (document.body) ensureToastWrap();
   else document.addEventListener('DOMContentLoaded', ensureToastWrap);
 
+  // Browser network failures arrive as English TypeError text ("Failed to fetch",
+  // "Load failed", …) and used to reach a zh-CN toast verbatim. Anything that looks
+  // like one is replaced with localized copy; real API messages pass through.
+  var NETWORK_TEXT = /^(Failed to fetch|Load failed|NetworkError when attempting to fetch resource\.?|Network request failed|The network connection was lost\.?|The operation was aborted\.?)$/i;
+
+  function errorText(error, fallbackKey) {
+    var fallback = T(fallbackKey || 'common.action_failed');
+    if (!error) return fallback;
+    var name = error.name || '';
+    var message = typeof error === 'string' ? error : (error.message || '');
+    if (name === 'AbortError' || name === 'TimeoutError') return T('common.error.timeout');
+    // Match the *text*, not the class: fetch throws TypeError, but so does a plain
+    // bug ("Cannot read properties of undefined"), and telling the user to check the
+    // network because our own code broke is worse than showing the message.
+    if (NETWORK_TEXT.test(String(message).trim())) return T('common.error.offline');
+    return message || fallback;
+  }
+
+  function toastMessage(message) {
+    if (message && typeof message === 'object' && typeof message.message === 'string') {
+      return errorText(message);
+    }
+    var text = String(message == null ? '' : message);
+    return NETWORK_TEXT.test(text.trim()) ? T('common.error.offline') : text;
+  }
+
   // action: optional { label, run } rendered as a button; such toasts stay a little longer.
   function toast(message, type, action) {
     type = type || 'success';
@@ -35,8 +61,11 @@
     var el = document.createElement('div');
     el.className = 'ui-toast ' + type;
     var copy = document.createElement('span');
-    copy.textContent = message;
-    el.append(icon(type === 'error' ? 'alert-circle' : type === 'info' ? 'info' : 'check-circle'), copy);
+    copy.textContent = toastMessage(message);
+    el.append(
+      icon(type === 'error' ? 'alert-circle' : type === 'warning' ? 'alert-triangle' : type === 'info' ? 'info' : 'check-circle'),
+      copy,
+    );
     function leave() {
       el.classList.add('is-leaving');
       setTimeout(function () { el.remove(); }, 180);
@@ -161,7 +190,7 @@
     });
   }
 
-  window.TikLocalUI = { toast: toast, confirm: confirm, trash: trash };
+  window.TikLocalUI = { toast: toast, confirm: confirm, trash: trash, errorText: errorText };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', offerUndo);
   else offerUndo();
 })();

@@ -205,5 +205,8 @@ TikLocal二开启动提示词.md
 tl-*/
 tl_bounds*/
 tmp??????/
+.probe/
+probe-media-*/
+tiklocal-probe-*/
 
 /tmp*/

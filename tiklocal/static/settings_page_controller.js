@@ -1,5 +1,10 @@
 (() => {
   const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
+  // Browser network errors are English; TikLocalUI.errorText localizes those and
+  // leaves real API messages alone.
+  const errorText = (error, fallbackKey) => (window.TikLocalUI?.errorText
+    ? window.TikLocalUI.errorText(error, fallbackKey)
+    : (error?.message || T(fallbackKey)));
   const themeButtons = Array.from(document.querySelectorAll('[data-theme-preference]'));
   const refreshButton = document.getElementById('refresh-library');
   const clearCacheButton = document.getElementById('clear-cache');
@@ -674,7 +679,12 @@
     // reported as "rescanned 0 items", which reads like success.
     const unavailable = Array.isArray(scan.unavailable_sources) ? scan.unavailable_sources : [];
     const sourceErrors = scan.source_errors && typeof scan.source_errors === 'object' ? scan.source_errors : {};
-    const failedNames = unavailable.length ? unavailable : Object.keys(sourceErrors);
+    // Name the folder the user recognises: the ids ("@videos", "@videos-2") do not
+    // say which drive went away.
+    const unavailableNames = Array.isArray(scan.unavailable_names) ? scan.unavailable_names : [];
+    const failedNames = unavailableNames.length
+      ? unavailableNames
+      : (unavailable.length ? unavailable : Object.keys(sourceErrors));
     if (failedNames.length) {
       TikLocalUI.toast(T('settings.library.source_scan_unavailable', { names: failedNames.join(', ') }), 'warning');
     }
@@ -1138,7 +1148,13 @@
       }
       setRowStatus(row, payload.error || T('settings.sync.author_failed'), true);
       TikLocalUI.toast(payload.error || T('settings.sync.author_failed'), 'error');
-    }).catch(() => {});
+    }).catch((error) => {
+      // A timeout or a dropped connection used to leave the row in its previous
+      // state with no message at all.
+      const text = errorText(error, 'settings.sync.author_failed');
+      setRowStatus(row, text, true);
+      TikLocalUI.toast(text, 'error');
+    });
   }
 
   async function updateAuthorVideos(item, row, input) {
@@ -1164,7 +1180,11 @@
       }
       setRowStatus(row, payload.error || T('settings.sync.author_failed'), true);
       TikLocalUI.toast(payload.error || T('settings.sync.author_failed'), 'error');
-    }).catch(() => {});
+    }).catch((error) => {
+      const text = errorText(error, 'settings.sync.author_failed');
+      setRowStatus(row, text, true);
+      TikLocalUI.toast(text, 'error');
+    });
   }
 
   function authorRowsWithUrl() {

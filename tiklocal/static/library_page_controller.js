@@ -1410,7 +1410,17 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, media_type: mediaType }),
       });
-      const payload = await response.json();
+      // A proxy or waitress error page is HTML: response.json() then threw a
+      // SyntaxError whose text ("Unexpected token '<'") was printed in the status
+      // line, and the undefined status hid the setup link at the worst moment.
+      let payload;
+      try {
+        payload = await response.json();
+      } catch (_) {
+        const error = new Error(T('library.status.search_failed'));
+        error.status = response.status;
+        throw error;
+      }
       if (requestId !== searchRequest) return;
       if (!payload.success) {
         const error = new Error(payload.error || T('library.status.search_failed'));
@@ -1429,7 +1439,9 @@
       setLoadingText(resultCount ? T('library.status.search_end') : T('library.status.search_empty'));
     } catch (error) {
       if (requestId === searchRequest) {
-        imageSearchStatus.textContent = error.message;
+        imageSearchStatus.textContent = window.TikLocalUI?.errorText
+          ? window.TikLocalUI.errorText(error, 'library.status.search_failed')
+          : (error.message || T('library.status.search_failed'));
         imageSearchSetup.hidden = error.status !== 409 && error.status !== 503;
         semanticSearch = false;
       }

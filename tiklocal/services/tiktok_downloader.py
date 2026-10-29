@@ -76,7 +76,20 @@ _MEDIA_FILENAME_SUFFIXES = {".mp4", ".webm", ".mov", ".m4v", ".jpg", ".jpeg", ".
 
 
 class TikTokDownloaderError(Exception):
-    """Raised when the TikTokDownloader sidecar cannot serve a request."""
+    """Raised when the TikTokDownloader sidecar cannot serve a request.
+
+    ``code`` names a *technical* failure whose text is English, may quote the
+    sidecar's own message (sometimes a private output path) and never suggests a
+    fix. The web layer turns a coded error into localized copy and keeps the raw
+    text in the log; an empty ``code`` means the message was already built with
+    ``t()`` for the user and can be shown as is.
+    """
+
+    code = ''
+
+    def __init__(self, message: str = '', code: str = '') -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class AuthorAmbiguousError(TikTokDownloaderError):
@@ -89,6 +102,36 @@ class AuthorAmbiguousError(TikTokDownloaderError):
     def __init__(self, message: str, candidates: list[dict[str, Any]]):
         super().__init__(message)
         self.candidates = candidates
+
+
+_TIKTOK_ERROR_KEYS = {
+    'timeout': 'download.error.tiktok_no_answer',
+    'token': 'download.error.tiktok_token_rejected',
+    'http': 'download.error.tiktok_http',
+    'unreachable': 'download.alert.tiktok_unreachable',
+    'invalid': 'download.error.tiktok_invalid',
+    'resolve': 'download.error.tiktok_resolve',
+    'failed': 'download.error.tiktok_failed',
+}
+
+
+def tiktok_user_message(exc: BaseException) -> str:
+    """Localized copy for a sidecar failure.
+
+    A coded error carries English technical text (and sometimes the sidecar's own
+    message, which can name a private output path): that text belongs in the log.
+    An uncoded error was already built with ``t()`` and is safe to show.
+    """
+    code = getattr(exc, 'code', '')
+    if not code:
+        text = str(exc)
+        # An uncoded error is supposed to be localized already, but a transport
+        # exception stringified into it names host:port ("HTTPConnectionPool(host=
+        # 127.0.0.1, port=9911)"), which is exactly what must not reach the browser.
+        if 'HTTPConnectionPool' in text or 'host=' in text:
+            return t('download.alert.tiktok_unreachable')
+        return text
+    return t(_TIKTOK_ERROR_KEYS.get(code, 'download.error.tiktok_failed'))
 
 
 def validate_tiktok_downloader_config(payload: Any) -> tuple[dict[str, Any] | None, str | None]:
@@ -313,34 +356,40 @@ class TikTokDownloaderClient:
                 total = 0
                 while True:
                     if time.monotonic() > deadline:
-                        raise TikTokDownloaderError("TikTokDownloader did not answer in time.")
+                        raise TikTokDownloaderError("TikTokDownloader did not answer in time.", code='timeout')
                     chunk = response.read(64 * 1024)
                     if not chunk:
                         break
                     total += len(chunk)
                     if total > MAX_RESPONSE_BYTES:
-                        raise TikTokDownloaderError("TikTokDownloader returned a response that is too large.")
+                        raise TikTokDownloaderError(
+                            "TikTokDownloader returned a response that is too large.", code='invalid'
+                        )
                     chunks.append(chunk)
                 raw = b"".join(chunks).decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             if exc.code == 403:
-                raise TikTokDownloaderError("TikTokDownloader rejected the request token.") from exc
-            raise TikTokDownloaderError(f"TikTokDownloader returned HTTP {exc.code}.") from exc
+                raise TikTokDownloaderError("TikTokDownloader rejected the request token.", code='token') from exc
+            raise TikTokDownloaderError(f"TikTokDownloader returned HTTP {exc.code}.", code='http') from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise TikTokDownloaderError(f"Unable to reach TikTokDownloader at {self.base_url}.") from exc
+            raise TikTokDownloaderError(
+                f"Unable to reach TikTokDownloader at {self.base_url}.", code='unreachable'
+            ) from exc
         try:
             decoded = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise TikTokDownloaderError("TikTokDownloader returned an invalid response.") from exc
+            raise TikTokDownloaderError("TikTokDownloader returned an invalid response.", code='invalid') from exc
         if not isinstance(decoded, dict):
-            raise TikTokDownloaderError("TikTokDownloader returned an invalid response.")
+            raise TikTokDownloaderError("TikTokDownloader returned an invalid response.", code='invalid')
         # The sidecar answers 200 with {"code": 500, "data": null} for upstream
         # failures (rate limit, expired cookie). Reading only ``data`` turned that
         # into "this author has no works", so the user never retried.
         code = decoded.get("code")
         if code not in (None, 0, 200, "0", "200") and decoded.get("data") in (None, [], {}):
             message = str(decoded.get("message") or "").strip()
-            raise TikTokDownloaderError(message or f"TikTokDownloader returned code {code}.")
+            # The sidecar's own text is English, unpredictable and sometimes names
+            # its output directory; it goes to the log, never to the browser.
+            raise TikTokDownloaderError(message or f"TikTokDownloader returned code {code}.", code='failed')
         return decoded
 
     def check_connection(self) -> dict[str, Any]:
@@ -373,7 +422,7 @@ class TikTokDownloaderClient:
         response = self._request("POST", "/douyin/share", {"text": text})
         url = str(response.get("url") or "").strip()
         if not url:
-            raise TikTokDownloaderError("TikTokDownloader could not resolve the shared link.")
+            raise TikTokDownloaderError("TikTokDownloader could not resolve the shared link.", code='resolve')
         return url
 
     def _fetch_items(self, path: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -388,7 +437,7 @@ class TikTokDownloaderClient:
         if isinstance(data, dict) and _WORK_ITEM_KEYS.intersection(data):
             data = [data]
         if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
-            raise TikTokDownloaderError("TikTokDownloader returned an unexpected response shape.")
+            raise TikTokDownloaderError("TikTokDownloader returned an unexpected response shape.", code='invalid')
         return data
 
     def fetch_detail(self, detail_id: str, platform: str = "douyin", *, source: bool = False) -> list[dict[str, Any]]:
@@ -695,7 +744,7 @@ class TikTokDownloadService:
             expanded = self._client().resolve_share(url)
             resolved = parse_platform_link(expanded)
             if not resolved or resolved["kind"] == "share":
-                raise TikTokDownloaderError("TikTokDownloader could not resolve the shared link.")
+                raise TikTokDownloaderError("TikTokDownloader could not resolve the shared link.", code='resolve')
             target = resolved
         if not target:
             raise ValueError(t('download.error.tiktok_link'))

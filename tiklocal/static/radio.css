@@ -102,6 +102,39 @@ body:has([data-radio-root]) {
   opacity: 1;
 }
 
+/* A failed load has to offer a way back: the hint and a retry button share the row,
+   so the nowrap/ellipsis rules above are relaxed for this one state. */
+.track-meta.has-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  white-space: normal;
+}
+
+.radio-retry {
+  flex: none;
+  padding: 0.16rem 0.62rem;
+  border: 1px solid color-mix(in oklab, var(--radio-accent) 42%, var(--radio-line));
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--radio-accent) 12%, transparent);
+  color: var(--radio-accent);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 640;
+  cursor: pointer;
+  transition: background 220ms ease, border-color 220ms ease;
+}
+
+.radio-retry:hover {
+  background: color-mix(in oklab, var(--radio-accent) 22%, transparent);
+}
+
+.radio-retry:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .radio-page.is-changing-track .now-playing {
   opacity: 0;
   transform: translateY(0.34rem);

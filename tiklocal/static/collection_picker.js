@@ -2,6 +2,11 @@
   'use strict';
 
   const T = (key, params) => window.TikLocalI18n?.t(key, params) ?? key;
+  // Browser network errors are English ("Failed to fetch"); TikLocalUI.errorText
+  // swaps them for localized copy and keeps real API messages as they are.
+  const errorText = (error, fallbackKey) => (window.TikLocalUI?.errorText
+    ? window.TikLocalUI.errorText(error, fallbackKey)
+    : (error?.message || T(fallbackKey)));
 
   var folderIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
   var checkIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
@@ -202,6 +207,9 @@
           // The POST itself failed: the typed name stays in place so it can be retried.
           nameInput.value = name;
         }
+        // This used to swallow the error: the button went back to normal and nothing
+        // else happened, so a failed create looked like a click that never landed.
+        showMessage(errorText(error, 'saved.create.failed'));
       } finally {
         createBtn.disabled = false;
       }
@@ -222,7 +230,9 @@
         });
         render();
       } catch (error) {
+        // The box springs back on its own; without a message that reads as a bug.
         inputEl.checked = !checked;
+        showMessage(errorText(error, 'flow.collection.add_failed'));
       } finally {
         rowEl.classList.remove('is-pending');
         inputEl.disabled = false;

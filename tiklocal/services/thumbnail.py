@@ -415,9 +415,14 @@ class ThumbnailService:
             if key in _FAILURE_LOG_SEEN or len(_FAILURE_LOG_SEEN) >= _FAILURE_LOG_LIMIT:
                 return
             _FAILURE_LOG_SEEN.add(key)
+        # Only whether each tool resolved: the absolute path (a .venv or a
+        # Program Files location) says nothing the user can act on and ends up in
+        # every bug report pasted from the log.
         logger.warning(
             'thumbnail generation failed for %s (ffmpeg=%s, ffprobe=%s)',
-            key, resolve_tool('ffmpeg') or 'MISSING', resolve_tool('ffprobe') or 'MISSING',
+            key,
+            'found' if resolve_tool('ffmpeg') else 'missing',
+            'found' if resolve_tool('ffprobe') else 'missing',
         )
     def _clear_failure(self, uri: str) -> None:
         """A successful generation invalidates an earlier failure marker.
