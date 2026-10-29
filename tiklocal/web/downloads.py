@@ -243,6 +243,8 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             # this one let the exception escape as a 500 traceback.
             app.logger.warning('Could not read the download URL list', exc_info=exc)
             return {'success': False, 'error': t('common.error.storage_unavailable')}, 503
+        queued: list[dict] = []
+        skipped: list[dict] = []
         for url in stored_urls:
             # Same checks as a single-URL queue: the list endpoint must not be a
             # bypass for localhost/metadata targets or non-http schemes.
@@ -258,15 +260,20 @@ def register_download_routes(app, download_manager, library_service, tiktok_serv
             except (RuntimeError, ValueError) as exc:
                 failed.append({'url': url, 'error': str(exc)})
                 continue
-            queued.append({'url': url, 'job_id': job.get('id', '')})
+            entry = {'url': url, 'job_id': job.get('id', '')}
+            # The manager hands back the active job for a URL that is already queued.
+            # Counting it as "queued" made a partial retry look like it had started
+            # the whole list again, so the caller keeps re-submitting the successes.
+            (skipped if job.get('deduplicated') else queued).append(entry)
 
         if not queued and failed:
             # Reporting success with queued=0 made a fully rejected batch look
             # like it started; the caller has no way to notice.
             return {'success': False, 'error': t('download.urls.queue_rejected', count=len(failed)),
-                    'data': {'queued': 0, 'failed': failed, 'items': queued}}, 400
+                    'data': {'queued': 0, 'skipped': skipped, 'failed': failed, 'items': queued}}, 400
 
-        return {'success': True, 'data': {'queued': len(queued), 'failed': failed, 'items': queued}}
+        return {'success': True, 'data': {'queued': len(queued), 'skipped': skipped,
+                                          'failed': failed, 'items': queued}}
 
     @app.route('/api/download/jobs', methods=['GET', 'POST'])
     def api_download_jobs():

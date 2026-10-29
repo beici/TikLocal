@@ -297,19 +297,23 @@
 
     const retryButton = `<button class="download-action is-retry" type="button" data-action="retry" data-job-id="${escapeHtml(job.id)}"><i data-feather="rotate-ccw"></i><span>${escapeHtml(job.failure_stage === 'index' ? T('download.retry_register') : T('download.retry_download'))}</span></button>`;
     let actions = '';
+    // A job that already produced a follow-up retry keeps its "failed" status, so the
+    // server records the link in retried_by: rendering the button again let the user
+    // queue the same download a second time.
+    const canRetry = (job.status === 'failed' || job.status === 'canceled') && !job.retried_by;
     if (isActive) {
       actions = `${sourceAction}<button class="download-action" type="button" data-action="cancel" data-job-id="${escapeHtml(job.id)}">${escapeHtml(T('common.cancel'))}</button>`;
     } else if (firstFile) {
       // A failed playlist may still have saved files (partial=True): those files
       // are already in the library, so the card must keep a way to open them
       // instead of only offering a retry that would download them again.
-      const retry = (job.status === 'failed' || job.status === 'canceled') ? retryButton : '';
+      const retry = canRetry ? retryButton : '';
       actions = `
         <a class="download-action" href="${buildMediaHref(firstFile)}"><i data-feather="eye"></i><span>${escapeHtml(T('download.view_media'))}</span></a>
         ${retry}${sourceAction}${menu}`;
     } else {
       actions = `
-        ${(job.status === 'failed' || job.status === 'canceled') ? retryButton : ''}
+        ${canRetry ? retryButton : ''}
         ${sourceAction}${menu}`;
     }
 
@@ -979,6 +983,22 @@
             }));
           } catch (error) {
             renderUrlList({ lines: [] });
+          }
+        } else if (failed) {
+          // A partial run left the whole list in place, so retrying the failures
+          // re-queued the URLs that had already become jobs. Keep only the failures.
+          const failedUrls = (Array.isArray(data.failed) ? data.failed : [])
+            .map((item) => String((item && item.url) || ''))
+            .filter(Boolean);
+          if (failedUrls.length) {
+            try {
+              renderUrlList(await api('/api/download/urls', {
+                method: 'POST',
+                body: JSON.stringify({ action: 'replace', lines: failedUrls }),
+              }));
+            } catch (error) {
+              // The list stays as it was; the next queue call still dedupes.
+            }
           }
         }
         lastJobsSignature = '';

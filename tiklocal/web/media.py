@@ -272,6 +272,10 @@ def register_media_routes(app, library_service, media_index, thumbnail_service, 
 
     def purge(entry_id):
         uri = trash_service.purge(entry_id)
+        if not uri:
+            # Already gone: a retried purge must not look up derived data for an
+            # empty URI (and must not delete a thumbnail that belongs to nobody).
+            return
         # A purge can run long after the delete: a new file may already sit on this
         # URI (the same download name, restored from a backup). Its favourites,
         # collection membership and captions are not the purged file's leftovers.

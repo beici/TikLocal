@@ -261,24 +261,34 @@ def register_settings_routes(
     @app.post('/api/library/sources')
     def api_add_media_source():
         payload = json_body()
-        try:
-            sources, source = add_source(
-                _media_sources(), path=payload.get('path'), name=payload.get('name'),
+        # The read, the duplicate check and the save are one step: two tabs adding a
+        # folder each computed their list from the same snapshot, and the second save
+        # then recorded the first folder as *removed* (removed_ids survive restarts),
+        # so a folder the user never deleted disappeared for good.
+        with _SOURCES_LOCK:
+            try:
+                sources, source = add_source(
+                    _media_sources(), path=payload.get('path'), name=payload.get('name'),
+                )
+            except MediaSourceError as error:
+                return {'success': False, 'error': _reason(error)}, 400
+            return _apply_change_locked(
+                sources, t('settings.library.source_added', name=source.name),
             )
-        except MediaSourceError as error:
-            return {'success': False, 'error': _reason(error)}, 400
-        return _apply_change(sources, t('settings.library.source_added', name=source.name))
 
     @app.patch('/api/library/sources/<source_id>')
     def api_update_media_source(source_id):
         payload = json_body()
-        try:
-            sources, source = update_source(
-                _media_sources(), source_id, path=payload.get('path'), name=payload.get('name'),
+        with _SOURCES_LOCK:
+            try:
+                sources, source = update_source(
+                    _media_sources(), source_id, path=payload.get('path'), name=payload.get('name'),
+                )
+            except MediaSourceError as error:
+                return {'success': False, 'error': _reason(error)}, 400
+            return _apply_change_locked(
+                sources, t('settings.library.source_updated', name=source.name),
             )
-        except MediaSourceError as error:
-            return {'success': False, 'error': _reason(error)}, 400
-        return _apply_change(sources, t('settings.library.source_updated', name=source.name))
 
     @app.delete('/api/library/sources/<source_id>')
     def api_remove_media_source(source_id):
@@ -286,22 +296,27 @@ def register_settings_routes(
         # sources that are still configured: removing a source with entries in its
         # .tiklocal-trash made those files invisible, unrestorable and never expired,
         # while the settings page reported an empty trash.
-        source = next((item for item in _media_sources() if item.id == source_id), None)
-        if source is not None:
-            trash_dir = Path(source.path) / TRASH_DIR
+        # Same lock as add/update: the trash check and the removal must see one list,
+        # or a folder added in another tab while this one removes something is saved
+        # back as *removed*.
+        with _SOURCES_LOCK:
+            sources = _media_sources()
+            source = next((item for item in sources if item.id == source_id), None)
+            if source is not None:
+                trash_dir = Path(source.path) / TRASH_DIR
+                try:
+                    pending = trash_dir.is_dir() and any(trash_dir.iterdir())
+                except OSError:
+                    pending = False
+                if pending:
+                    return {'success': False, 'error': t('settings.library.source_trash_not_empty')}, 409
             try:
-                pending = trash_dir.is_dir() and any(trash_dir.iterdir())
-            except OSError:
-                pending = False
-            if pending:
-                return {'success': False, 'error': t('settings.library.source_trash_not_empty')}, 409
-        try:
-            sources = remove_source(
-                _media_sources(), source_id, protected_ids=(_download_target_id(),),
-            )
-        except MediaSourceError as error:
-            return {'success': False, 'error': _reason(error)}, 400
-        return _apply_change(sources, t('settings.library.source_removed'))
+                remaining = remove_source(
+                    sources, source_id, protected_ids=(_download_target_id(),),
+                )
+            except MediaSourceError as error:
+                return {'success': False, 'error': _reason(error)}, 400
+            return _apply_change_locked(remaining, t('settings.library.source_removed'))
 
     def library_stats() -> dict:
         # Settings is the only page that can clear the thumbnail cache or repair the

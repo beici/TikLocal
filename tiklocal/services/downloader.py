@@ -575,6 +575,36 @@ class DownloadManager:
             if not self._config.get("enabled", True):
                 raise RuntimeError(t('download.error.disabled'))
 
+            # A resubmitted POST (double click, proxy retry, a client that timed out
+            # after the server had already queued the job) used to create a second job
+            # for the same media. The direct engines then wrote "name (1).mp4" beside
+            # the original, and the newer job overwrote that file's source mapping.
+            # Queued/running work for the same URL, engine and work item is the same
+            # intent, so hand the existing job back instead of duplicating it.
+            wanted_url = str(url or '').strip()
+            wanted_work = str((payload or {}).get('work_id') or '').strip()
+            for existing_id in self._job_order:
+                existing = self._jobs.get(existing_id)
+                if not isinstance(existing, dict):
+                    continue
+                if str(existing.get('status') or '') not in {'queued', 'running'}:
+                    continue
+                if str(existing.get('engine') or '') != engine:
+                    continue
+                if str(existing.get('url') or '').strip() != wanted_url:
+                    continue
+                existing_payload = existing.get('download_payload')
+                existing_work = ''
+                if isinstance(existing_payload, dict):
+                    existing_work = str(existing_payload.get('work_id') or '').strip()
+                if existing_work != wanted_work:
+                    continue
+                # Tell the caller this was not a new job: a batch queue uses the flag
+                # to report "skipped" instead of pretending it queued the URL again.
+                duplicate = dict(existing)
+                duplicate['deduplicated'] = True
+                return duplicate
+
             job_id = uuid.uuid4().hex[:12]
             now = utc_now_iso()
             job = {
@@ -765,6 +795,12 @@ class DownloadManager:
                 return None, t('download.error.job_not_found')
             if job.get("status") not in {"failed", "canceled"}:
                 return None, t('download.error.retry_state')
+            if job.get('retried_by'):
+                # A retry already produced a follow-up job; the original card must not
+                # spawn another one. Without this every click on the retry button (it
+                # stayed visible because the old job kept its "failed" status) created
+                # one more job and, for the direct engines, one more "(1)" copy.
+                return None, t('download.error.retry_state')
             index_only = job.get('failure_stage') == 'index'
             if index_only:
                 for uri in job['output_files_rel']:
@@ -794,6 +830,16 @@ class DownloadManager:
             output_token = str(job.get("output_token") or "")
             download_payload = job.get("download_payload")
             download_payload = dict(download_payload) if isinstance(download_payload, dict) else {}
+            # Claim the retry while the lock is held: two concurrent POSTs both used to
+            # pass the state checks above and each queued a job. An index-only retry
+            # reuses this same job, so it must not take the claim.
+            if not index_only:
+                job['retried_by'] = 'pending'
+                try:
+                    self._persist_locked()
+                except OSError:
+                    job.pop('retried_by', None)
+                    return None, t('common.error.storage_unavailable')
 
         if index_only:
             return self.get_job(job_id), None
@@ -813,9 +859,29 @@ class DownloadManager:
                 output_token=output_token,
                 payload=download_payload,
             )
-            return new_job, None
         except RuntimeError as exc:
+            with self._lock:
+                stale = self._jobs.get(job_id)
+                if stale is not None:
+                    stale.pop('retried_by', None)
+                    try:
+                        self._persist_locked()
+                    except OSError:
+                        pass
             return None, str(exc)
+        new_id = str((new_job or {}).get('id') or '')
+        with self._lock:
+            stale = self._jobs.get(job_id)
+            if stale is not None:
+                stale['retried_by'] = new_id
+                try:
+                    self._persist_locked()
+                except OSError:
+                    # The follow-up job exists and is the truth; a stale "pending"
+                    # claim only blocks further retries of a card that no longer needs
+                    # one, so a failed write here must not fail the request.
+                    pass
+        return new_job, None
 
     def list_jobs(self, *, limit: int = 50) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit or 50), DOWNLOAD_HISTORY_LIMIT))
@@ -1264,12 +1330,17 @@ class DownloadManager:
             cmd = gallery_dl_command(gallery_dl_bin, temp_dir, log_file, url,
                                      archive_path=archive_path, cookie_path=cookie_for_job)
             return_code, error_message = self._run_tool(job_id, cmd, lambda line: None)
-            if return_code != 0:
-                return return_code, error_message or f"gallery-dl exited with code {return_code}.", []
-
             outputs = gallery_media_outputs(temp_dir, log_file, cookie_for_job)
             moved_outputs = [self._move_file_to_media_root(path) for path in outputs]
             moved_outputs = [path for path in moved_outputs if path]
+            if return_code != 0:
+                # gallery-dl records finished items in its archive file, and the temp
+                # folder is deleted on the way out. Returning before the move threw
+                # away files it had already downloaded, and a retry then matched the
+                # archive and fetched nothing: the work was unrecoverable. Keep what
+                # landed and report the failure with those outputs attached.
+                message = error_message or f"gallery-dl exited with code {return_code}."
+                return return_code, message, moved_outputs
             if not moved_outputs:
                 return 1, "gallery-dl did not download any usable files.", []
             return 0, "", moved_outputs

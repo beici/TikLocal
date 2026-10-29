@@ -234,6 +234,10 @@
   }
 
   async function createCollection() {
+    // The disabled button only stops mouse clicks; Enter in the name field calls this
+    // directly, so two quick Enters used to POST twice and create two same-named
+    // collections (the field is only cleared after the first response).
+    if (submitBtn.disabled) return;
     const name = String(nameInput.value || '').trim();
     const description = String(descInput.value || '').trim();
     if (!name) return;
@@ -256,6 +260,9 @@
   }
 
   async function submitRenameCollection() {
+    // Same Enter-vs-disabled gap as createCollection: a repeated PATCH is harmless
+    // server-side but still two round trips.
+    if (renameSubmitBtn.disabled) return;
     const collectionId = String(renamingCollectionId || '').trim();
     const name = String(renameInput.value || '').trim();
     if (!collectionId || !name) return;

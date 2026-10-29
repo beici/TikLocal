@@ -99,19 +99,37 @@ class TrashService:
 
     def purge(self, entry_id: str) -> str:
         """Permanently delete one entry and return the URI it came from."""
-        folder, entry = self._entry(entry_id)
+        source_id, _, name = str(entry_id).partition('.')
+        source = self.library.sources_by_id.get(source_id)
+        if not source or not name or '/' in name or '\\' in name or name.startswith('.'):
+            raise KeyError(entry_id)
+        folder = source.path / TRASH_DIR / name
+        entry = self._read(folder)
+        if not entry:
+            if not folder.exists():
+                # A retried purge (double click, a second tab, a response that never
+                # arrived) finds the folder already gone. That is success, not "not in
+                # the trash": answering 404 made the UI report a failure and keep the
+                # row around.
+                return ''
+            raise KeyError(entry_id)
         self._delete_folder(folder)
-        return entry['uri']
+        return str(entry['uri'])
 
     @staticmethod
     def _delete_folder(folder: Path) -> None:
-        """Delete a trash folder without losing the entry on a partial failure.
+        """Delete a trash folder without leaving an entry nobody can see.
 
         ``shutil.rmtree`` deletes ``entry.json`` before it reaches the payload; on
         Windows a read-only media file (copied from a disc or a read-only share)
         then raised PermissionError and left a folder that was no longer listed,
         could not be restored and never expired -- a silent, permanent leak.
         Payload files go first, the manifest last, and read-only bits are cleared.
+
+        A payload file that still refuses to go (a player holding it open) is left
+        behind on purpose, but the manifest is always removed: keeping it would make
+        the folder invisible to ``entries()``, so neither the retention timer nor a
+        retried purge could ever reach it again.
         """
         manifest = folder / 'entry.json'
         for path in folder.rglob('*'):
@@ -121,9 +139,14 @@ class TrashService:
                 path.chmod(0o666)
             except OSError:
                 pass
-            path.unlink()
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
         manifest.unlink(missing_ok=True)
-        shutil.rmtree(folder)
+        shutil.rmtree(folder, ignore_errors=True)
 
     def entries(self) -> list[dict]:
         """All trashed files across sources, newest first."""

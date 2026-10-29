@@ -954,6 +954,12 @@ class TikTokDownloadService:
                 continue
             if str(job.get("status") or "") in TERMINAL_JOB_STATUS:
                 continue
+            payload = job.get("download_payload")
+            if isinstance(payload, dict):
+                queued_work = str(payload.get("work_id") or "").strip()
+                if queued_work:
+                    ids.add(queued_work)
+                    continue
             url = str(job.get("url") or "")
             match = _AWEME_ID_PATTERN.search(url)
             if match:
@@ -1084,6 +1090,7 @@ class TikTokDownloadService:
         jobs: list[dict[str, Any]] = []
         failures: list[str] = []
         for work in works:
+            work_id = str(work.get("id") or "").strip()
             payload = {
                 "downloads": work["downloads"],
                 "naming": {
@@ -1093,9 +1100,17 @@ class TikTokDownloadService:
                     "desc": work["desc"],
                 },
             }
+            job_url = url
+            if work_id:
+                # Queue every work under its own canonical link and record the id.
+                # Storing the account URL on all N jobs made each of them invisible to
+                # the pending-id scan (it only parses ids out of job["url"]), so the
+                # author page's "sync latest" queued the same works a second time.
+                payload["work_id"] = work_id
+                job_url = f"https://www.douyin.com/video/{work_id}"
             try:
                 job = self._download_manager.enqueue(
-                    url,
+                    job_url,
                     save_mode="root",
                     engine="tiktok-downloader",
                     cookie_mode="none",

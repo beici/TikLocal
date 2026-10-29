@@ -65,7 +65,10 @@ def test_purge_and_expiry(client):
     second = trash_delete(client, 'album/a b.jpg')
 
     assert client.delete(f'/api/trash/{first}').get_json() == {'ok': True}
-    assert client.delete(f'/api/trash/{first}').status_code == 404
+    # Purging twice is a retry (a double click, or a response that never arrived),
+    # not an error: the folder is already gone, so the answer matches the first call.
+    assert client.delete(f'/api/trash/{first}').status_code == 200
+    assert first not in [item['id'] for item in client.get('/api/trash').get_json()['items']]
     assert client.post('/api/trash/..%2F..%2Fetc/restore').status_code == 404
 
     folder = media_root / TRASH_DIR / second.partition('.')[2]

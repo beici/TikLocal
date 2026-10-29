@@ -60,6 +60,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'flow.collection.empty': '还没有合集，请先创建一个。',
         'flow.collection.untitled': '未命名合集',
         'flow.collection.loading': '加载中…',
+        'flow.collection.add_failed': '合集已创建，但未能把当前作品加入。',
         # ---- error messages ----
         'flow.error.request': '请求失败',
         'flow.error.load': '加载失败，请重试。',
@@ -196,6 +197,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         'flow.collection.empty': 'No collections yet. Create one first.',
         'flow.collection.untitled': 'Untitled collection',
         'flow.collection.loading': 'Loading...',
+        'flow.collection.add_failed': 'Collection created, but this item could not be added.',
         # ---- error messages ----
         'flow.error.request': 'Request failed',
         'flow.error.load': 'Failed to load. Please try again.',

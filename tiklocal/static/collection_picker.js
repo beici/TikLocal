@@ -169,22 +169,39 @@
     }
 
     async function create() {
+      // Enter in the name field calls this directly, so the disabled button alone did
+      // not stop a double submit: two Enters created two same-named collections.
+      if (createBtn.disabled) return;
       var name = String(nameInput.value || '').trim();
       if (!name) return;
       createBtn.disabled = true;
+      var createdId = '';
       try {
         var created = await request('/api/collections', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: name }),
         });
-        var createdId = String((created.item && created.item.id) || '').trim();
-        var uri = currentUri();
-        if (createdId && uri) await sendUris(createdId, 'POST', uri);
+        createdId = String((created.item && created.item.id) || '').trim();
+        // Clear the field as soon as the collection exists: leaving the name in place
+        // made the obvious "try again" create a second collection with the same name.
         nameInput.value = '';
+        var uri = currentUri();
+        if (createdId && uri) {
+          try {
+            await sendUris(createdId, 'POST', uri);
+          } catch (error) {
+            // The collection exists but this item is not in it; say so instead of
+            // swallowing it, or the next attempt duplicates the collection.
+            showMessage(T('flow.collection.add_failed'));
+          }
+        }
         await open();
       } catch (error) {
-        // The typed name stays in place so it can be retried.
+        if (!createdId) {
+          // The POST itself failed: the typed name stays in place so it can be retried.
+          nameInput.value = name;
+        }
       } finally {
         createBtn.disabled = false;
       }
@@ -219,6 +236,9 @@
     });
     button.addEventListener('keydown', function (event) {
       if (event.key !== 'Enter' && event.key !== ' ') return;
+      // Holding the key repeated open(): each open fires two GETs and rebuilds the
+      // rows, which also wiped the pending state of a row mid-toggle.
+      if (event.repeat) return;
       event.preventDefault();
       open();
     });

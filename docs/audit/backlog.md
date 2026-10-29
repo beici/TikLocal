@@ -518,3 +518,37 @@ purge 清理范围、回收站目录命名各被两到三个域独立命中）�
 | [P3] 复数文案只有 en 的 `_one` 变体，其他语言需 ICU | `tiklocal/i18n.py`、`tiklocal/i18n_pages_media.py` | 当前只有 zh/en 两套 |
 | [P3] 首页 kicker 与磁贴的"多少年前"逻辑重复 | `tiklocal/static/home_page_controller.js` | 需抽公共函数 |
 | [P3] `format_timestamp_slug` 无时区参数，依赖进程 TZ | `tiklocal/services/tiktok_downloader.py` | 与本轮 `TIKLOCAL_TIMEZONE` 同批 |
+
+## 第 33 轮新增（28 条）
+
+| 问题 | 位置 | 为什么暂不修 |
+|------|------|--------------|
+| [P2] 删除只清索引不清收藏/合集成员/元数据，`purge` 的 `reused` 分支永久跳过清理 → 同 URI 新文件继承旧归属 | `tiklocal/web/media.py:292-296`、`:356-363` | 需要「删除时把派生状态快照进 `entry.json`、恢复时写回」的数据格式变更，单独立项 |
+| [P2] 取消后重试：`partial` 的产物清单不复用，从头再下 → `(1)` 副本 | `tiklocal/services/downloader.py:759-818`、`tiklocal/static/download_page_controller.js:302-309` | 需要让 `retry_job` 把 `output_files_rel` 当作已完成项跳过，牵涉 direct 引擎的文件选择 |
+| [P2] 崩溃窗口：搬完第 1 个文件、未写 `output_files_rel` 时进程被杀 → 孤儿文件 + 重试副本 | `tiklocal/services/downloader.py:1332` → `:1067-1079` | 需要每搬一个文件就增量持久化，写入次数 ×N |
+| [P2] `output_token` 只存不用，API 没有幂等键 | `tiklocal/services/downloader.py:550`、`:602`、`:794` | 入口去重已覆盖重复提交的主路径，幂等键属于对外契约变更 |
+| [P2] 同一 URL 的两个并发 job 会写同一最终路径与 `.info.json` | `tiklocal/services/downloader.py:1219-1231` | 入口去重后只剩并发窗口内的极小概率 |
+| [P2] `restore` 目标已存在时 409，不是幂等成功 | `tiklocal/services/trash.py:restore` | 不删任何一边、行为诚实；幂等需要「同名同大小视为已恢复」的判定 |
+| [P2] 回收站恢复后 mtime 变化，缩略图与索引指纹都失效重算 | `tiklocal/services/trash.py` | 恢复是低频操作，重算成本可接受 |
+| [P2] `purge_expired` 与手动 purge 的锁粒度不足，可能重复删同一目录 | `tiklocal/services/trash.py` | 删除是幂等的（目录消失即成功），实际影响只有日志噪音 |
+| [P2] `register_uris` 与 `replace_snapshot` 重叠时后写覆盖先写 | `tiklocal/services/library_index.py` | 需要扫描代际号，改动面大 |
+| [P2] `media_affinity` 的 upsert 在并发下可能计数丢失 | `tiklocal/services/database.py` | 计数只用于推荐排序，误差可接受 |
+| [P2] 删除与重扫竞态：删除后扫描把文件按旧快照写回索引 | `tiklocal/services/library_index.py` | 下次扫描自愈 |
+| [P2] 设置页保存/上传 cookie/作者同步有 `disabled` 但无请求代际号 | `tiklocal/static/settings_page_controller.js`、`author_page_controller.js` | 单页面内已防重，跨标签页窗口极窄 |
+| [P2] 乐观更新（收藏/点赞）失败回滚窗口内再点，本地与服务端相反 | `tiklocal/static/flow_page_controller.js`、`detail_page_controller.js` | 回滚已实现，极端连点才会撕裂 |
+| [P2] `fetch` 无重试语义，网络抖动直接失败 | `tiklocal/static/base.js` | 非幂等 POST 加自动重试风险更大 |
+| [P3] 合集创建的服务端同名唯一性策略未定 | `tiklocal/services/collections.py:create` | 本轮只做前端防重；同名是否允许是产品决策 |
+| [P3] 元数据 set/delete 两次写之间的并发窗口 | `tiklocal/services/metadata.py` | 已有 `RLock`，跨进程才触发 |
+| [P3] 迁移重复执行只靠 `CREATE INDEX IF NOT EXISTS` 兜底 | `tiklocal/services/database.py` | 现有迁移都幂等 |
+| [P3] 向量 upsert 的 UNIQUE 约束在 `(model, uri)` 上，换模型会留下旧行 | `tiklocal/experiments/similarity/embedding.py` | 换模型时手动重建即可 |
+| [P3] 首次启动建 admin 重复执行会建两个用户 | `tiklocal/services/auth.py` | 单进程启动，实例锁已覆盖 |
+| [P3] `write_json_atomic` 临时名靠 `uuid4` 防撞，无重试 | `tiklocal/services/json_storage.py` | 碰撞概率可忽略 |
+| [P3] 实例锁不覆盖 CLI 子命令，`dedupe --delete` 可在服务运行时删文件 | `tiklocal/run.py` | 用户显式操作，且只影响索引新鲜度 |
+| [P3] 缩略图缓存目录用本地时间命名，换时区后不命中 | `tiklocal/services/thumbnail.py` | 只发生一次 |
+| [P3] 回收站 `entries()` 按字符串比较 `deleted_at` | `tiklocal/services/trash.py` | 本项目写入格式固定 |
+| [P3] 后台探测失败按固定间隔重试，无退避上限 | `tiklocal/services/library_index.py` | 已有上限与日志 |
+| [P3] `_persist_locked` 整表重写 jobs.json | `tiklocal/services/downloader.py:387` | 写入量小且原子替换，增量写风险更大 |
+| [P3] 批量入队的 `skipped` 只回传 job_id，不含 URL | `tiklocal/web/downloads.py:246-269` | 前端按 url 匹配已够用 |
+| [P3] 合集选择器 `create()` 在 `!loaded` 时 `await load()`，但失败后仍会写回 | `tiklocal/static/collection_picker.js` | 失败路径已有 toast |
+| [P3] 下载页重试按钮的可用性判断分散在三处 | `tiklocal/static/download_page_controller.js` | 本轮新增 `canRetry` 后仍需收敛 |
+
