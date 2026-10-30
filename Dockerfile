@@ -34,7 +34,8 @@ ENV HOME=/data \
 USER tiklocal
 EXPOSE 8000
 
-# The first start indexes the whole library before it serves pages.
+# The port opens immediately; a first start indexes the library in the background, so
+# a large one answers 200 here long before search has anything to show.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
     CMD ["python", "-c", "import os, urllib.request; from tiklocal.run import load_config; port = int(os.environ.get('TIKLOCAL_PORT', 0)) or load_config().get('port') or 8000; urllib.request.urlopen('http://127.0.0.1:%s/login' % port, timeout=4)"]
 

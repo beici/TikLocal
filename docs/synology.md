@@ -119,11 +119,13 @@ command above can, and it needs no old password. To skip the generated password
 entirely, set `TIKLOCAL_AUTH_PASSWORD` in the compose file before the very first
 start (it is ignored once `/data/auth.json` exists).
 
-The first start indexes the whole library before it serves pages. Until that
-finishes, `docker ps` reports the container as **unhealthy** — that is the image
-health check probing `/login` and timing out, not a crash. The `restart:
-unless-stopped` policy does not restart a container for being unhealthy, so give
-it time and watch `docker logs`.
+The port opens within a second or two of the container starting; the first scan
+then indexes the library in the background. On a folder holding a hundred thousand
+files that walk takes minutes, and until it lands the pages say "building the media
+index" and the grids are empty. Photos whose names start with the moment
+(`2026-06-04 22.58.14-…`) are read from the name, so the scan does not open them;
+anything else is opened once for the EXIF timestamp. That first pass is the slow
+one — later starts reuse it and only re-check size and modification time.
 
 ## Permissions
 
