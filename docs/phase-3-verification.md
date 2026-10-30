@@ -110,9 +110,13 @@ Get-ChildItem tiklocal\static\*.js | ForEach-Object { node --check $_.FullName }
    - 网格封面全部走 `/thumb` 缩略图（视频由 ffmpeg 抓帧，图集取首图），滚动到底不应出现黑块；
      视频格右下角有播放角标。
    - 未同步资料时 `抖音号:` 显示目录里的数字 UID（本地回退）；同步后显示真实抖音号。
+    - 共享根目录（一个媒体源里按博主各放一个导出文件夹，例如 `~/Downloads/douyin`）走另一条路径：
+      `/author/<source_id>` 不再把目录名当昵称，而是列出这个源里的每位作者（头像、昵称、`N 个作品`），
+      点进去是 `/author/<source_id>/<folder>` —— 只列该博主自己的作品，头像、抖音号、绑定链接也各留一份；
+      根目录里不属于任何导出文件夹的散落文件仍然显示在同一页下方。
 6. 关闭开关后刷新 `/flow`，旧布局恢复，抖音层消失。
 
-数据来源校验：`GET /api/feed/mix` 的条目应带 `author_name`、`author_url`、`caption_text`；作者名来自媒体源目录名，文案来自文件名。话题流用 `GET /api/feed/mix?tag=<话题>`，返回体多一个 `tag` 字段。
+数据来源校验：`GET /api/feed/mix` 的条目应带 `author_name`、`author_url`、`author_page_url`、`caption_text`；作者名来自媒体源目录名（共享根目录里来自导出文件夹名），文案来自文件名。`author_url` 是话题/博主过滤用的 `/flow?blog=<源>`，`author_page_url` 才是头像与昵称该跳的作者页。话题流用 `GET /api/feed/mix?tag=<话题>`，返回体多一个 `tag` 字段。
 
 ### 3.1 作者资料同步（需要 sidecar）
 
@@ -134,8 +138,7 @@ Get-ChildItem tiklocal\static\*.js | ForEach-Object { node --check $_.FullName }
    用标题指纹和本地作品比对，只把**本地没有的**作品加入下载队列；全部已在本地时提示「已是最新」。
    实测 42 个作品读取约 13.9 秒、整轮 16.2 秒。
 5. 安全校验：返回资料里的 `uid` 必须与目录名里的数字 UID 完全一致，不一致直接报错并且**不写入任何文件**。
-6. 头像落在 `instance/authors/<source_id>.jpg`，资料（含 `profile_url`）落在
-   `instance/authors/<source_id>.json`；删掉这两个文件即回到默认头像 + 目录名派生。
+6. 头像落在 `instance/authors/<key>.jpg`，资料（含 `profile_url`）落在 `instance/authors/<key>.json`，删掉这两个文件即回到默认头像 + 目录名派生。`<key>` 是该作者的主页缓存键：媒体源本身就装一位博主时是 `<source_id>`，共享根目录里是 `<source_id>/<folder>`，所以同一目录下的两位博主互不覆盖。
 7. 服务不可达 / 主页读取超时时给出对应提示（超时会建议改用作品链接），不影响页面其它部分。
 
 ## 4. 功能二：TikTokDownloader 博主批量下载
