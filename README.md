@@ -33,7 +33,7 @@ tiklocal ~/Videos
 
 Open `http://<your-computer>:8000` on any phone, tablet, or browser on the same
 network. The first start generates an access password and prints it in the
-terminal; sign in with it, then change it in **Settings → Access password**.
+terminal; sign in with it, then change it in **Settings → Change Access Password**.
 
 ## What it does
 
@@ -133,7 +133,8 @@ tiklocal auth set-password    # new password; signs out existing sessions
 TIKLOCAL_AUTH_PASSWORD='a-long-private-password' tiklocal auth set-password
 ```
 
-You can also rotate it in the browser: **Settings → Access password → Change**.
+You can also rotate it in the browser: **Settings → Change Access Password →
+Change**.
 That dialog asks for the current password, keeps the browser you are using signed
 in, and signs out every other session and paired device.
 
@@ -351,7 +352,9 @@ old local-CA setup are not reused: delete the old files or run
    gallery-dl、Deno）、`compose.yaml`、尊重配置端口的健康检查，以及无 AVX
    NAS CPU 可用的 llama.cpp EmbeddingGemma-2 侧车方案
    （[`deployment/embedding/`](deployment/embedding/README.md)）。本仓库不
-   发布镜像，部署时本地构建：见 [`docs/docker.md`](docs/docker.md)。
+   发布镜像，部署时本地构建：见 [`docs/docker.md`](docs/docker.md)；群晖上
+   用现成的 [`compose.synology.yaml`](compose.synology.yaml)，步骤见
+   [`docs/synology.md`](docs/synology.md)。
 4. **兼容性小修复**——废弃 `datetime.utcnow()` 清理（Python 3.12+）、
    pytest 移入 dev 依赖组、`TIKLOCAL_INSTANCE` 实例目录（其 `config.yaml`
    优先读取，Docker 数据卷即用它隔离）。

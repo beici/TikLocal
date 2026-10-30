@@ -7,6 +7,9 @@ Deno, the JavaScript runtime yt-dlp uses for YouTube.
 On macOS and Windows, `pip install -e .` is faster: Docker Desktop reads
 mounted folders slowly, and TikLocal scans the whole library at startup.
 
+On a Synology NAS the account ids and folder paths are not the ones below; see
+[synology.md](synology.md) instead.
+
 ## Start
 
 ```bash
@@ -33,8 +36,9 @@ Open `http://<server-address>:8000`.
 | `/data` | Database, password, thumbnails, cookies, `config.yaml` | Read-write; back it up |
 
 Run the container as the user that owns your media (`--user` or `user:` in
-Compose). On Synology this is often `1026:100`. If Docker creates a missing
-host folder, it belongs to root and TikLocal cannot write to it.
+Compose). On Synology this is often `1026:100`; [synology.md](synology.md) walks
+through how to find the right pair. If Docker creates a missing host folder, it
+belongs to root and TikLocal cannot write to it.
 
 ## Password
 
@@ -53,8 +57,8 @@ Copy it, sign in, then change it. To skip the generated step entirely, set
 docker exec -it tiklocal tiklocal auth set-password
 ```
 
-Or use **Settings → Access password → Change** in the web UI; that signs out the
-other sessions but keeps the browser you are using.
+Or use **Settings → Change Access Password → Change** in the web UI; that signs
+out the other sessions but keeps the browser you are using.
 
 ## Configuration
 

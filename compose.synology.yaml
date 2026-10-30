@@ -1,0 +1,46 @@
+# TikLocal on Synology DSM 7 (Container Manager).
+#
+# This is compose.yaml with the Synology parts filled in: the account id, the
+# media path and the time zone. Edit the three lines marked EDIT, then from this
+# checkout:
+#
+#   sudo docker compose -f compose.synology.yaml up -d --build
+#
+# The full walkthrough, including what the NAS-specific failure messages mean,
+# is docs/synology.md.
+services:
+  tiklocal:
+    build: .
+    image: tiklocal:latest
+    container_name: tiklocal
+    restart: unless-stopped
+    init: true
+    # EDIT 1: the account that owns your media, as `<uid>:<gid>`. DSM numbers
+    # accounts itself - admin is 1024, guest 1025, the first user you create is
+    # usually 1026, and the built-in `users` group is 100. Confirm with
+    # `id -u` and `id -g` over SSH; do not assume 1000, which is the uid this
+    # image uses for its own built-in user and which does not exist on DSM.
+    user: "1026:100"
+    ports:
+      # EDIT 2: host port only, if 8000 is taken. Leave the container half at
+      # 8000 - the image health check and CMD are written against it.
+      - "8000:8000"
+    environment:
+      # EDIT 3: your time zone. Timeline, On This Day and every file date shown
+      # in the UI are derived from it; the default UTC puts a whole evening's
+      # photos under the wrong day.
+      TZ: Asia/Shanghai
+      # TIKLOCAL_AUTH_PASSWORD: "change-me"  # first start only; otherwise a random
+      #                                      # password is printed once in the log
+    volumes:
+      # Your library. Must be writable: URL downloads land in the `default`
+      # source and deleted files go to `.tiklocal-trash` inside their folder.
+      # A host path that does not exist is created by Docker as root, and the
+      # container then cannot write to it - so point this at a real folder.
+      - /volume1/video:/media
+      # Optional second library; add the matching media_sources entry in
+      # tiklocal-data/config.yaml (see docs/synology.md).
+      # - /volume1/photo:/photos
+      # Database, password, thumbnails and an optional config.yaml. Create this
+      # folder yourself, as your account, before the first start.
+      - ./tiklocal-data:/data
