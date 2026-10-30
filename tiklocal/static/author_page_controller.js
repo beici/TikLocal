@@ -44,16 +44,19 @@
   const syncButton = page.querySelector('[data-author-sync]');
   const picker = page.querySelector('[data-author-picker]');
   const sheet = page.querySelector('[data-author-sheet]');
-  if (!syncButton || !picker || !sheet) return;
+  // Without a TikTokDownloader address the sheet explains what is missing and
+  // links to Settings; there is nothing to pick, so the picker is not rendered.
+  // The menu still has to open, otherwise the button is visible and dead.
+  if (!syncButton || !sheet) return;
 
   const alertBox = page.querySelector('[data-author-alert]');
-  const form = picker.querySelector('[data-author-search-form]');
-  const input = picker.querySelector('[data-author-keyword]');
-  const searchButton = picker.querySelector('.author-picker-search');
-  const urlInput = picker.querySelector('[data-author-profile-url]');
-  const urlButton = picker.querySelector('[data-author-url-sync]');
-  const list = picker.querySelector('[data-author-candidates]');
-  const hint = picker.querySelector('[data-author-hint]');
+  const form = picker?.querySelector('[data-author-search-form]');
+  const input = picker?.querySelector('[data-author-keyword]');
+  const searchButton = picker?.querySelector('.author-picker-search');
+  const urlInput = picker?.querySelector('[data-author-profile-url]');
+  const urlButton = picker?.querySelector('[data-author-url-sync]');
+  const list = picker?.querySelector('[data-author-candidates]');
+  const hint = picker?.querySelector('[data-author-hint]');
   const sheetProfile = sheet.querySelector('[data-author-sheet-profile]');
   const sheetVideos = sheet.querySelector('[data-author-sheet-videos]');
   const sheetHint = sheet.querySelector('[data-author-sheet-hint]');
@@ -323,6 +326,7 @@
   }
 
   function openPicker() {
+    if (!picker) return;
     picker.hidden = false;
     document.body.classList.add('author-picker-open');
     renderBound();
@@ -337,6 +341,7 @@
   }
 
   function closePicker() {
+    if (!picker) return;
     picker.hidden = true;
     document.body.classList.remove('author-picker-open');
     showHint('');
@@ -365,13 +370,13 @@
     event.preventDefault();
     search();
   });
-  picker.querySelectorAll('[data-author-picker-close]').forEach((element) => {
+  picker?.querySelectorAll('[data-author-picker-close]').forEach((element) => {
     element.addEventListener('click', closePicker);
   });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     if (!sheet.hidden) closeSheet();
-    if (!picker.hidden) closePicker();
+    if (picker && !picker.hidden) closePicker();
   });
   renderBound();
 })();

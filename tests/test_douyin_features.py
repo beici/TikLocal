@@ -181,7 +181,11 @@ def test_default_root_that_is_a_blogger_folder_keeps_its_author(tmp_path):
     assert videos[0]['author_name'] == '示例博主'
     assert videos[0]['author_url'] == '/flow?blog=default'
     assert videos[0]['caption_text'] == '海边晚风'
-    assert client.get('/author/default/avatar').status_code == 200
+    # Nothing is synced for this author, so the avatar route points at the newest
+    # work's cover rather than serving the grey placeholder.
+    avatar = client.get('/author/default/avatar')
+    assert avatar.status_code == 302
+    assert 'thumb' in avatar.headers['Location']
 
     # A plain media root still has no author: its loose files belong to nobody.
     plain = tmp_path / 'plain'

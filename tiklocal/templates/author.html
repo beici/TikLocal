@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 
 {% block extra_head %}<link rel="stylesheet" href="{{ static_asset('author.css') }}">{% endblock %}
+{% block title %}{% if authors %}{{ t('author.list.title') }}{% else %}{{ author_name }}{% endif %} · TikLocal{% endblock %}
 
 {% block content %}
 <main id="main" class="author-page" data-author-page data-source-id="{{ source_id }}"
@@ -101,6 +102,7 @@
     <section class="author-sheet-card" role="dialog" aria-modal="true"
              aria-labelledby="author-sheet-title">
       <h2 class="author-sheet-title" id="author-sheet-title">{{ t('author.sync.menu_title') }}</h2>
+      {% if sidecar_ready %}
       <p class="author-sheet-copy">{{ t('author.sync.menu_copy') }}</p>
       <p class="author-sheet-bound" data-author-bound
          data-bound-template="{{ t('author.sync.bound', url='{url}') }}"
@@ -113,11 +115,16 @@
         <span class="author-sheet-action-title">{{ t('author.sync.videos_action') }}</span>
         <span class="author-sheet-action-copy">{{ t('author.sync.videos_copy') }}</span>
       </button>
+      {% else %}
+      <p class="author-sheet-note">{{ t('author.sync.needs_sidecar') }}</p>
+      <a class="author-sheet-link" href="/settings/">{{ t('author.sync.open_settings') }}</a>
+      {% endif %}
       <p class="author-sheet-hint" data-author-sheet-hint hidden></p>
       <button type="button" class="author-sheet-cancel" data-author-sheet-close>{{ t('author.sync.cancel') }}</button>
     </section>
   </div>
 
+  {% if sidecar_ready %}
   <div class="author-picker" data-author-picker hidden>
     <div class="author-picker-backdrop" data-author-picker-close></div>
     <section class="author-picker-card" role="dialog" aria-modal="true"
@@ -145,6 +152,7 @@
       <button class="author-picker-cancel" type="button" data-author-picker-close>{{ t('author.picker.cancel') }}</button>
     </section>
   </div>
+  {% endif %}
   {% endif %}
 </main>
 {% endblock %}

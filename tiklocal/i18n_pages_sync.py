@@ -65,6 +65,8 @@ TRANSLATIONS = {
         'author.sync.videos_failed': '更新最新视频失败。',
         'author.sync.error.no_profile_url': '请先绑定该作者的主页链接。',
         'author.sync.cancel': '取消',
+        'author.sync.needs_sidecar': '还没有配置 TikTokDownloader。填好服务地址后，这里就能同步博主资料和最新作品。',
+        'author.sync.open_settings': '打开设置',
         # Settings card: per-source author rows.
         'settings.sync.author_sync_profile': '同步资料',
         'settings.sync.author_update_videos': '更新视频',
@@ -175,6 +177,8 @@ TRANSLATIONS = {
         'author.sync.videos_failed': 'Updating the latest videos failed.',
         'author.sync.error.no_profile_url': "Link this author's home page first.",
         'author.sync.cancel': 'Cancel',
+        'author.sync.needs_sidecar': 'TikTokDownloader is not configured yet. Add its address and this menu can sync the profile and the latest posts.',
+        'author.sync.open_settings': 'Open settings',
         'settings.sync.author_sync_profile': 'Sync profile',
         'settings.sync.author_update_videos': 'Update videos',
         'settings.sync.author_all_profiles': 'Sync all profiles',

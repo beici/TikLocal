@@ -144,10 +144,13 @@ def test_an_unknown_folder_is_a_404_not_an_empty_page(client):
 
 
 def test_the_avatar_route_is_not_shadowed_by_the_folder_route(client):
+    """``/author/default/avatar`` must not be read as folder="avatar"."""
     response = client.get('/author/default/avatar')
 
-    assert response.status_code == 200
-    assert response.headers['Content-Type'].startswith('image/')
+    # No synced picture for the root, so it points at a work's cover instead of
+    # 404-ing on a folder that does not exist.
+    assert response.status_code == 302
+    assert '/thumb?' in response.headers['Location']
 
 
 def test_the_feed_points_the_avatar_at_the_folder_page(client):
@@ -198,11 +201,12 @@ def test_a_folder_scoped_page_keeps_its_own_avatar_slot(client):
 
     Both were collateral damage from keying profiles by media source: a shared
     root has one source key, so a folder page could not own a picture or a
-    bound link. Each blogger now has a cache key of its own.
+    bound link. Each blogger now has a cache key of its own, and until one is
+    synced the page borrows that blogger's newest cover.
     """
     scoped = client.get(f'/author/default/{PUFF}/avatar')
-    assert scoped.status_code == 200
-    assert scoped.headers['Content-Type'].startswith('image/')
+    assert scoped.status_code == 302
+    assert '/thumb?' in scoped.headers['Location']
 
     html = _html(client, f'/author/default/{PUFF}')
     assert f'src="/author/default/{quote(PUFF, safe="")}/avatar"' in html
@@ -216,6 +220,44 @@ def test_a_folder_scoped_page_offers_the_profile_sync_menu(sidecar_client):
     assert 'data-author-sync' in html
     # The folder travels with the page so the API calls scope to this blogger.
     assert f'data-author-folder="{PUFF}"' in html
+
+
+def test_the_sync_menu_says_what_is_missing_when_no_sidecar_is_configured(client):
+    """Hiding the button until TikTokDownloader was configured hid the feature.
+
+    The menu still opens; it explains the missing address and links to Settings,
+    and the two actions that would only 400 are left out.
+    """
+    html = _html(client, f'/author/default/{PUFF}')
+
+    assert 'data-author-sync' in html
+    assert 'class="author-sheet-note"' in html
+    assert 'href="/settings/"' in html
+    assert 'data-author-sheet-profile' not in html
+    assert 'data-author-sheet-videos' not in html
+    assert 'data-author-picker' not in html
+
+
+def test_an_author_timeline_says_whose_works_they_are(client):
+    """The feed reuses /flow, so an author timeline wore the 推荐 tab.
+
+    Nothing in the chrome said the reader was inside one blogger's works, which
+    made "scrolled into someone else" impossible to notice.
+    """
+    html = _html(client, f'/flow?blog=default&folder={quote(PUFF, safe="")}')
+
+    assert 'id="douyin-author-feed"' in html
+    assert 'class="douyin-author-feed-name"' in html
+    assert '示例博主' in html
+    assert '的作品' in html
+    # Whose feed it is comes before the works count, and the count only counts
+    # that one blogger's covers.
+    assert '个作品' in html
+
+    # The recommendation feed keeps its tabs and carries no author header.
+    plain = _html(client, '/flow')
+    assert 'id="douyin-author-feed"' not in plain
+    assert 'id="douyin-tabs"' in plain
 
 
 def test_the_author_list_shows_each_avatars(client):

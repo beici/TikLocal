@@ -148,7 +148,13 @@ def test_page_renders_folder_identity_and_works_grid(tmp_path):
     # Videos carry a play glyph, images do not.
     assert html.count('author-tile-play') == 1
     # No social actions on a local library.
-    assert 'data-author-sync' not in html
+    # The sync entry point is always on the page — hiding it until TikTokDownloader
+    # was configured left the feature undiscoverable — but without an address it
+    # opens a note pointing at Settings instead of the two actions and the picker.
+    assert 'data-author-sync' in html
+    assert 'data-author-sheet-profile' not in html
+    assert 'class="author-sheet-note"' in html
+    assert 'href="/settings/"' in html
     assert 'data-author-picker' not in html
 
 
@@ -220,15 +226,23 @@ def test_cached_profile_drives_name_and_compact_counters(tmp_path, author_instan
     assert '678' in html
 
 
-def test_avatar_serves_the_bundled_default_when_uncached(tmp_path):
-    app, client = _blogger_app(tmp_path, ['2024-05-01 10.00.00-视频-示例博主-一.mp4'])
+def test_avatar_falls_back_to_the_newest_work_until_one_is_synced(tmp_path):
+    """No synced picture used to mean the grey face on every author page.
+
+    The page is somebody's profile, not an empty slot: their newest work is a
+    recognisable stand-in, and the thumbnail endpoint already caches it.
+    """
+    _, client = _blogger_app(tmp_path, [
+        '2024-05-01 10.00.00-视频-示例博主-一.mp4',
+        '2024-05-02 10.00.00-图集-示例博主-二_1.jpeg',
+    ])
 
     response = client.get('/author/blogger/avatar')
 
-    assert response.status_code == 200
-    assert response.mimetype == 'image/jpeg'
-    bundled = Path(app.static_folder) / 'default-avatar.jpg'
-    assert response.get_data() == bundled.read_bytes()
+    assert response.status_code == 302
+    # The newest work is the 2024-05-02 image, not the older video.
+    assert '/thumb?' in response.headers['Location']
+    assert '%E4%BA%8C' in response.headers['Location'] or '二' in response.headers['Location']
 
 
 def test_avatar_serves_the_cached_photo(tmp_path, author_instance):

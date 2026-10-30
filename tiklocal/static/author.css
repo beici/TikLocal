@@ -552,6 +552,37 @@ body.author-picker-open { overflow: hidden; }
   outline-offset: 2px;
 }
 .author-sheet-action[disabled] { opacity: 0.55; cursor: progress; }
+/* Shown instead of the two actions when TikTokDownloader has no address yet: the
+   menu is discoverable, and it says where the missing piece is configured. */
+.author-sheet-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.62);
+}
+.author-sheet-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 10px;
+  background: rgba(254, 44, 85, 0.16);
+  border: 1px solid rgba(254, 44, 85, 0.4);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background-color 0.18s ease;
+}
+.author-sheet-link:hover { background: rgba(254, 44, 85, 0.26); }
+.author-sheet-link:focus-visible {
+  outline: 2px solid rgba(254, 44, 85, 0.7);
+  outline-offset: 2px;
+}
 .author-sheet-action-title {
   font-size: 14px;
   font-weight: 600;

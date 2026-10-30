@@ -24,7 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import quote
 
-from flask import abort, current_app, jsonify, render_template, request, send_file
+from flask import abort, current_app, jsonify, redirect, render_template, request, send_file
 
 from tiklocal.i18n import current_locale, t
 from tiklocal.services import author_profiles
@@ -266,16 +266,17 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         scoped_url = '/author/{}/{}'.format(
             quote(str(source_id or ''), safe=''), quote(folder, safe=''),
         ) if scoped else ''
+        avatar_url = (
+            f'{scoped_url}/avatar' if scoped
+            else f'/author/{quote(str(source_id or ""), safe="")}/avatar'
+        )
         return render_template(
             'author.html',
             menu='author',
             source_id=source_id,
             author_folder=folder if scoped else '',
             author_name=display_name(key, folder, profile),
-            avatar_url=(
-                f'{scoped_url}/avatar' if scoped
-                else f'/author/{quote(str(source_id or ""), safe="")}/avatar'
-            ),
+            avatar_url=avatar_url,
             search_default=blogger_display_name(folder) or str(source_id or ''),
             douyin_id=(
                 str(profile.get('douyin_id') or '')
@@ -285,8 +286,13 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             tiles=tiles,
             authors=authors or [],
             stats=[] if authors else build_stats(tiles, profile),
-            refresh_enabled=sidecar_ready,
-            update_enabled=sidecar_ready,
+            # The sync entry point is part of the page, not of the configuration:
+            # hiding it until TikTokDownloader is configured left the reader with no
+            # way to discover the feature at all. It opens a menu that says what is
+            # missing and where to fix it. A source that is really a list of authors
+            # has nothing to sync at the source level, so the menu stays off there.
+            refresh_enabled=not authors,
+            sidecar_ready=sidecar_ready,
         )
 
     @app.route('/author/<source_id>')
@@ -337,18 +343,40 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
     @app.route('/author/<source_id>/avatar')
     def author_avatar(source_id):
         _source_or_404(source_id)
-        return _send_avatar(source_id)
+        return _send_avatar(source_id, source_id)
 
     @app.route('/author/<source_id>/<folder>/avatar')
     def author_folder_avatar(source_id, folder):
         """The avatar of one blogger inside a shared root."""
         source = _source_or_404(source_id)
-        return _send_avatar(profile_key(source_id, folder, folder_name_for(source)))
+        return _send_avatar(
+            profile_key(source_id, folder, folder_name_for(source)), source_id, folder,
+        )
 
-    def _send_avatar(key):
+    def _newest_thumb(source_id: str, folder: str) -> str:
+        """The cover of the newest work, used until a profile picture is synced."""
+        try:
+            records = media_index.records(
+                source_id=source_id, album_covers_only=True, folder=folder,
+            )
+        except Exception:
+            return ''
+        if not records:
+            return ''
+        newest = max(records, key=_publish_order)
+        uri = str(newest.get('name') or '')
+        return media_urls(uri)['thumb_url'] if uri else ''
+
+    def _send_avatar(key, source_id: str = '', folder: str = ''):
         cached = author_profiles.existing_avatar_path(key)
         if cached.is_file():
             return send_file(cached, mimetype='image/jpeg', max_age=AVATAR_MAX_AGE)
+        # Nobody has synced this author yet. The bundled grey face made every page
+        # look like an empty profile, so the newest work stands in for the picture;
+        # a 302 keeps the thumbnail cache and the avatar cache apart.
+        fallback = _newest_thumb(source_id, folder) if source_id else ''
+        if fallback:
+            return redirect(fallback)
         bundled = Path(current_app.static_folder or '') / author_profiles.DEFAULT_AVATAR_FILENAME
         if not bundled.is_file():
             abort(404)
