@@ -202,12 +202,31 @@ sidecar 未配置 `base_url` 时按钮不出现，页面保持目录名派生的
   逐个比对，只为本地没有的作品 `enqueue_from_url('https://www.douyin.com/video/<aweme_id>')`，
   已存在的不重复下载。实测 42 个作品取回 13.9 秒、整轮 16.2 秒，全部已在本地时
   返回 `已是最新`。
-- `GET /api/author/sources` 的每一项都带 `profile_url` 与 `local_count`，
-  作者主页的「同步」按钮打开两段式菜单（同步博主资料 / 一键更新最新视频），
-  设置页「作者资料」卡片每行是一个媒体源：已绑定的主页链接直接预填在输入框里，
-  右侧是「同步资料」「更新视频」，顶部还有「全部同步资料」「全部更新视频」。
-  已经同步过资料的老媒体源会从缓存资料里的 `sec_uid` 自动推导出主页地址
-  （`guess_profile_url()`），不需要重新粘贴。
+- `GET /api/author/sources` 每个媒体源会按导出的博主文件夹展开成多行，
+  每行带 `profile_url`、`folder` 与 `local_count`；作者主页的「同步」按钮打开
+  两段式菜单（同步博主资料 / 一键更新最新视频），设置页「作者资料」卡片每行是
+  一位作者：已绑定的主页链接直接预填在输入框里，右侧是「同步资料」「更新视频」，
+  顶部还有「全部同步资料」「全部更新视频」。缓存键是 `<媒体源>/<文件夹>`，
+  所以同一个媒体根目录下的多个博主各存各的资料，互不覆盖。
+  已经同步过资料的条目会从缓存里的 `sec_uid` 自动推导出主页地址
+  （`author_profiles.profile_home_url()`），不需要重新粘贴。
+
+### 从落盘数据补齐主页链接
+
+账号被封禁或注销后，sidecar 再也问不出它的主页地址，而媒体目录里的文件夹名
+带着 `UID…`。设置页「作者资料」卡片底部的「从服务器文件补齐主页链接」
+（`POST /api/author/links`，`tiklocal/services/author_links.py`）用
+TikTokDownloader 自己落盘的那份数据把两边对上：
+
+- 填 TikTokDownloader 的 `url` 目录或 `Volume/resolved_users.jsonl` 都行：
+  代码会在该目录、它的 `Volume` 子目录、以及同级的 `Volume` 目录里依次找
+  带 UID 的那份（`resolved_users.jsonl` / `.json` / `user-info.jsonl`）。
+  只有链接的 `user-url.txt` 匹配不了——**UID 是双方唯一的共同字段**。
+- 顺便支持 JSON 数组、JSONL、`uid,sec_uid,昵称` 这样的行，坏行跳过不报错。
+- 昵称不是身份：占位名（`用户<数字>`，或昵称等于自己的抖音号）与归零的计数
+  都不会写回去，只标 `account_missing`，页面提示「这个账号可能已被封禁或注销」；
+  真实改名照常写入。封禁账号返回的灰头像也不会顶掉已有头像。
+- 命令行等价物：`tiklocal author import-links <文件|目录|-> --dry-run`。
 
 ## 下载链接清单（与 TikTokDownloader 共用 user-url.txt）
 
