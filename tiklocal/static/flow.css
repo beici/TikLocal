@@ -1167,6 +1167,57 @@ body.douyin .douyin-search { display: flex; }
 
 body.tag-feed .douyin-tabs { display: none; }
 
+/* One author's timeline (?blog=&folder=). The 推荐/下载 tabs would be a lie here,
+   so the bar names the author and carries the works count underneath: the reader
+   needs to see at a glance that a swipe stays inside this blogger. */
+.douyin-author-feed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: min(70vw, 460px);
+  color: #fff;
+  pointer-events: none;
+}
+
+.douyin-author-feed-title {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+  font-family: system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.douyin-author-feed-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.douyin-author-feed-of {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.douyin-author-feed-count {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.55);
+  font: 500 11px/1.4 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+body.author-feed .douyin-tabs { display: none; }
+
 /* Right action rail, Douyin layout: avatar over heart, collect, and details. */
 .douyin-rail {
   position: absolute;

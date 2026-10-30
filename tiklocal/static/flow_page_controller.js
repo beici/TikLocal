@@ -54,6 +54,7 @@
     // The topic header renders before the feed so /flow?tag= looks right at once.
     syncTopicHeader();
     syncCaptionFilter();
+    syncAuthorHeader();
 
     const playStatusIcon = document.getElementById('play-status-icon');
     const customControls = document.getElementById('custom-controls');
@@ -760,6 +761,18 @@
       }
       if (douyinTopBack) douyinTopBack.hidden = false;
       document.title = `${caption} · ${T('search.title')} · tikLocal`;
+    }
+
+    // An author's timeline reuses this page (?blog=&folder=). The server renders
+    // whose works they are; this only flips the bar out of tab mode before the
+    // first paint of the feed, so the reader never sees 推荐 over a filtered feed.
+    function syncAuthorHeader() {
+      const panel = document.getElementById('douyin-author-feed');
+      if (!panel) return;
+      document.body.classList.add('author-feed');
+      if (douyinTopBack) douyinTopBack.hidden = false;
+      const name = panel.dataset.authorName || '';
+      if (name) document.title = `${name} · tikLocal`;
     }
 
     function syncTopicHeader() {

@@ -4,6 +4,9 @@
 {% block extra_head %}
 <link rel="stylesheet" href="{{ static_asset('flow.css') }}">
 {% endblock %}
+{# The 推荐/下载 tabs are wrong on one blogger's timeline; drop them server-side so
+   they never flash before the controller runs. #}
+{% block body_class %}{% if author_feed_name %} author-feed{% endif %}{% endblock %}
 
 {% block content %}
 <span id="main" tabindex="-1"></span>
@@ -106,6 +109,18 @@
       <a class="douyin-tab is-active" href="/flow">{{ t('flow.topbar.recommend') }}</a>
       <a class="douyin-tab" href="/download">{{ t('nav.download') }}</a>
     </nav>
+    {% if author_feed_name %}
+    {# One author's timeline: the tabs would say "推荐" for a feed that is anything
+       but, so the bar names the author instead and keeps the count underneath. #}
+    <div class="douyin-author-feed" id="douyin-author-feed" data-author-name="{{ author_feed_name }}">
+      <p class="douyin-author-feed-title">
+        <span class="douyin-author-feed-name">{{ author_feed_name }}</span><span class="douyin-author-feed-of">{{ t('flow.author_feed.of') }}</span>
+      </p>
+      {% if author_feed_count %}
+      <p class="douyin-author-feed-count">{{ t('author.list.works', count=author_feed_count) }}</p>
+      {% endif %}
+    </div>
+    {% endif %}
     <div class="douyin-topic" id="douyin-topic" hidden>
       <span class="douyin-topic-hash">#</span>
       <span class="douyin-topic-name" id="douyin-topic-name"></span>

@@ -767,8 +767,26 @@ def register_flow_routes(
     @app.route('/flow')
     def flow_view():
         # The feed controller reads tag/start/caption from the URL itself, so passing
-        # them into the template only looked like they were being used.
-        return render_template('flow.html', menu='flow')
+        # them into the template only looked like they were being used. The author
+        # header is the exception: the page has to name whose works these are, and
+        # only the server can turn an export folder into a readable nickname.
+        folder = str(request.args.get('folder') or '').strip()
+        author_name = ''
+        author_count = 0
+        if folder:
+            author_name = media_naming.blogger_display_name(folder) or folder
+            source_id = str(request.args.get('blog') or '').strip()
+            if source_id:
+                try:
+                    author_count = len(media_index.records(
+                        source_id=source_id, album_covers_only=True, folder=folder,
+                    ))
+                except Exception:  # a stale index must not blank the whole page
+                    author_count = 0
+        return render_template(
+            'flow.html', menu='flow',
+            author_feed_name=author_name, author_feed_count=author_count,
+        )
 
     @app.route('/api/feed/mix')
     def api_feed_mix():

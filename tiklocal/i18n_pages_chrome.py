@@ -7,6 +7,7 @@ can be translated in parallel without two writers touching one file.
 TRANSLATIONS = {
     'zh': {
         'flow.topbar.recommend': '推荐',
+        'flow.author_feed.of': '的作品',
         'flow.tag.back': '返回',
         'flow.tag.count': '{count} 个作品',
         'flow.tag.empty': '这个话题下还没有作品。',
@@ -15,6 +16,7 @@ TRANSLATIONS = {
     },
     'en': {
         'flow.topbar.recommend': 'For You',
+        'flow.author_feed.of': '’s posts',
         'flow.tag.back': 'Back',
         'flow.tag.count': '{count} videos',
         'flow.tag.empty': 'No videos under this topic yet.',
