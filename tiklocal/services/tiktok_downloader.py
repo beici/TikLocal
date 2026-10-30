@@ -115,6 +115,24 @@ _TIKTOK_ERROR_KEYS = {
 }
 
 
+def _timeline_failure(exc: TikTokDownloaderError) -> TikTokDownloaderError:
+    """Keep the reason the account timeline hop failed.
+
+    Every failure here used to become "the home page timed out, retry with a work
+    link", so a user whose sidecar was simply not running was told to keep pasting
+    different links. A coded error is carried through instead: ``tiktok_user_message``
+    already has actionable copy for each code, and none of it names the address.
+    """
+    code = str(getattr(exc, 'code', '') or '').strip()
+    if code and code != 'timeout':
+        return TikTokDownloaderError(str(exc), code=code)
+    # A real timeout keeps the advice this message exists for: reading the account
+    # timeline is the slow hop, and any single work link short-cuts it. It is left
+    # uncoded on purpose so ``tiktok_user_message`` shows this text verbatim instead
+    # of substituting the generic "no answer" copy.
+    return TikTokDownloaderError(t('author.sync.error.profile_slow'))
+
+
 def tiktok_user_message(exc: BaseException) -> str:
     """Localized copy for a sidecar failure.
 
@@ -851,7 +869,7 @@ class TikTokDownloadService:
                     sec_user_id, count=5, platform="douyin", source=True, pages=1,
                 )
             except TikTokDownloaderError as exc:
-                raise TikTokDownloaderError(t('author.sync.error.profile_slow')) from exc
+                raise _timeline_failure(exc) from exc
             work_id = _first_aweme_id(works)
             if not work_id:
                 raise TikTokDownloaderError(t('author.sync.error.no_works'))
@@ -1057,7 +1075,7 @@ class TikTokDownloadService:
                 sec_user_id, tab="post", count=limit, platform="douyin", source=True, pages=1,
             )
         except TikTokDownloaderError as exc:
-            raise TikTokDownloaderError(t('author.sync.error.profile_slow')) from exc
+            raise _timeline_failure(exc) from exc
 
         titles, known_ids = _local_work_keys(local_names)
         pending_ids = self._pending_work_ids()

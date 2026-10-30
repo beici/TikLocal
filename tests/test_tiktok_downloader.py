@@ -26,6 +26,7 @@ from tiklocal.services.tiktok_downloader import (
     normalize_work_items,
     parse_platform_link,
     seed_tiktok_downloader_config,
+    tiktok_user_message,
     validate_tiktok_downloader_config,
 )
 
@@ -509,6 +510,40 @@ def test_tiktok_route_error_paths(tiktok_client, monkeypatch):
     # own host:port must not reach the browser.
     error = res.get_json()["error"]
     assert error and "192.168" not in error and "http://" not in error
+
+
+def test_a_dead_sidecar_is_not_reported_as_a_slow_home_page(monkeypatch, tmp_path):
+    """A sidecar that is simply not running must not be described as too slow.
+
+    Both timeline hops used to replace whatever went wrong with "the home page
+    timed out, retry with a work link", so the user kept pasting different links
+    while the real problem was a service that was not listening.
+    """
+    store = _config_store(tmp_path)
+    seed_tiktok_downloader_config(store, {"base_url": "http://192.168.x.x:5555"})
+    service = TikTokDownloadService(store, FakeManager())
+
+    def dead_account(self, *args, **kwargs):
+        raise TikTokDownloaderError("Unable to reach TikTokDownloader at http://192.168.x.x:5555.", code="unreachable")
+
+    monkeypatch.setattr(TikTokDownloaderClient, "fetch_account", dead_account)
+    with pytest.raises(TikTokDownloaderError) as caught:
+        service.fetch_author_profile(profile_url="https://www.douyin.com/user/MS4wLjABAAAAxi")
+    assert caught.value.code == "unreachable"
+    message = tiktok_user_message(caught.value)
+    assert "TikTokDownloader" in message
+    assert "无法连接" in message or "Cannot reach" in message
+    assert "192.168" not in message and "http://" not in message
+
+    # A real timeout keeps the advice that message exists for.
+    def slow_account(self, *args, **kwargs):
+        raise TikTokDownloaderError("TikTokDownloader did not answer in time.", code="timeout")
+
+    monkeypatch.setattr(TikTokDownloaderClient, "fetch_account", slow_account)
+    with pytest.raises(TikTokDownloaderError) as caught:
+        service.fetch_author_profile(profile_url="https://www.douyin.com/user/MS4wLjABAAAAxi")
+    assert not caught.value.code
+    assert tiktok_user_message(caught.value) == t("author.sync.error.profile_slow")
 
 
 def test_tiktok_config_roundtrip(tiktok_client):
