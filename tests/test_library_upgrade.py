@@ -128,6 +128,39 @@ def test_edited_photo_keeps_the_modified_tag_as_a_weak_hint(tmp_path):
     assert payload["captured_local_date"].startswith("2020-02-03")
 
 
+def test_a_name_that_leads_with_the_moment_is_not_opened_at_all(tmp_path, monkeypatch):
+    """An exporter stamps the moment into the name and writes no Exif.
+
+    Opening every such file to discover that is what made a 148k-image library sit
+    for over an hour before it answered a single request, so the leading timestamp
+    has to settle it without a read.
+    """
+    exported = tmp_path / "2023-05-09 21.08.36-图集-示例博主-#繁华是古_1.jpeg"
+    exported.write_bytes(b"not an image at all")
+
+    def fail_open(_path):
+        raise AssertionError("a name that leads with a timestamp needs no read")
+
+    monkeypatch.setattr(library_index_module, "_image_capture_time", fail_open)
+    payload = library_index_module.discover_capture_time(exported, "image", 1_750_000_000)
+    assert payload["time_source"] == "filename"
+    assert payload["time_confidence"] == "medium"
+    assert payload["captured_local_date"] == "2023-05-09T21:08:36"
+
+
+def test_a_name_that_only_mentions_a_date_still_asks_the_file_first(tmp_path):
+    """Only a *leading* moment wins outright; a hand-renamed camera photo keeps
+    the Exif timestamp it was shot at."""
+    photo = tmp_path / "holiday-2019-04-08.jpg"
+    image = Image.new("RGB", (40, 30), (10, 20, 30))
+    exif = Image.Exif()
+    exif.get_ifd(0x8769)[36867] = "2019:04:08 10:20:30"
+    image.save(photo, exif=exif)
+
+    payload = library_index_module.discover_capture_time(photo, "image", 1_750_000_000)
+    assert payload["time_source"] == "exif_original"
+
+
 def test_api_library_items_supports_modes_search_and_sync(client, tmp_path):
     all_res = client.get("/api/library/items?scope=all&mode=all&offset=0&limit=20")
     assert all_res.status_code == 200

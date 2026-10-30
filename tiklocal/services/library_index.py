@@ -1054,7 +1054,10 @@ _FILENAME_DATE_PATTERNS = (
 #:
 #: 2: read DateTimeOriginal from the Exif sub-IFD instead of IFD0, and treat the
 #:    file-modified tag (306) as a low-confidence hint.
-TIME_METADATA_VERSION = 2
+#: 3: a name that leads with a timestamp wins outright, without opening the file
+#:    (see ``_LEADING_TIMESTAMP``); re-deriving is what lets existing rows skip
+#:    the reads they no longer need.
+TIME_METADATA_VERSION = 3
 
 
 def _capture_payload(value: datetime.datetime, source: str, confidence: str) -> dict:
@@ -1225,8 +1228,38 @@ def _capture_is_current(existing: dict) -> bool:
     return local.strftime("%Y-%m-%d") == local_date[:10]
 
 
+#: A stem that *starts* with a full timestamp was named by an exporter
+#: (TikTok/Douyin dumps write ``2023-05-09 21.08.36-图集-...``). Those files carry
+#: no Exif at all, so opening every one of them to learn that is pure waiting: a
+#: 148k-image library on a NAS meant 17 GB of header reads at 58 ms per file, and
+#: the server refused connections for the whole first boot. A name that leads with
+#: the moment is the moment; only files that do not lead with one are worth reading.
+_LEADING_TIMESTAMP = re.compile(
+    r"^(?P<year>19\d{2}|20\d{2})-(?P<month>0[1-9]|1[0-2])-(?P<day>0[1-9]|[12]\d|3[01])"
+    r"[ T_-](?P<hour>[01]\d|2[0-3])[.:_-](?P<minute>[0-5]\d)[.:_-](?P<second>[0-5]\d)(?!\d)"
+)
+
+
+def _leading_capture_time(path: Path) -> dict | None:
+    match = _LEADING_TIMESTAMP.match(path.stem)
+    if not match:
+        return None
+    values = match.groupdict()
+    try:
+        parsed = datetime.datetime(
+            int(values["year"]), int(values["month"]), int(values["day"]),
+            int(values["hour"]), int(values["minute"]), int(values["second"]),
+        )
+    except ValueError:
+        return None
+    return _capture_payload(parsed, "filename", "medium")
+
+
 def discover_capture_time(path: Path, media_type: str, mtime: float) -> dict:
     if media_type == "image":
+        leading = _leading_capture_time(path)
+        if leading:
+            return leading
         embedded = _clamp_future(_image_capture_time(path) or {})
         if embedded:
             return embedded
