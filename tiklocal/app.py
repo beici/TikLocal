@@ -548,44 +548,57 @@ def create_app(test_config=None):
 
     def _build_index() -> dict:
         try:
-            result = library_indexer.sync()
-        except (sqlite3.Error, OSError) as error:
-            # A full disk or a locked database made the index unwritable. The index
-            # itself is still consistent (every write is one transaction), so serving
-            # the previous snapshot beats refusing to start.
-            app.logger.error('index sync failed; serving the previous index: %s', error)
-            result = {
-                'indexed': 0,
-                'deleted': 0,
-                'unavailable_sources': [],
-                'source_errors': {},
-                'busy': False,
-                'error': str(error),
-            }
-        # The result used to be stored and never read: an unreadable source, an empty
-        # folder and a wrong path all looked the same in the log (one INFO line, then
-        # "Serving on"), which is the hardest kind of startup failure to diagnose
-        # remotely.
-        unavailable = result.get('unavailable_sources') or []
-        if unavailable:
-            app.logger.warning(
-                'index sync: indexed=%s deleted=%s unavailable=%s errors=%s',
-                result.get('indexed'), result.get('deleted'),
-                ', '.join(str(item) for item in unavailable),
-                result.get('source_errors') or {},
-            )
-            app.logger.warning(
-                'Media source unavailable; preserving its existing index: %s',
-                ', '.join(unavailable),
-            )
-        else:
-            app.logger.info(
-                'index sync: indexed=%s deleted=%s', result.get('indexed'), result.get('deleted'),
-            )
+            try:
+                result = library_indexer.sync()
+            except (sqlite3.Error, OSError) as error:
+                # A full disk or a locked database made the index unwritable. The index
+                # itself is still consistent (every write is one transaction), so serving
+                # the previous snapshot beats refusing to start.
+                app.logger.error('index sync failed; serving the previous index: %s', error)
+                result = {
+                    'indexed': 0,
+                    'deleted': 0,
+                    'unavailable_sources': [],
+                    'source_errors': {},
+                    'busy': False,
+                    'error': str(error),
+                }
+            # The result used to be stored and never read: an unreadable source, an empty
+            # folder and a wrong path all looked the same in the log (one INFO line, then
+            # "Serving on"), which is the hardest kind of startup failure to diagnose
+            # remotely.
+            unavailable = result.get('unavailable_sources') or []
+            if unavailable:
+                app.logger.warning(
+                    'index sync: indexed=%s deleted=%s unavailable=%s errors=%s',
+                    result.get('indexed'), result.get('deleted'),
+                    ', '.join(str(item) for item in unavailable),
+                    result.get('source_errors') or {},
+                )
+                app.logger.warning(
+                    'Media source unavailable; preserving its existing index: %s',
+                    ', '.join(unavailable),
+                )
+            else:
+                app.logger.info(
+                    'index sync: indexed=%s deleted=%s', result.get('indexed'), result.get('deleted'),
+                )
+            return result
+        finally:
+            # Runs on the way out of *any* failure, including a bug in the scan: the flag
+            # drives a banner that a page takes down when it turns false, so leaving it
+            # true would pin "building the index" over a library forever.
+            app.extensions["media_index_building"] = False
+
+    def _run_background_index() -> None:
+        try:
+            result = _build_index()
+        except Exception as error:  # noqa: BLE001 - a dead thread must not look like a running scan
+            app.logger.exception('index sync crashed; serving the previous index')
+            result = {'indexed': 0, 'deleted': 0, 'unavailable_sources': [],
+                      'source_errors': {}, 'busy': False, 'error': str(error)}
         app.extensions["media_index_sync"] = result
         app.extensions["media_index_error"] = str(result.get('error') or '')
-        app.extensions["media_index_building"] = False
-        return result
 
     # A first scan walks every file in the library, which on a NAS holding 180k files
     # is minutes of directory work before the index exists. Doing that inline meant the
@@ -597,10 +610,11 @@ def create_app(test_config=None):
         app.extensions["media_index_error"] = ''
         app.extensions["media_index_building"] = True
         app.logger.info('Building the media index in the background; pages fill in as it finishes')
-        threading.Thread(target=_build_index, name='index-build', daemon=True).start()
+        threading.Thread(target=_run_background_index, name='index-build', daemon=True).start()
     else:
         app.extensions["media_index_building"] = False
-        _build_index()
+        app.extensions["media_index_sync"] = _build_index()
+        app.extensions["media_index_error"] = str(app.extensions["media_index_sync"].get('error') or '')
     activity_store = MediaActivityStore(app_database)
     recommend_service = RecommendService(
         library_service,

@@ -99,6 +99,7 @@ def test_a_scan_that_never_started_says_nothing(media_root, instance_root):
     announce."""
     app = _app(media_root)
     assert app.extensions['media_index_building'] is False
+    assert app.extensions['media_index_sync'] is not None
     client = app.test_client()
     body = client.get('/').get_data(as_text=True)
     assert 'id="index-building"' not in body
