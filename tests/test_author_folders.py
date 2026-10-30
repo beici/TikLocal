@@ -24,8 +24,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # lives inside the repo the way the other author tests do it.
 INSTANCE_ROOT = REPO_ROOT / f'.tmp-inst-author-folders-{os.getpid()}'
 
-PUFF = 'UID958392617677856_示例博主_发布作品'
-NO_SUFFIX = 'UID1146129073323168_示例博主二'
+PUFF = 'UID100000000000001_示例博主_发布作品'
+NO_SUFFIX = 'UID100000000000002_示例博主二'
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -377,7 +377,7 @@ def test_the_sync_api_stores_under_the_folder_not_the_shared_root(
 
     assert response.status_code == 200
     # The cache key carries the folder; the folder's own UID is what gets verified.
-    assert seen == [(f'default/{PUFF}', '958392617677856')]
+    assert seen == [(f'default/{PUFF}', '100000000000001')]
     assert author_profiles.resolve_profile(f'default/{PUFF}')['name'] == '示例博主'
     # The shared root keeps no profile of its own, so the second blogger's sync
     # cannot land on the first one.
@@ -426,7 +426,7 @@ def test_the_sync_endpoint_scopes_a_row_by_its_folder_query(sidecar_client, monk
     )
 
     assert response.status_code == 200
-    assert seen == [(f'default/{PUFF}', '958392617677856')]
+    assert seen == [(f'default/{PUFF}', '100000000000001')]
 
 
 def test_a_profile_synced_before_the_per_author_keys_still_shows(client):
@@ -440,7 +440,7 @@ def test_a_profile_synced_before_the_per_author_keys_still_shows(client):
 
     author_profiles.save_profile('default', {
         'name': '示例博主',
-        'uid': '958392617677856',
+        'uid': '100000000000001',
         'douyin_id': 'demo0001',
         'follower_count': 123456,
         'total_favorited': 4567890,
@@ -486,7 +486,7 @@ def test_a_synced_work_link_binds_the_home_page_under_that_author(client, monkey
 
     def fetch_detail(self, detail_id, platform='douyin', *, source=False):
         return [{'aweme_id': detail_id, 'author': {
-            'uid': '958392617677856', 'nickname': '示例博主',
+            'uid': '100000000000001', 'nickname': '示例博主',
             'unique_id': 'demo0001', 'sec_uid': 'MS4wLjABAAAAsample',
             'follower_count': 1234, 'total_favorited': 5678,
         }}]
@@ -497,7 +497,7 @@ def test_a_synced_work_link_binds_the_home_page_under_that_author(client, monkey
     service.sync_author_profile(
         f'default/{PUFF}',
         aweme_id='7000000000000000001',
-        folder_uid='958392617677856',
+        folder_uid='100000000000001',
     )
 
     bound = 'https://www.douyin.com/user/MS4wLjABAAAAsample'

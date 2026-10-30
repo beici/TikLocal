@@ -47,7 +47,7 @@ MAX_OFFSET = 5000
 GENERAL_USER_LIMIT = 3
 SEARCHABLE_MEDIA_TYPES = frozenset({'video', 'image', 'live'})
 _ALBUM_INDEX_SUFFIX = re.compile(r'_\d+$')
-# A downloaded work is often titled after its numeric id only (``…-泡芙-7680590….mp4``);
+# A downloaded work is often titled after its numeric id only (``…-示例博主-7680590….mp4``);
 # that is not a caption and must not be printed where the caption goes. Only a long
 # run of digits is treated as an id, so a caption like "2024" still shows.
 _NOT_A_CAPTION = re.compile(r'^\d{12,}$')

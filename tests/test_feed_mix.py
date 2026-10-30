@@ -203,14 +203,14 @@ def test_author_caption_from_blogger_source():
 
     sources = {
         "blogger": SimpleNamespace(
-            path=r"E:\media\UID958392617677856_泡芙_发布作品", name="blogger"
+            path=r"E:\media\UID100000000000001_示例博主_发布作品", name="blogger"
         )
     }
     enriched = build_author_caption(
-        "@blogger/2026-01-01 12.00.00-实况-UID958392617677856_泡芙_发布作品-标题文字.jpg",
+        "@blogger/2026-01-01 12.00.00-实况-UID100000000000001_示例博主_发布作品-标题文字.jpg",
         sources,
     )
-    assert enriched["author_name"] == "泡芙"
+    assert enriched["author_name"] == "示例博主"
     assert enriched["author_url"] == "/flow?blog=blogger"
     assert enriched["caption_text"] == "标题文字"
 

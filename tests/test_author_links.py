@@ -15,9 +15,10 @@ import pytest
 
 from tiklocal.services import author_links, author_profiles
 
-UID = '958392617677856'
-SEC = 'MS4wLjABAAAAUfusvg2CADClubXWVAELh95ejwhJyn7lFUTYtKv4qY0'
-FOLDER = f'UID{UID}_泡芙_发布作品'
+UID = '100000000000001'
+SEC = 'MS4wLjABAAAAsamplesecuid00000000000000000'
+FOLDER = f'UID{UID}_示例博主_发布作品'
+OTHER = 'UID200000000000002_示例博主二'
 
 
 @pytest.fixture(autouse=True)
@@ -68,8 +69,8 @@ def _row(**overrides) -> dict:
     row = {
         'uid': UID,
         'sec_uid': SEC,
-        'nickname': '泡芙',
-        'unique_id': 'ioioi33i_Y',
+        'nickname': '示例博主',
+        'unique_id': 'sample_unique_id',
         'avatar_larger': {'url_list': ['https://p3.douyinpic.com/a.jpeg']},
     }
     row.update(overrides)
@@ -105,7 +106,7 @@ def tree(tmp_path):
     root.mkdir()
     made = _Tree(root)
     made.add(FOLDER)
-    made.add('UID2049944108403096_周66')  # no release suffix, still an export
+    made.add(OTHER)  # no release suffix, still an export
     made.add('notes')                     # not an export folder at all
     return made
 
@@ -113,11 +114,11 @@ def tree(tmp_path):
 def test_the_dump_is_matched_on_the_uid_inside_the_folder_name(tree):
     authors = author_links.local_authors(tree.sources())
 
-    assert sorted(entry['folder'] for entry in authors) == sorted([FOLDER, 'UID2049944108403096_周66'])
+    assert sorted(entry['folder'] for entry in authors) == sorted([FOLDER, OTHER])
     plan = author_links.plan_bindings(author_links.parse_dump(json.dumps([_row()])), authors)
 
     assert [entry['key'] for entry in plan['bound']] == [f'default/{FOLDER}']
-    assert [entry['folder'] for entry in plan['unmatched']] == ['UID2049944108403096_周66']
+    assert [entry['folder'] for entry in plan['unmatched']] == [OTHER]
 
 
 def test_a_renamed_account_still_binds_because_the_uid_is_the_identity(tree):
@@ -164,8 +165,8 @@ def test_a_live_account_still_takes_the_picture_from_the_dump(tree):
 
 
 def test_a_name_that_is_just_the_numeric_id_counts_as_gone(tree):
-    assert author_links.looks_abandoned({'name': '89556816950', 'douyin_id': '89556816950'}) is True
-    assert author_links.looks_abandoned({'name': '泡芙', 'douyin_id': '89556816950'}) is False
+    assert author_links.looks_abandoned({'name': '10000000002', 'douyin_id': '10000000002'}) is True
+    assert author_links.looks_abandoned({'name': '示例博主', 'douyin_id': '10000000002'}) is False
     assert author_links.looks_abandoned({'name': '用户12345678_粉丝号'}) is False
 
 
@@ -179,7 +180,7 @@ def test_binding_stores_the_link_and_leaves_a_good_name_alone(tree):
     profile = author_profiles.load_profile(f'default/{FOLDER}')
 
     assert profile['name'] == '已经同步过的名字'
-    assert profile['douyin_id'] == 'ioioi33i_Y'
+    assert profile['douyin_id'] == 'sample_unique_id'
     assert profile['uid'] == UID
     assert profile['account_missing'] is False
 
@@ -218,15 +219,15 @@ def test_a_link_only_dump_binds_nothing_because_it_carries_no_uid(tree):
     assert plan['bound'] == []
     # A link proves nothing about which export folder it belongs to: the UID is
     # the only field both sides hold, and this dump does not carry one.
-    assert [entry['key'] for entry in plan['unmatched']] == ['default/UID2049944108403096_周66',
-                                                            f'default/{FOLDER}']
+    assert sorted(entry['key'] for entry in plan['unmatched']) == sorted([f'default/{OTHER}',
+                                                                         f'default/{FOLDER}'])
 
 
 def test_a_jsonl_dump_and_a_csv_line_and_a_noise_line_all_read():
     text = '\n'.join([
         '# a comment',
         json.dumps(_row()),
-        f'{UID},{SEC},泡芙',
+        f'{UID},{SEC},示例博主',
         'not a record',
         '',
     ])
@@ -235,7 +236,7 @@ def test_a_jsonl_dump_and_a_csv_line_and_a_noise_line_all_read():
 
     assert [row['uid'] for row in rows] == [UID, UID]
     assert rows[1]['sec_uid'] == SEC
-    assert rows[1]['name'] == '泡芙'
+    assert rows[1]['name'] == '示例博主'
 
 
 def test_a_dump_with_a_top_level_list_key_is_read_too():
