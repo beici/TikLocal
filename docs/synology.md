@@ -134,9 +134,10 @@ container id must also be granted access in **Control Panel → Shared Folder �
 - `/media` read-write is what makes deleting and URL downloads work. A
   read-only media mount is fine if you never do either.
 - `/data` read-write is mandatory.
-- The trash lives inside each source folder as `.tiklocal-trash`, and a download
-  is staged in `.tiklocal-download-tmp` there before it is moved into place —
-  both need write access to the folder itself, not just to the files.
+- The trash lives inside each source folder as `.tiklocal-trash`. A download is
+  staged in `.tiklocal-download-tmp` in the download source — the `default`
+  folder unless you set `download_source` in `config.yaml` — before it is moved
+  into place. Both need write access to the folder itself, not just the files.
 
 ## More than one folder
 
