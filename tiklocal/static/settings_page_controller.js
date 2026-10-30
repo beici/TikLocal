@@ -1074,7 +1074,9 @@
   function renderAuthorSources(items) {
     authorRows = Array.isArray(items) ? items : [];
     authorSyncSummary.textContent = authorSyncSummaryText(authorRows);
-    authorSyncCount.textContent = authorRows.length ? authorSyncSummaryText(authorRows) : '';
+    // The count sits next to the buttons and used to repeat the summary word for
+    // word: two identical lines, one under the title and one in the toolbar.
+    authorSyncCount.textContent = '';
     if (!authorRows.length) {
       authorSyncList.innerHTML = '<div class="settings-row-copy author-sync-empty"></div>';
       authorSyncList.querySelector('.author-sync-empty').textContent = T('settings.sync.author_sources_empty');
