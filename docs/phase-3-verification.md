@@ -162,7 +162,7 @@ Get-ChildItem tiklocal\static\*.js | ForEach-Object { node --check $_.FullName }
    - 重复链接自动去重，顺序保留，上限 5000 行；
    - 成功后提示「已导入 N 个链接。」，列表每行显示平台徽标（`DY` / `TT`）与「移除」按钮。
 3. 「导出」直接下载 `download-urls.txt`（`text/plain` 附件），内容与清单一致。
-4. 「与服务器文件同步」：填入服务器上的清单路径（例如 `/volume5/data/tiktok/TikTokDownloader-master/download/user-url.txt`），
+4. 「与服务器文件同步」：填入服务器上的清单路径（例如 `/path/to/TikTokDownloader-master/download/user-url.txt`），
    点「保存路径」记住它；「写回文件」把本地清单原子写入该文件，「从文件读取」把文件内容拉回本地清单。
    - 只接受绝对路径，且不能是目录；文件超过 2 MB 会拒绝读取。
    - 外部编辑器改完该文件后点「从文件读取」即可看到变化（与 TikTokDownloader 共用同一个 user-url.txt）。

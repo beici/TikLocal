@@ -268,10 +268,10 @@ LINK_ONLY_FILENAMES = ('user-url.txt',)
 def resolve_dump_path(value: Any) -> Path:
     """Turn what the user typed into the file to read.
 
-    A directory is normal: the path in the issue is
-    ``.../TikTokDownloader-master/url``, and the UID-carrying dump sits in the
-    sibling ``Volume`` folder. Looking in the folder *and* its neighbours means
-    the user can paste the folder they know instead of hunting for the file.
+    A directory is normal: TikTokDownloader keeps the link list in its own
+    ``url`` folder and the UID-carrying dump in a sibling ``Volume`` folder, so
+    looking in the folder *and* its neighbours means the user can paste the
+    folder they know instead of hunting for the file.
     """
     path = Path(str(value or '').strip()).expanduser()
     if not path.exists():
