@@ -32,8 +32,8 @@ _SELECTION_LOCK = threading.Lock()
 #: How much of the timeline a deep link hands back *above* the work it opens.
 #: The flow can only swipe back into cards it already holds, so opening a work
 #: used to leave "previous" as a dead end until the reader had scrolled past it.
-#: One screen is enough to walk back to whatever was on screen before; the cap
-#: keeps ``?size=200`` from turning one page into four hundred cards.
+#: One page of run-up is enough to walk back out of wherever the link landed;
+#: the cap keeps ``?size=200`` from turning one page into four hundred cards.
 START_FEED_LEAD = 24
 
 
