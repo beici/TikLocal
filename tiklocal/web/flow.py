@@ -209,6 +209,17 @@ def build_author_caption(name: str, sources_by_id: dict | None = None, record: d
         if author:
             item['author_name'] = author
             item['author_url'] = f"/flow?blog={quote(source_id or folder, safe='')}"
+            # ``author_url`` filters the Flow by media source, which is the right
+            # thing for the blog chips but the wrong destination for an avatar:
+            # a shared root holds several authors, so the avatar has to name the
+            # folder that the works live in, not the root.
+            if source_id:
+                scoped = quote(source_id, safe='')
+                item['author_page_url'] = (
+                    f"/author/{scoped}/{quote(folder, safe='')}"
+                    if len(segments) > 1
+                    else f"/author/{scoped}"
+                )
     if caption:
         item['caption_text'] = caption
     post_date = post_date_of(record)
@@ -445,6 +456,7 @@ def build_start_feed_page(
     sources_by_id: dict | None = None,
     blog: str = '',
     caption: str = '',
+    folder: str = '',
 ) -> dict:
     """Open one specific work and keep scrolling down from there.
 
@@ -457,14 +469,20 @@ def build_start_feed_page(
     expected to continue into. A caption that no longer contains ``uri`` (the
     work was retitled after the search) falls back to the unfiltered timeline
     instead of opening an empty feed.
+
+    ``folder`` narrows that timeline to one blogger parked inside a shared media
+    root. Without it a tap on a work under ``/author/default/UID…`` would keep
+    scrolling the whole root, so the next swipe handed the reader somebody
+    else's posts; the author page passes it along with ``blog``.
     """
     source_id = str(blog or '').strip()
+    scope = str(folder or '').strip()
     query = str(caption or '').strip()
     if not source_id and uri:
         match = re.match(r'^@([^/]+)/', uri)
         source_id = match.group(1) if match else ''
     if source_id:
-        records = media_index.records(source_id=source_id)
+        records = media_index.records(source_id=source_id, folder=scope)
     elif query:
         # A caption-only feed is library-wide; a deep link with no source prefix
         # still only needs the one work, which the offset search below finds.
@@ -505,6 +523,7 @@ def build_start_feed_page(
         'seed': seed,
         'start': uri,
         'caption': query,
+        'folder': scope,
     }
 
 
@@ -524,6 +543,7 @@ def build_mix_feed_page(
     tag: str = '',
     start: str = '',
     caption: str = '',
+    folder: str = '',
     session_start=None,
 ) -> dict:
     raw_tag = str(tag or '').strip()
@@ -542,7 +562,7 @@ def build_mix_feed_page(
         return build_start_feed_page(
             uri=raw_start, page=page, size=size, seed=seed,
             media_index=media_index, sources_by_id=sources_by_id, blog=blog,
-            caption=caption,
+            caption=caption, folder=folder,
         )
 
     if str(caption or '').strip():
@@ -552,7 +572,18 @@ def build_mix_feed_page(
         return build_start_feed_page(
             uri='', page=page, size=size, seed=seed,
             media_index=media_index, sources_by_id=sources_by_id, blog=blog,
-            caption=caption,
+            caption=caption, folder=folder,
+        )
+
+    if str(folder or '').strip() and str(blog or '').strip():
+        # A folder-scoped timeline with no work to start from (a reload that
+        # dropped ?start=, a hand-edited link) must stay on that blogger. The
+        # recommendation pool below only knows media sources, so it would hand
+        # back the whole shared root the folder lives in.
+        return build_start_feed_page(
+            uri='', page=page, size=size, seed=seed,
+            media_index=media_index, sources_by_id=sources_by_id, blog=blog,
+            folder=folder,
         )
 
     video_ratio = 4
@@ -770,6 +801,7 @@ def register_flow_routes(
             tag=request.args.get('tag', ''),
             start=request.args.get('start', ''),
             caption=request.args.get('caption', ''),
+            folder=str(request.args.get('folder', '')).strip(),
             session_start=session_start,
         )
         if request.args.get('snapshot') == '1':

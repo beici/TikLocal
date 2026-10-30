@@ -405,6 +405,10 @@
     }
 
     function douyinAuthorHref(entry) {
+      // A shared media root holds one folder per blogger, and the server sends
+      // the folder-scoped page in author_page_url for exactly that case: the
+      // source id alone would open a page labelled with the root's own name.
+      if (entry?.author_page_url) return String(entry.author_page_url);
       const sourceId = douyinSourceId(entry);
       return sourceId ? `/author/${encodeURIComponent(sourceId)}` : String(entry?.author_url || '/flow');
     }
@@ -1666,6 +1670,10 @@
           if (feedMode) query.set('mode', feedMode);
           const blogFilter = new URLSearchParams(window.location.search).get('blog');
           if (blogFilter) query.set('blog', blogFilter);
+          // A work opened from a blogger page keeps scrolling that blogger only.
+          // Without this the next swipe pulled in the whole shared media root.
+          const folderFilter = new URLSearchParams(window.location.search).get('folder');
+          if (folderFilter) query.set('folder', folderFilter);
           const tagFilter = currentTopicTag();
           if (tagFilter) query.set('tag', tagFilter);
           // A caption search keeps the timeline on the searched words instead of
@@ -1698,6 +1706,7 @@
               thumb_url: item.thumb_url || '',
               author_name: item.author_name || '',
               author_url: item.author_url || '',
+              author_page_url: item.author_page_url || '',
               caption_text: item.caption_text || '',
               kind_label: item.kind_label || '',
               post_date: item.post_date || '',

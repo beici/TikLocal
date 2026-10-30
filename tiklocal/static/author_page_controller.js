@@ -8,7 +8,14 @@
   if (!page) return;
 
   const sourceId = page.dataset.sourceId || '';
-  const endpoint = (action) => `/api/author/${encodeURIComponent(sourceId)}/${action}`;
+  // One blogger inside a shared root: the API calls and the Flow deep link both
+  // need the folder, or a folder page would sync into the root's cache entry and
+  // tapping a work would hand the reader the whole root's timeline.
+  const folder = page.dataset.authorFolder || '';
+  const endpoint = (action) => {
+    const base = `/api/author/${encodeURIComponent(sourceId)}/${action}`;
+    return folder ? `${base}?folder=${encodeURIComponent(folder)}` : base;
+  };
 
   // In Douyin mode a tap on a work should start that author's timeline and keep
   // scrolling it, exactly like tapping a work on a Douyin profile.
@@ -18,6 +25,7 @@
       if (!uri) return;
       const query = new URLSearchParams({ start: uri });
       if (sourceId) query.set('blog', sourceId);
+      if (folder) query.set('folder', folder);
       tile.href = `/flow?${query.toString()}`;
     });
   }
@@ -253,7 +261,9 @@
       const response = await fetch('/api/author/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: [{ source_id: sourceId, profile_url: profileUrl }] }),
+        body: JSON.stringify({
+          items: [{ source_id: sourceId, folder, profile_url: profileUrl }],
+        }),
       });
       const payload = await response.json().catch(() => ({}));
       const result = Array.isArray(payload.items) ? payload.items[0] : null;

@@ -28,7 +28,12 @@ from flask import abort, current_app, jsonify, render_template, request, send_fi
 
 from tiklocal.i18n import current_locale, t
 from tiklocal.services import author_profiles
-from tiklocal.services.media_naming import blogger_display_name
+from tiklocal.services.media_naming import (
+    author_folder,
+    blogger_display_name,
+    is_author_folder,
+    is_blogger_folder,
+)
 from tiklocal.services.tiktok_downloader import (
     AuthorAmbiguousError,
     TikTokDownloaderError,
@@ -60,6 +65,58 @@ def display_name(source_id: str, folder_name: str, profile: dict) -> str:
         or blogger_display_name(folder_name)
         or str(source_id or '')
     )
+
+
+def profile_key(source_id: str, folder: str, folder_name: str) -> str:
+    """The key an author's cached profile and avatar are stored under.
+
+    ``author_profiles`` used to key everything by media source, which was right
+    while a source was one blogger's export folder. A shared root such as
+    ``~/Downloads/douyin`` breaks that: the source names nobody, so every author
+    inside it shared one cache entry and the second sync overwrote the first.
+    Scoping the key to ``<source>/<folder>`` gives each blogger its own nickname,
+    Douyin id and avatar while keeping every existing single-blogger install on
+    its old ``source_id`` key, so nothing has to be re-synced after upgrading.
+    """
+    scope = str(folder or '').strip()
+    if not scope or scope == str(folder_name or ''):
+        return str(source_id or '')
+    return f'{source_id}/{scope}'
+
+
+def author_of(record: dict) -> str:
+    """The export folder that owns ``record``; '' when it belongs to nobody.
+
+    A record names itself ``@<source>/<rel_path>``, so the folder is the first
+    segment of the path after the source.
+    """
+    uri = str(record.get('name') or '')
+    _, _, rel_path = uri.partition('/') if uri.startswith('@') else ('', '', uri)
+    folder = author_folder(rel_path)
+    return folder if folder and is_author_folder(folder) else ''
+
+
+def author_folders(records) -> list[dict]:
+    """The authors living inside one media source, biggest first.
+
+    A shared root such as ``~/Downloads/douyin`` holds one export folder per
+    blogger, and the root itself names nobody: listing the raw folder as a
+    nickname is what turned the page into "down". Only folders that look like an
+    export (a ``UID…_`` prefix) count, so a year or trip directory keeps the
+    ordinary single-page behaviour.
+    """
+    counts: dict[str, int] = {}
+    for record in records or ():
+        folder = author_of(record)
+        if not folder:
+            continue
+        counts[folder] = counts.get(folder, 0) + 1
+    entries = [
+        {'folder': folder, 'name': blogger_display_name(folder), 'count': count}
+        for folder, count in counts.items()
+    ]
+    entries.sort(key=lambda entry: (-entry['count'], entry['folder']))
+    return entries
 
 
 def format_count(value) -> str:
@@ -102,17 +159,18 @@ def parse_sync_text(text) -> list[dict]:
     return entries
 
 
-def local_work_names(media_index, source_id: str) -> list[str]:
+def local_work_names(media_index, source_id: str, *, folder: str = '') -> list[str]:
     """Every file name the library holds for a source, newest first.
 
     ``更新最新视频`` diffs the sidecar's account timeline against these names, so
     it has to see album members and live-post parts too, not just the covers the
-    grid renders.
+    grid renders. ``folder`` narrows that to one blogger inside a shared root:
+    otherwise every author's page re-queued the whole root's works.
     """
     # No blanket except here: treating an index failure as "no local works" made
     # 更新最新视频 queue up to 100 already-downloaded videos again. Let it reach the
     # route's 502 handler instead.
-    records = media_index.records(source_id=source_id, album_covers_only=False)
+    records = media_index.records(source_id=source_id, album_covers_only=False, folder=folder)
     return [str(record.get('name') or '') for record in records or () if record.get('name')]
 
 
@@ -194,37 +252,116 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         payload = request.get_json(silent=True)
         return payload if isinstance(payload, dict) else {}
 
+    def _render_author(
+        source_id, source, *, folder: str, profile: dict, tiles: list[dict],
+        authors: list[dict] | None = None,
+    ):
+        folder_name = folder_name_for(source)
+        key = profile_key(source_id, folder, folder_name)
+        sidecar_ready = bool(_sidecar_base_url())
+        scoped = key != str(source_id or '')
+        # A folder-scoped page is a full author page, not a read-only preview: it
+        # has its own cache key, so it can bind a home-page link and sync its own
+        # nickname, Douyin id, avatar and counters without touching the root's.
+        scoped_url = '/author/{}/{}'.format(
+            quote(str(source_id or ''), safe=''), quote(folder, safe=''),
+        ) if scoped else ''
+        return render_template(
+            'author.html',
+            menu='author',
+            source_id=source_id,
+            author_folder=folder if scoped else '',
+            author_name=display_name(key, folder, profile),
+            avatar_url=(
+                f'{scoped_url}/avatar' if scoped
+                else f'/author/{quote(str(source_id or ""), safe="")}/avatar'
+            ),
+            search_default=blogger_display_name(folder) or str(source_id or ''),
+            douyin_id=(
+                str(profile.get('douyin_id') or '')
+                or author_profiles.douyin_id_from_folder(folder)
+            ),
+            profile_url=str(profile.get('profile_url') or ''),
+            tiles=tiles,
+            authors=authors or [],
+            stats=[] if authors else build_stats(tiles, profile),
+            refresh_enabled=sidecar_ready,
+            update_enabled=sidecar_ready,
+        )
+
     @app.route('/author/<source_id>')
     def author_view(source_id):
         source = _source_or_404(source_id)
         folder_name = folder_name_for(source)
         profile = author_profiles.resolve_profile(source_id, folder_name=folder_name)
-        tiles = build_tiles(media_index.records(source_id=source_id, album_covers_only=True))
-        sidecar_ready = bool(_sidecar_base_url())
-        return render_template(
-            'author.html',
-            menu='author',
-            source_id=source_id,
-            author_name=display_name(source_id, folder_name, profile),
-            search_default=blogger_display_name(folder_name) or str(source_id or ''),
-            douyin_id=str(profile.get('douyin_id') or ''),
-            profile_url=str(profile.get('profile_url') or ''),
-            tiles=tiles,
-            stats=build_stats(tiles, profile),
-            refresh_enabled=sidecar_ready,
-            update_enabled=sidecar_ready,
+        records = media_index.records(source_id=source_id, album_covers_only=True)
+        authors = (
+            [] if is_blogger_folder(folder_name) else author_folders(records)
+        )
+        # A mixed root can hold loose files next to the export folders. They name
+        # nobody, so listing the authors must not make them disappear from the
+        # page the user came to look at.
+        loose = [record for record in records if not author_of(record)] if authors else records
+        return _render_author(
+            source_id, source,
+            folder=folder_name,
+            profile=profile,
+            tiles=build_tiles(loose),
+            authors=authors,
+        )
+
+    @app.route('/author/<source_id>/<folder>')
+    def author_folder_view(source_id, folder):
+        """One blogger inside a shared root: ``/author/default/UID123_博主名_发布作品``.
+
+        The avatar on a Flow card points here, because the source alone owns no
+        author when several exports share a directory.
+        """
+        source = _source_or_404(source_id)
+        records = media_index.records(
+            source_id=source_id, album_covers_only=True, folder=folder,
+        )
+        if not records:
+            abort(404)
+        folder_name = folder_name_for(source)
+        profile = author_profiles.resolve_profile(
+            profile_key(source_id, folder, folder_name), folder_name=folder,
+        )
+        return _render_author(
+            source_id, source,
+            folder=folder,
+            profile=profile,
+            tiles=build_tiles(records),
         )
 
     @app.route('/author/<source_id>/avatar')
     def author_avatar(source_id):
         _source_or_404(source_id)
-        cached = author_profiles.existing_avatar_path(source_id)
+        return _send_avatar(source_id)
+
+    @app.route('/author/<source_id>/<folder>/avatar')
+    def author_folder_avatar(source_id, folder):
+        """The avatar of one blogger inside a shared root."""
+        source = _source_or_404(source_id)
+        return _send_avatar(profile_key(source_id, folder, folder_name_for(source)))
+
+    def _send_avatar(key):
+        cached = author_profiles.existing_avatar_path(key)
         if cached.is_file():
             return send_file(cached, mimetype='image/jpeg', max_age=AVATAR_MAX_AGE)
         bundled = Path(current_app.static_folder or '') / author_profiles.DEFAULT_AVATAR_FILENAME
         if not bundled.is_file():
             abort(404)
         return send_file(bundled, mimetype='image/jpeg', max_age=AVATAR_MAX_AGE)
+
+    def _scoped_key(source_id, source) -> str:
+        """The cache key for the author this request talks about.
+
+        ``?folder=`` names one blogger inside a shared root; without it the
+        request is about the source itself, exactly as before.
+        """
+        folder = str(request.args.get('folder') or '').strip()
+        return profile_key(source_id, folder, folder_name_for(source)), folder
 
     def _sync_profile(source_id):
         """Refresh one author's cached profile (nickname, Douyin id, avatar, stats).
@@ -239,15 +376,23 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             return jsonify({'success': False, 'ok': False, 'error': t('author.refresh.unconfigured')}), 400
         payload = _json_body()
         folder_name = folder_name_for(source)
+        key, folder = _scoped_key(source_id, source)
+        # The export folder's UID is what proves a pasted link belongs here. For a
+        # blogger parked in a shared root that is the folder's own UID, not the
+        # root's (which has none), so the identity check still has something to
+        # match before anything is written to that blogger's cache entry.
+        expected_uid = author_profiles.douyin_id_from_folder(
+            folder or folder_name
+        )
         profile_url = str(payload.get('profile_url') or '').strip()
         aweme_id = str(payload.get('aweme_id') or '').strip()
         if profile_url or aweme_id:
             try:
                 tiktok_service.sync_author_profile(
-                    source_id,
+                    key,
                     profile_url=profile_url,
                     aweme_id=aweme_id,
-                    folder_uid=author_profiles.douyin_id_from_folder(folder_name),
+                    folder_uid=expected_uid,
                 )
             except ValueError as exc:
                 return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
@@ -260,16 +405,16 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
                 # LAN client the sidecar address and its private routes.
                 app.logger.warning('author refresh failed for %s', source_id, exc_info=True)
                 return jsonify({'success': False, 'ok': False, 'error': t('author.refresh.error')}), 502
-            profile = author_profiles.resolve_profile(source_id, folder_name=folder_name)
+            profile = author_profiles.resolve_profile(key, folder_name=folder or folder_name)
             return jsonify({'success': True, 'ok': True, 'profile': profile})
 
         keyword = str(payload.get('keyword') or '').strip()
-        keyword = keyword or blogger_display_name(folder_name)
+        keyword = keyword or blogger_display_name(folder or folder_name)
         unique_id = str(payload.get('unique_id') or '').strip()
         uid = str(payload.get('uid') or '').strip()
         try:
             profile = tiktok_service.refresh_author_profile(
-                source_id, keyword=keyword, unique_id=unique_id, uid=uid,
+                key, keyword=keyword, unique_id=unique_id, uid=uid,
             )
         except AuthorAmbiguousError as exc:
             # Several accounts share the nickname: hand the picker back to the page.
@@ -296,7 +441,7 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
     @app.post('/api/author/<source_id>/bind')
     def author_bind(source_id):
         """Persist the author home-page link that belongs to this media source."""
-        _source_or_404(source_id)
+        source = _source_or_404(source_id)
         url = str(_json_body().get('profile_url') or '').strip()
         if not url:
             return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.profile_url')}), 400
@@ -305,7 +450,7 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         except ValueError as exc:
             return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
         try:
-            author_profiles.set_profile_url(source_id, url)
+            author_profiles.set_profile_url(_scoped_key(source_id, source)[0], url)
         except OSError:
             # authors/*.json is briefly locked by a scanner or an editor. The old
             # password-store lesson applies: an unwritable store is a 503 with a
@@ -317,25 +462,26 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
     @app.post('/api/author/<source_id>/update-videos')
     def author_update_videos(source_id):
         """Queue downloads for the author's works that the library does not hold yet."""
-        _source_or_404(source_id)
+        source = _source_or_404(source_id)
         if not _sidecar_base_url():
             return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.unconfigured')}), 400
         payload = _json_body()
+        key, folder = _scoped_key(source_id, source)
         profile_url = str(payload.get('profile_url') or '').strip()
         if profile_url:
             bound = normalize_profile_url(profile_url)
             if not bound:
                 return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.profile_url')}), 400
             try:
-                author_profiles.set_profile_url(source_id, bound)
+                author_profiles.set_profile_url(key, bound)
             except OSError:
                 app.logger.exception('Could not save the author link for %s', source_id)
                 return jsonify({'success': False, 'ok': False, 'error': t('common.error.storage_unavailable')}), 503
         try:
             result = tiktok_service.enqueue_latest_videos(
-                source_id,
+                key,
                 profile_url=profile_url,
-                local_names=local_work_names(media_index, source_id),
+                local_names=local_work_names(media_index, source_id, folder=folder),
             )
         except ValueError as exc:
             return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
@@ -399,10 +545,12 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
     def author_sync():
         """Sync author profiles from home-page links, one line per author.
 
-        Accepts ``{items: [{source_id?, profile_url?, aweme_id?}]}`` or ``{text:
-        "<source_id>|<profile_url>"}``. A line without a source id is matched to
-        its export folder through the numeric UID inside the author block, which
-        is the only identity proof a bare link carries.
+        Accepts ``{items: [{source_id?, folder?, profile_url?, aweme_id?}]}`` or
+        ``{text: "<source_id>|<profile_url>"}``. A line without a source id is
+        matched to its export folder through the numeric UID inside the author
+        block, which is the only identity proof a bare link carries. ``folder``
+        names one blogger inside a shared root and scopes where the result is
+        cached, so two authors in one root stop overwriting each other.
         """
         if not _sidecar_base_url():
             return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.unconfigured')}), 400
@@ -415,6 +563,7 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
                     continue
                 entries.append({
                     'source_id': str(item.get('source_id') or '').strip(),
+                    'folder': str(item.get('folder') or '').strip(),
                     'profile_url': str(item.get('profile_url') or '').strip(),
                     'aweme_id': str(item.get('aweme_id') or '').strip(),
                 })
@@ -443,9 +592,15 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
                         'error': t('author.sync.error.unknown_source_id', id=source_id),
                     })
                     continue
-                entry['folder_uid'] = (
+                entry['folder_uid'] = author_profiles.douyin_id_from_folder(
+                    entry.get('folder') or ''
+                ) if entry.get('folder') else (
                     author_profiles.douyin_id_from_folder(folder_name_for(source)) if source else ''
                 )
+                if source:
+                    entry['profile_key'] = profile_key(
+                        source_id, entry.get('folder') or '', folder_name_for(source),
+                    )
                 results.extend(tiktok_service.sync_author_profiles([entry], source_lookup=index.get))
         except TikTokDownloaderError as exc:
             # The batch stopped early: keep the authors that already synced.

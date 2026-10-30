@@ -421,8 +421,12 @@ class MediaIndexStore:
     def records(
         self, *, search: str = "", media_type: str = "",
         source_id: str = "", album_covers_only: bool = False,
+        folder: str = "",
     ) -> list[dict]:
         """Every record matching the filters, newest first.
+
+        ``folder`` narrows to one top-level folder of the source, which is how a
+        shared media root addresses a single author.
 
         Deliberately unbounded: the callers that still use it are the ones whose
         semantics need the whole filtered set — the tag feed and the deep-link
@@ -439,7 +443,7 @@ class MediaIndexStore:
 
         where, params = self._filters(
             search=search, media_type=media_type, source_id=source_id,
-            album_covers_only=album_covers_only,
+            album_covers_only=album_covers_only, folder=folder,
         )
         with self.database.connect() as conn:
             rows = conn.execute(
@@ -962,6 +966,7 @@ class MediaIndexStore:
         month: str = "",
         source_id: str = "",
         album_covers_only: bool = False,
+        folder: str = "",
     ) -> tuple[str, list[object]]:
         clauses: list[str] = []
         params: list[object] = []
@@ -978,6 +983,12 @@ class MediaIndexStore:
         if source_id:
             clauses.append("source_id = ?")
             params.append(str(source_id))
+        if folder:
+            # Compare the prefix, not LIKE: export folder names are full of
+            # underscores (UID123_博主名_发布作品), which LIKE reads as wildcards.
+            prefix = f'{folder}/'
+            clauses.append("substr(rel_path, 1, ?) = ?")
+            params.extend([len(prefix), prefix])
         if min_size > 0:
             clauses.append("size_bytes >= ?")
             params.append(int(min_size))

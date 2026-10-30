@@ -278,6 +278,7 @@ def test_batch_matches_a_bare_link_through_the_folder_uid(monkeypatch):
     assert results == [{
         'ok': True,
         'source_id': 'demo',
+        'profile_key': 'demo',
         'nickname': 'demo_author',
         'unique_id': 'demo0001',
         'short_id': '37543',
@@ -346,6 +347,7 @@ def test_sync_endpoint_parses_text_lines(tmp_path, monkeypatch):
     assert body['synced'] == 1
     assert captured['entries'] == [{
         'source_id': 'demo', 'profile_url': PROFILE_URL, 'folder_uid': FOLDER_UID,
+        'profile_key': 'demo',
     }]
 
 

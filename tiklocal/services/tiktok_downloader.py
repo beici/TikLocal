@@ -936,6 +936,9 @@ class TikTokDownloadService:
             if not isinstance(entry, dict):
                 continue
             source_id = str(entry.get("source_id") or "").strip()
+            # One blogger inside a shared media root is cached under
+            # ``<source>/<folder>``; the source alone names nobody there.
+            cache_key = str(entry.get("profile_key") or "").strip() or source_id
             try:
                 profile_url = str(entry.get("profile_url") or "").strip()
                 aweme_id = str(entry.get("aweme_id") or "").strip()
@@ -950,13 +953,14 @@ class TikTokDownloadService:
                     if not source_id:
                         raise TikTokDownloaderError(t('author.sync.error.unknown_source', uid=uid or "?"))
                     folder_uid = uid
+                    cache_key = source_id
                 if author is None:
                     result = self.sync_author_profile(
-                        source_id, profile_url=profile_url, aweme_id=aweme_id, folder_uid=folder_uid,
+                        cache_key, profile_url=profile_url, aweme_id=aweme_id, folder_uid=folder_uid,
                     )
                 else:
                     result = self.store_author_block(
-                        source_id, author, folder_uid=folder_uid, profile_url=profile_url,
+                        cache_key, author, folder_uid=folder_uid, profile_url=profile_url,
                     )
             except TikTokDownloaderError as exc:
                 # Only our own error type carries text written for the user.
@@ -976,7 +980,9 @@ class TikTokDownloadService:
                     "error": t('author.sync.error.unknown'),
                 })
             else:
-                results.append({"ok": True, **result})
+                # ``store_author_block`` echoes whatever key it cached under; the
+                # caller keys its rows by media source, so report that separately.
+                results.append({"ok": True, **result, "source_id": source_id, "profile_key": cache_key})
         return results
 
     def _pending_work_ids(self) -> set[str]:

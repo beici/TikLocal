@@ -4,6 +4,7 @@
 
 {% block content %}
 <main id="main" class="author-page" data-author-page data-source-id="{{ source_id }}"
+      data-author-folder="{{ author_folder }}"
       data-author-name="{{ search_default }}" data-author-bound-url="{{ profile_url }}">
   <header class="author-topbar">
     <button type="button" class="author-back" data-author-back aria-label="{{ t('author.back') }}">
@@ -14,9 +15,10 @@
     </button>
   </header>
 
+  {% if not authors %}
   <section class="author-profile">
     <span class="author-avatar-ring">
-      <img class="author-avatar" src="/author/{{ source_id|urlencode }}/avatar"
+      <img class="author-avatar" src="{{ avatar_url }}"
            alt="{{ t('author.avatar_alt', name=author_name) }}" width="88" height="88"
            onerror="this.onerror=null;this.src='/static/default-avatar.jpg'">
     </span>
@@ -43,9 +45,29 @@
   <nav class="author-tabs" aria-label="{{ t('author.tabs_label') }}">
     <span class="author-tab is-active" aria-current="page">{{ t('author.tab.works') }}</span>
   </nav>
+  {% endif %}
 
   <p class="author-alert" data-author-alert role="alert" hidden></p>
 
+  {% if authors %}
+  <div class="author-list">
+    <p class="author-list-title">{{ t('author.list.title') }}</p>
+    <p class="author-list-detail">{{ t('author.list.detail') }}</p>
+    <ul class="author-list-items">
+      {% for entry in authors %}
+      <li class="author-list-item">
+        <a class="author-list-link" href="/author/{{ source_id|urlencode }}/{{ entry.folder|urlencode }}">
+          <img class="author-list-avatar" src="/author/{{ source_id|urlencode }}/{{ entry.folder|urlencode }}/avatar"
+               alt="" width="40" height="40" loading="lazy" decoding="async"
+               onerror="this.onerror=null;this.src='/static/default-avatar.jpg'">
+          <span class="author-list-name">{{ entry.name }}</span>
+          <span class="author-list-count">{{ t('author.list.works', count=entry.count) }}</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
   {% if tiles %}
   <div class="author-grid">
     {% for tile in tiles %}
@@ -66,7 +88,7 @@
     </a>
     {% endfor %}
   </div>
-  {% else %}
+  {% elif not authors %}
   <div class="author-empty">
     <p class="author-empty-title">{{ t('author.empty.title') }}</p>
     <p class="author-empty-detail">{{ t('author.empty.detail') }}</p>
