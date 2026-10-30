@@ -523,6 +523,39 @@ def test_a_second_serve_on_the_same_instance_is_refused(tmp_path, monkeypatch, c
     assert 'already in use' in capsys.readouterr().err
 
 
+def test_an_unwritable_instance_directory_is_one_actionable_line(tmp_path, monkeypatch, capsys):
+    """A data folder the account cannot write used to end in a PermissionError traceback."""
+    instance = tmp_path / 'instance'
+    instance.mkdir()
+    monkeypatch.setenv('TIKLOCAL_INSTANCE', str(instance))
+    main = _run_cli(monkeypatch, [str(tmp_path), '--host', '127.0.0.1', '--port', str(_free_port())])
+
+    _deny_writing_into(monkeypatch, instance)
+    with pytest.raises(SystemExit) as stopped:
+        main()
+
+    assert stopped.value.code == 1
+    stderr = capsys.readouterr().err
+    assert 'Cannot write the instance directory' in stderr
+    assert str(instance) in stderr
+    # The whole point: no traceback, and not the "another process" message.
+    assert 'Traceback' not in stderr
+    assert 'already in use' not in stderr
+
+
+def _deny_writing_into(monkeypatch, folder):
+    """Fail every file creation under ``folder``, the way a foreign-uid mount does."""
+    real_open = open
+    root = str(folder)
+
+    def fake_open(file, *args, **kwargs):
+        if str(file).startswith(root):
+            raise PermissionError(13, 'Permission denied', str(file))
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr('builtins.open', fake_open)
+
+
 def test_an_explicit_zero_lifetime_is_an_error_not_the_default(tmp_path, monkeypatch, capsys):
     """``--days 0`` must reach the range check instead of meaning "unset"."""
     monkeypatch.setenv('TIKLOCAL_INSTANCE', str(tmp_path / 'instance'))
