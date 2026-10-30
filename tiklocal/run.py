@@ -900,6 +900,9 @@ Examples:
         "EXPERIMENTS": config.get('experiments'),
         "INSTANCE_NAME": args.name or os.environ.get('TIKLOCAL_NAME') or config.get('name'),
         "TIKTOK_DOWNLOADER": config.get('tiktok_downloader'),
+        # Fill the index behind the port rather than before it. The alternative is a
+        # first launch on a large library that answers nothing for minutes.
+        "INDEX_SYNC_BACKGROUND": True,
     }
     if tls_material is not None:
         # Over HTTPS the session cookie is always Secure. Passing the key only in

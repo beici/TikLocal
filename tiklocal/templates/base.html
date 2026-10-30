@@ -57,6 +57,9 @@
   </head>
   <body data-nav-context="{{ menu or 'default' }}" class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white min-h-screen transition-colors duration-300{% block body_class %}{% endblock %}">
     <a class="skip-link" href="#main">{{ t('nav.skip_to_content') }}</a>
+    {% if index_building %}
+    <p class="index-building" id="index-building" role="status">{{ t('library.building') }}</p>
+    {% endif %}
     <header class="mobile-app-header {% if menu not in ['flow', 'radio'] %}is-utility-page{% endif %}" aria-label="{{ t('nav.app_navigation') }}">
       {% if menu in ['flow', 'radio'] %}
       <nav class="mobile-mode-switch" aria-label="{{ t('nav.experience_mode') }}">
@@ -142,6 +145,7 @@
     {% block content %}{% endblock %}
     
     {% block extra_body %}{% endblock %}
+    {% if index_building %}<script src="{{ static_asset('index_build.js') }}"></script>{% endif %}
     <script src="{{ static_asset('base.js') }}"></script>
   </body>
 </html>

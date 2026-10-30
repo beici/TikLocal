@@ -378,12 +378,18 @@ def register_settings_routes(
         # read_only() returns a set too, and reuses the mtime-cached parse; this
         # endpoint fires on every settings page load.
         favorites = safe(favorite_service.read_only, set()) or set()
+        # A background first scan keeps the server reachable while the index fills
+        # in. Without this flag an empty library during those minutes is
+        # indistinguishable from "your media folder is empty or wrong".
+        building = bool(app.extensions.get('media_index_building'))
         return {
             'videos': index.get('videos', 0),
             'images': index.get('images', 0),
             'audios': index.get('audios', 0),
             'indexed_total': index.get('total', 0),
             'last_synced_at': index.get('last_synced_at'),
+            'index_building': building,
+            'index_error': str(app.extensions.get('media_index_error') or ''),
             'favorites': len(favorites) if isinstance(favorites, (list, set, tuple)) else 0,
             'cache_count': cache.get('count', 0),
             'cache_mb': cache.get('size_mb', 0),

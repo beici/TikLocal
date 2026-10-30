@@ -7,6 +7,7 @@ import hashlib
 import logging
 import sqlite3
 import socket
+import threading
 import time
 from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
@@ -350,6 +351,9 @@ def create_app(test_config=None):
             'locale': locale,
             't': t,
             'i18n_js': js_catalog(locale),
+            # Read live so a page rendered while the background scan is still running
+            # says so, and the banner it draws goes away on its own afterwards.
+            'index_building': bool(app.extensions.get('media_index_building')),
         }
 
     @app.template_filter('timestamp_to_date')
@@ -526,37 +530,8 @@ def create_app(test_config=None):
         app_database.migrate()
     media_index = MediaIndexStore(app_database)
     library_indexer = LibraryIndexer(library_service, media_index)
-    try:
-        index_sync_result = library_indexer.sync()
-    except (sqlite3.Error, OSError) as error:
-        # A full disk or a locked database made the index unwritable. The index
-        # itself is still consistent (every write is one transaction), so serving
-        # the previous snapshot beats refusing to start.
-        app.logger.error('index sync failed; serving the previous index: %s', error)
-        index_sync_result = {
-            'indexed': 0,
-            'deleted': 0,
-            'unavailable_sources': [],
-            'source_errors': {},
-            'busy': False,
-            'error': str(error),
-        }
-    app.extensions["media_index_sync"] = index_sync_result
-    # The result was stored and never read: an unreadable source, an empty folder
-    # and a wrong path all looked the same in the log (one INFO line, then "Serving
-    # on"), which is the hardest kind of startup failure to diagnose remotely.
-    _unavailable = index_sync_result.get('unavailable_sources') or []
-    if _unavailable:
-        app.logger.warning(
-            'index sync: indexed=%s deleted=%s unavailable=%s errors=%s',
-            index_sync_result.get('indexed'), index_sync_result.get('deleted'),
-            ', '.join(str(item) for item in _unavailable),
-            index_sync_result.get('source_errors') or {},
-        )
-    else:
-        app.logger.info(
-            'index sync: indexed=%s deleted=%s', index_sync_result.get('indexed'), index_sync_result.get('deleted'),
-        )
+    # The probe worker is created before the first scan on purpose: the scan wakes it
+    # through ``on_change`` when it finishes, so there is nothing to order here.
     media_probe = MediaProbeWorker(library_service, media_index)
     library_indexer.on_change = media_probe.wake
     app.extensions["media_probe"] = media_probe
@@ -570,11 +545,62 @@ def create_app(test_config=None):
         if not _PROBE_ATEXIT_REGISTERED:
             atexit.register(media_probe.stop)
             _PROBE_ATEXIT_REGISTERED = True
-    if index_sync_result["unavailable_sources"]:
-        app.logger.warning(
-            "Media source unavailable; preserving its existing index: %s",
-            ", ".join(index_sync_result["unavailable_sources"]),
-        )
+
+    def _build_index() -> dict:
+        try:
+            result = library_indexer.sync()
+        except (sqlite3.Error, OSError) as error:
+            # A full disk or a locked database made the index unwritable. The index
+            # itself is still consistent (every write is one transaction), so serving
+            # the previous snapshot beats refusing to start.
+            app.logger.error('index sync failed; serving the previous index: %s', error)
+            result = {
+                'indexed': 0,
+                'deleted': 0,
+                'unavailable_sources': [],
+                'source_errors': {},
+                'busy': False,
+                'error': str(error),
+            }
+        # The result used to be stored and never read: an unreadable source, an empty
+        # folder and a wrong path all looked the same in the log (one INFO line, then
+        # "Serving on"), which is the hardest kind of startup failure to diagnose
+        # remotely.
+        unavailable = result.get('unavailable_sources') or []
+        if unavailable:
+            app.logger.warning(
+                'index sync: indexed=%s deleted=%s unavailable=%s errors=%s',
+                result.get('indexed'), result.get('deleted'),
+                ', '.join(str(item) for item in unavailable),
+                result.get('source_errors') or {},
+            )
+            app.logger.warning(
+                'Media source unavailable; preserving its existing index: %s',
+                ', '.join(unavailable),
+            )
+        else:
+            app.logger.info(
+                'index sync: indexed=%s deleted=%s', result.get('indexed'), result.get('deleted'),
+            )
+        app.extensions["media_index_sync"] = result
+        app.extensions["media_index_error"] = str(result.get('error') or '')
+        app.extensions["media_index_building"] = False
+        return result
+
+    # A first scan walks every file in the library, which on a NAS holding 180k files
+    # is minutes of directory work before the index exists. Doing that inline meant the
+    # server did not listen on its port until the walk finished: the page was a bare
+    # "connection refused", which reads as "deployed wrong" rather than "still
+    # starting". The scan keeps running; it just no longer holds the port hostage.
+    if app.config.get('INDEX_SYNC_BACKGROUND'):
+        app.extensions["media_index_sync"] = None
+        app.extensions["media_index_error"] = ''
+        app.extensions["media_index_building"] = True
+        app.logger.info('Building the media index in the background; pages fill in as it finishes')
+        threading.Thread(target=_build_index, name='index-build', daemon=True).start()
+    else:
+        app.extensions["media_index_building"] = False
+        _build_index()
     activity_store = MediaActivityStore(app_database)
     recommend_service = RecommendService(
         library_service,
