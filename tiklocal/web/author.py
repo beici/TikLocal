@@ -331,7 +331,10 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             abort(404)
         folder_name = folder_name_for(source)
         profile = author_profiles.resolve_profile(
-            profile_key(source_id, folder, folder_name), folder_name=folder,
+            profile_key(source_id, folder, folder_name),
+            folder_name=folder,
+            # An entry synced before this page existed lives under the root.
+            shared_key=source_id,
         )
         return _render_author(
             source_id, source,
@@ -367,8 +370,21 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
         uri = str(newest.get('name') or '')
         return media_urls(uri)['thumb_url'] if uri else ''
 
+    def _avatar_key(key, source_id: str = '', folder: str = '') -> str:
+        """Where this author's picture really is: their own key, or the root's.
+
+        A picture synced before per-author keys existed sits under the media
+        root, and only the folder UID can prove it is the right person.
+        """
+        if author_profiles.existing_avatar_path(key).is_file():
+            return key
+        shared = author_profiles.inherited_profile(key, source_id, folder)
+        if shared and author_profiles.existing_avatar_path(source_id).is_file():
+            return source_id
+        return key
+
     def _send_avatar(key, source_id: str = '', folder: str = ''):
-        cached = author_profiles.existing_avatar_path(key)
+        cached = author_profiles.existing_avatar_path(_avatar_key(key, source_id, folder))
         if cached.is_file():
             return send_file(cached, mimetype='image/jpeg', max_age=AVATAR_MAX_AGE)
         # Nobody has synced this author yet. The bundled grey face made every page
@@ -433,7 +449,10 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
                 # LAN client the sidecar address and its private routes.
                 app.logger.warning('author refresh failed for %s', source_id, exc_info=True)
                 return jsonify({'success': False, 'ok': False, 'error': t('author.refresh.error')}), 502
-            profile = author_profiles.resolve_profile(key, folder_name=folder or folder_name)
+            profile = author_profiles.resolve_profile(
+                key, folder_name=folder or folder_name,
+                shared_key=source_id if folder else '',
+            )
             return jsonify({'success': True, 'ok': True, 'profile': profile})
 
         keyword = str(payload.get('keyword') or '').strip()
@@ -550,23 +569,49 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
 
     @app.get('/api/author/sources')
     def author_sources():
-        """Every media source as an author row, for the settings sync card."""
+        """One row per author, for the settings sync card.
+
+        A shared media root holds several bloggers: a row per source made every
+        one of them sync into a single cache entry that none of their pages read,
+        so the card reported success and the author page stayed empty. Each export
+        folder gets its own row, and the row carries the ``folder`` that the sync
+        endpoints scope by.
+        """
         items = []
         for source_id, source in (library_service.sources_by_id or {}).items():
             folder_name = folder_name_for(source)
-            profile = author_profiles.resolve_profile(source_id, folder_name=folder_name)
-            items.append({
-                'source_id': str(source_id),
-                'folder_name': folder_name,
-                'display_name': display_name(source_id, folder_name, profile),
-                'douyin_id': str(profile.get('douyin_id') or ''),
-                'nickname': str(profile.get('name') or ''),
-                'has_profile': bool(author_profiles.load_profile(source_id)),
-                'profile_url': str(profile.get('profile_url') or ''),
-                'local_count': len(local_work_names(media_index, source_id)),
-                'avatar_url': f'/author/{quote(str(source_id))}/avatar',
-            })
-        items.sort(key=lambda item: (item['display_name'].lower(), item['source_id']))
+            records = media_index.records(source_id=source_id, album_covers_only=True)
+            folders = [] if is_blogger_folder(folder_name) else author_folders(records)
+            rows = [(entry['folder'], entry['count']) for entry in folders]
+            if not rows:
+                # The source is one blogger's export folder, or a root with no
+                # export folders in it. Either way the source itself is the author.
+                rows = [('', len(records))]
+            for folder, local_count in rows:
+                key = profile_key(source_id, folder, folder_name)
+                shared = (
+                    author_profiles.inherited_profile(key, source_id, folder) if folder else {}
+                )
+                profile = author_profiles.resolve_profile(
+                    key, folder_name=folder or folder_name,
+                    shared_key=source_id if folder else '',
+                )
+                page_url = '/author/{}'.format(quote(str(source_id), safe=''))
+                if folder:
+                    page_url = '{}/{}'.format(page_url, quote(folder, safe=''))
+                items.append({
+                    'source_id': str(source_id),
+                    'folder': folder,
+                    'folder_name': folder or folder_name,
+                    'display_name': display_name(key, folder or folder_name, profile),
+                    'douyin_id': str(profile.get('douyin_id') or ''),
+                    'nickname': str(profile.get('name') or ''),
+                    'has_profile': bool(author_profiles.load_profile(key) or shared),
+                    'profile_url': str(profile.get('profile_url') or ''),
+                    'local_count': local_count,
+                    'avatar_url': f'{page_url}/avatar',
+                })
+        items.sort(key=lambda item: (item['display_name'].lower(), item['source_id'], item['folder']))
         return jsonify({'success': True, 'ok': True, 'items': items})
 
     @app.post('/api/author/sync')

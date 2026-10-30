@@ -1169,14 +1169,17 @@ body.tag-feed .douyin-tabs { display: none; }
 
 /* One author's timeline (?blog=&folder=). The 推荐/下载 tabs would be a lie here,
    so the bar names the author and carries the works count underneath: the reader
-   needs to see at a glance that a swipe stays inside this blogger. */
+   needs to see at a glance that a swipe stays inside this blogger. The name and
+   its "的作品" suffix share one size, weight and family — a large name next to a
+   small suffix read as two unrelated words, and the bar sets exactly one type
+   scale, the same one the tabs it replaces used. */
 .douyin-author-feed {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
-  max-width: min(70vw, 460px);
+  max-width: min(72vw, 460px);
   color: #fff;
   pointer-events: none;
 }
@@ -1186,34 +1189,31 @@ body.tag-feed .douyin-tabs { display: none; }
   display: flex;
   align-items: baseline;
   min-width: 0;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
-  font-family: system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  letter-spacing: 0;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+  font: 600 16px/1.2 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
 .douyin-author-feed-name {
   overflow: hidden;
+  font: inherit;
+  color: #fff;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 18px;
-  font-weight: 650;
-  letter-spacing: 0.01em;
 }
 
 .douyin-author-feed-of {
   flex: 0 0 auto;
-  margin-left: 2px;
-  color: rgba(255, 255, 255, 0.68);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
+  font: inherit;
+  color: rgba(255, 255, 255, 0.66);
 }
 
 .douyin-author-feed-count {
   margin: 0;
-  color: rgba(255, 255, 255, 0.55);
-  font: 500 11px/1.4 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  letter-spacing: 0.06em;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.46);
+  font: 500 11px/1.3 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  letter-spacing: 0.1em;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
 
 body.author-feed .douyin-tabs { display: none; }

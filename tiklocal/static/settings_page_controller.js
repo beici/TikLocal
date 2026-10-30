@@ -1030,6 +1030,16 @@
     return ((input && input.value) || '').trim() || (item && item.profile_url) || '';
   }
 
+  // A row is one author, not one media folder: the folder travels in the query so
+  // the server writes the result under that blogger's own cache entry. Without it
+  // every author in a shared root overwrote the same entry and none of their pages
+  // showed the nickname, counters or bound link the card said it had synced.
+  function authorAction(item, action) {
+    const base = `/api/author/${encodeURIComponent(item.source_id)}/${action}`;
+    const folder = (item && item.folder) || '';
+    return folder ? `${base}?folder=${encodeURIComponent(folder)}` : base;
+  }
+
   function setRowStatus(row, text, isError) {
     const status = row.querySelector('.author-sync-row-status');
     if (!status) return;
@@ -1116,7 +1126,7 @@
     const url = (input.value || '').trim();
     if (!url) return;
     try {
-      const { status, payload } = await postAuthor(`/api/author/${encodeURIComponent(item.source_id)}/bind`, { profile_url: url });
+      const { status, payload } = await postAuthor(authorAction(item, 'bind'), { profile_url: url });
       if (status === 200 && payload.ok) {
         item.profile_url = payload.profile_url || url;
         setRowStatus(row, T('settings.sync.author_bound'), false);
@@ -1137,7 +1147,7 @@
     }
     const button = row.querySelector('.author-sync-profile');
     await runButton(button, T('settings.sync.author_working'), async () => {
-      const { status, payload } = await postAuthor(`/api/author/${encodeURIComponent(item.source_id)}/sync`, { profile_url: url });
+      const { status, payload } = await postAuthor(authorAction(item, 'sync'), { profile_url: url });
       if (status === 200 && payload.ok) {
         const profile = payload.profile || {};
         const name = profile.nickname || item.display_name || item.source_id;
@@ -1166,7 +1176,7 @@
     }
     const button = row.querySelector('.author-sync-videos');
     await runButton(button, T('settings.sync.author_videos_running'), async () => {
-      const { status, payload } = await postAuthor(`/api/author/${encodeURIComponent(item.source_id)}/update-videos`, { profile_url: url });
+      const { status, payload } = await postAuthor(authorAction(item, 'update-videos'), { profile_url: url });
       if (status === 200 && payload.ok) {
         const queued = Number(payload.queued || 0);
         const skipped = Number(payload.skipped || 0);
@@ -1195,7 +1205,9 @@
   }
 
   async function syncAllAuthorProfiles() {
-    const entries = authorRowsWithUrl().map(({ row, item }) => ({ source_id: item.source_id, profile_url: rowUrl(row, item) }));
+    const entries = authorRowsWithUrl().map(({ row, item }) => ({
+      source_id: item.source_id, folder: item.folder || '', profile_url: rowUrl(row, item),
+    }));
     if (!entries.length) {
       TikLocalUI.toast(T('settings.sync.author_need_url'), 'error');
       return;
@@ -1239,7 +1251,7 @@
         const url = rowUrl(row, item);
         setRowStatus(row, T('settings.sync.author_working'), false);
         try {
-          const { status, payload } = await postAuthor(`/api/author/${encodeURIComponent(item.source_id)}/update-videos`, { profile_url: url });
+          const { status, payload } = await postAuthor(authorAction(item, 'update-videos'), { profile_url: url });
           if (status === 200 && payload.ok) {
             queued += Number(payload.queued || 0);
             skipped += Number(payload.skipped || 0);

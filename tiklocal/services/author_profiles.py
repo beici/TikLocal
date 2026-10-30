@@ -281,9 +281,35 @@ def store_author_from_payload(
     return profile
 
 
-def resolve_profile(source_id: str, *, folder_name: str = '') -> dict:
+def inherited_profile(source_id: str, shared_key: str, folder_name: str) -> dict:
+    """The shared-root entry, when its UID proves it belongs to ``folder_name``.
+
+    Before each blogger in one media root got a key of their own, every profile
+    was written under the root, so a synced blogger's nickname, counters and
+    bound home-page link had nowhere to show on their own page. The numeric
+    UID inside the folder name is the proof: when the two match it is the same
+    account, and the older entry is read (never rewritten) for this author.
+    """
+    shared_key = str(shared_key or '').strip()
+    if not shared_key or shared_key == str(source_id or '').strip():
+        return {}
+    uid = douyin_id_from_folder(folder_name)
+    if not uid:
+        return {}
+    shared = load_profile(shared_key)
+    if str(shared.get('uid') or '').strip() != uid:
+        return {}
+    return shared
+
+
+def resolve_profile(source_id: str, *, folder_name: str = '', shared_key: str = '') -> dict:
     """Merge the cached profile with what the source folder alone can tell us."""
     profile = load_profile(source_id)
+    avatar_key = source_id
+    if not profile:
+        profile = inherited_profile(source_id, shared_key, folder_name)
+        if profile:
+            avatar_key = shared_key
     douyin_id = str(profile.get('douyin_id') or '') or douyin_id_from_folder(folder_name or source_id)
     return {
         'source_id': str(source_id or ''),
@@ -295,5 +321,6 @@ def resolve_profile(source_id: str, *, folder_name: str = '') -> dict:
         'aweme_count': profile.get('aweme_count'),
         'avatar_url': str(profile.get('avatar_url') or ''),
         'profile_url': str(profile.get('profile_url') or ''),
-        'has_avatar': existing_avatar_path(source_id).is_file(),
+        'has_avatar': existing_avatar_path(avatar_key).is_file(),
+        'cache_key': str(avatar_key or ''),
     }

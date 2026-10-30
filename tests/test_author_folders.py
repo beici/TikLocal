@@ -391,3 +391,120 @@ def test_two_authors_in_one_root_keep_separate_profile_slots():
     assert profile_key('videos', 'UID1_x_发布作品', 'UID1_x_发布作品') == 'videos'
     assert profile_key('default', PUFF, 'down') == f'default/{PUFF}'
     assert profile_key('default', '', 'down') == 'default'
+
+
+def test_the_settings_card_has_a_row_for_every_author(client):
+    """One row per source would sync every blogger into one slot, so list authors.
+
+    The card is where a home-page link is pasted, so each row has to carry the
+    folder it belongs to: that is the only thing that tells the sync endpoint
+    whose cache entry to write.
+    """
+    rows = client.get('/api/author/sources').get_json()['items']
+
+    assert [row['folder'] for row in rows] == [PUFF, NO_SUFFIX]
+    assert [row['local_count'] for row in rows] == [2, 1]
+    assert all(row['source_id'] == 'default' for row in rows)
+    assert f'/author/default/{quote(PUFF, safe="")}/avatar' == rows[0]['avatar_url']
+
+
+def test_the_sync_endpoint_scopes_a_row_by_its_folder_query(sidecar_client, monkeypatch):
+    """The settings row posts ?folder=; it must land in that blogger's entry."""
+    from tiklocal.services.tiktok_downloader import TikTokDownloadService
+
+    seen = []
+
+    def fake_sync(self, source_id, *, profile_url='', aweme_id='', folder_uid=''):
+        seen.append((source_id, folder_uid))
+        return {'ok': True, 'source_id': source_id, 'nickname': '示例博主'}
+
+    monkeypatch.setattr(TikTokDownloadService, 'sync_author_profile', fake_sync)
+
+    response = sidecar_client.post(
+        f'/api/author/default/sync?folder={quote(PUFF, safe="")}',
+        json={'profile_url': 'https://www.douyin.com/user/x'},
+    )
+
+    assert response.status_code == 200
+    assert seen == [(f'default/{PUFF}', '958392617677856')]
+
+
+def test_a_profile_synced_before_the_per_author_keys_still_shows(client):
+    """Every author of a shared root used to share one entry, under the root.
+
+    A user who synced back then must not lose the nickname, the counters or the
+    bound home-page link: the folder UID proves the old entry is this author, and
+    it is read on their page. The proof is also what keeps it off everyone else's.
+    """
+    from tiklocal.services import author_profiles
+
+    author_profiles.save_profile('default', {
+        'name': '示例博主',
+        'uid': '958392617677856',
+        'douyin_id': 'demo0001',
+        'follower_count': 123456,
+        'total_favorited': 4567890,
+        'profile_url': 'https://www.douyin.com/user/legacy',
+    })
+
+    page = _html(client, f'/author/default/{quote(PUFF, safe="")}')
+
+    assert 'data-stat="followers"' in page
+    assert 'data-stat="likes"' in page
+    assert 'https://www.douyin.com/user/legacy' in page
+    # The other blogger in the same root kept nothing and must stay empty.
+    other = _html(client, f'/author/default/{quote(NO_SUFFIX, safe="")}')
+    assert 'data-stat="followers"' not in other
+    assert 'https://www.douyin.com/user/legacy' not in other
+
+
+def test_an_inherited_profile_does_not_answer_for_a_different_uid(client):
+    """UID is the whole proof: a mismatched entry must be ignored, not guessed."""
+    from tiklocal.services import author_profiles
+
+    author_profiles.save_profile('default', {
+        'name': '示例博主', 'uid': '999', 'profile_url': 'https://www.douyin.com/user/legacy',
+    })
+
+    assert author_profiles.inherited_profile(f'default/{PUFF}', 'default', PUFF) == {}
+    assert author_profiles.inherited_profile('default', 'default', PUFF) == {}
+
+
+def test_a_synced_work_link_binds_the_home_page_under_that_author(client, monkeypatch):
+    """Paste a work link, get the home page bound — and bound as *this* author.
+
+    The sidecar payload carries the account's ``sec_uid``, which rebuilds the home
+    page, so the binding needs no second paste. It has to land on the folder's
+    cache entry: bound to the shared root it would show up on nobody's page.
+    """
+    from tiklocal.services import author_profiles
+    from tiklocal.services.tiktok_downloader import TikTokDownloaderClient, TikTokDownloadService
+
+    class ConfigStore:
+        def get(self):
+            return {'tiktok_downloader': {'base_url': 'http://127.0.0.1:9/'}}
+
+    def fetch_detail(self, detail_id, platform='douyin', *, source=False):
+        return [{'aweme_id': detail_id, 'author': {
+            'uid': '958392617677856', 'nickname': '示例博主',
+            'unique_id': 'demo0001', 'sec_uid': 'MS4wLjABAAAAsample',
+            'follower_count': 1234, 'total_favorited': 5678,
+        }}]
+
+    monkeypatch.setattr(TikTokDownloaderClient, 'fetch_detail', fetch_detail)
+    service = TikTokDownloadService(ConfigStore(), download_manager=None)
+
+    service.sync_author_profile(
+        f'default/{PUFF}',
+        aweme_id='7000000000000000001',
+        folder_uid='958392617677856',
+    )
+
+    bound = 'https://www.douyin.com/user/MS4wLjABAAAAsample'
+    assert author_profiles.load_profile(f'default/{PUFF}')['profile_url'] == bound
+    # Nothing may land under the shared root, or it would describe every author.
+    assert 'profile_url' not in author_profiles.load_profile('default')
+
+    page = _html(client, f'/author/default/{quote(PUFF, safe="")}')
+    assert bound in page
+    assert 'data-stat="followers"' in page
