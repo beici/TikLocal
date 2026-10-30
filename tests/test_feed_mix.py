@@ -352,7 +352,7 @@ def test_tag_feed_paginates_newest_first(tmp_path):
 
 
 def test_start_link_opens_the_requested_work_and_keeps_scrolling(tmp_path):
-    """A deep link must land on that work, not on the first recommendation page."""
+    """A deep link lands on that work and pages on through the older ones."""
     files = {
         f'{BLOGGER}/2024-07-01 10.00.00-视频-示例博主-作品{index:02d}.mp4': index + 1
         for index in range(12)
@@ -360,22 +360,24 @@ def test_start_link_opens_the_requested_work_and_keeps_scrolling(tmp_path):
     client = _tag_client(tmp_path, files)
     ordered = [f'@default/{name}' for name in files]
 
-    # Opening the ninth work scrolls on through the three remaining older ones.
+    # Opening the ninth work also brings back the eight newer ones, so the
+    # reader can swipe back up towards the top instead of hitting a dead end.
     tail = client.get('/api/feed/mix', query_string={
         'start': ordered[8], 'page': 1, 'size': 8, 'seed': 's',
     }).get_json()
-    assert [item['name'] for item in tail['items']] == ordered[8:]
+    assert [item['name'] for item in tail['items']] == ordered
     assert tail['has_more'] is False
     assert tail['start'] == ordered[8]
 
-    # Opening the third work keeps pagination continuous and non-overlapping.
+    # Opening the third work keeps pagination continuous and non-overlapping:
+    # page 1 is the run-up plus a page from the work down, page 2 the rest.
     head = client.get('/api/feed/mix', query_string={
         'start': ordered[2], 'page': 1, 'size': 8, 'seed': 's',
     }).get_json()
     rest = client.get('/api/feed/mix', query_string={
         'start': ordered[2], 'page': 2, 'size': 8, 'seed': 's',
     }).get_json()
-    assert [item['name'] for item in head['items']] == ordered[2:10]
+    assert [item['name'] for item in head['items']] == ordered[:10]
     assert head['has_more'] is True
     assert [item['name'] for item in rest['items']] == ordered[10:]
     assert rest['has_more'] is False
@@ -385,6 +387,30 @@ def test_start_link_opens_the_requested_work_and_keeps_scrolling(tmp_path):
         'start': '@default/does-not-exist.mp4', 'page': 1, 'size': 8, 'seed': 's',
     }).get_json()
     assert [item['name'] for item in unknown['items']] == ordered[:8]
+
+
+def test_opening_a_work_deep_in_a_timeline_still_offers_the_way_back(tmp_path):
+    """The run-up above an opened work is capped so one page stays one page."""
+    files = {
+        f'{BLOGGER}/2024-09-01 10.00.00-视频-示例博主-作品{index:03d}.mp4': index + 1
+        for index in range(60)
+    }
+    client = _tag_client(tmp_path, files)
+    ordered = [f'@default/{name}' for name in files]
+
+    first = client.get('/api/feed/mix', query_string={
+        'start': ordered[40], 'page': 1, 'size': 8, 'seed': 's',
+    }).get_json()
+    second = client.get('/api/feed/mix', query_string={
+        'start': ordered[40], 'page': 2, 'size': 8, 'seed': 's',
+    }).get_json()
+
+    names = [item['name'] for item in first['items']]
+    # One page of run-up above the opened work, then a page from it downwards.
+    assert names == ordered[32:48]
+    assert names.index(ordered[40]) == 8
+    assert first['has_more'] is True
+    assert [item['name'] for item in second['items']] == ordered[48:56]
 
 
 def test_start_link_resolves_an_album_member_to_its_group(tmp_path):
@@ -397,9 +423,9 @@ def test_start_link_resolves_an_album_member_to_its_group(tmp_path):
         'start': f'@default/{member}', 'page': 1, 'size': 8, 'seed': 's',
     }).get_json()
 
-    first = payload['items'][0]
-    assert first['type'] == 'image_group'
-    assert [child['name'] for child in first['items']] == [
+    groups = [item for item in payload['items'] if item['type'] == 'image_group']
+    assert len(groups) == 1
+    assert [child['name'] for child in groups[0]['items']] == [
         f'@default/{cover}', f'@default/{member}',
     ]
     assert payload['has_more'] is False

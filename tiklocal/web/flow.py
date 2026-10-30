@@ -29,6 +29,13 @@ _SELECTION_CACHE_TTL_SEC = 10.0
 _SELECTION_CACHE_MAX_ITEMS = 4096
 _SELECTION_LOCK = threading.Lock()
 
+#: How much of the timeline a deep link hands back *above* the work it opens.
+#: The flow can only swipe back into cards it already holds, so opening a work
+#: used to leave "previous" as a dead end until the reader had scrolled past it.
+#: One screen is enough to walk back to whatever was on screen before; the cap
+#: keeps ``?size=200`` from turning one page into four hundred cards.
+START_FEED_LEAD = 24
+
 
 def _selection_for(select, kind: str, limit: int, seed: str, blog: str,
                    session_kwargs: dict) -> list[str]:
@@ -458,11 +465,15 @@ def build_start_feed_page(
     caption: str = '',
     folder: str = '',
 ) -> dict:
-    """Open one specific work and keep scrolling down from there.
+    """Open one specific work and keep scrolling from there, both ways.
 
     A deep link (author page, search, a shared link) must land on the work the
     user asked for even when it is far outside the first recommendation page,
-    so the timeline is rebuilt deterministically and sliced from that work.
+    so the timeline is rebuilt deterministically and sliced from that work. The
+    slice also carries the works immediately *newer* than it (up to
+    ``START_FEED_LEAD``) because the flow can only swipe back into cards it was
+    handed: without that run-up, opening a work made the previous swipe a dead
+    end and the reader could only ever go forwards.
 
     ``blog`` keeps scrolling one author's timeline and ``caption`` keeps
     scrolling the works that share a caption, which is what a search result is
@@ -513,9 +524,20 @@ def build_start_feed_page(
         # a retitled post should open the unfiltered feed rather than an empty one.
         if not uri or narrowed_offset is not None:
             entries, offset = narrowed_entries, narrowed_offset
-    entries = entries[offset or 0:]
-    end = page * size
-    start = max(0, end - size)
+
+    # Keep a screen of the timeline above the requested work. The first page is
+    # the one the reader lands on, so it has to hold both the run-up to that work
+    # and a normal page from it downwards; later pages continue where it stopped.
+    # The lead is part of the page arithmetic rather than a separate request, so
+    # the slices stay contiguous and no card appears twice.
+    depth = offset or 0
+    lead = min(depth, min(size, START_FEED_LEAD))
+    entries = entries[depth - lead:]
+    if page <= 1:
+        start, end = 0, lead + size
+    else:
+        start = lead + size + (page - 2) * size
+        end = start + size
     return {
         'items': build_feed_items(entries[start:end], records_by_name, sources_by_id),
         'page': page,
