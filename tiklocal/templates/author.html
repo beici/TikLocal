@@ -41,6 +41,9 @@
       </div>
       {% endfor %}
     </dl>
+    {% if account_missing %}
+    <p class="author-missing" data-author-missing>{{ t('author.account_missing') }}</p>
+    {% endif %}
   </section>
 
   <nav class="author-tabs" aria-label="{{ t('author.tabs_label') }}">

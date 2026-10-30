@@ -21,13 +21,15 @@ folder before anything is cached.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from urllib.parse import quote
 
 from flask import abort, current_app, jsonify, redirect, render_template, request, send_file
 
 from tiklocal.i18n import current_locale, t
-from tiklocal.services import author_profiles
+from tiklocal.paths import get_author_links_config_path
+from tiklocal.services import author_links, author_profiles
 from tiklocal.services.media_naming import (
     author_folder,
     blogger_display_name,
@@ -70,18 +72,12 @@ def display_name(source_id: str, folder_name: str, profile: dict) -> str:
 def profile_key(source_id: str, folder: str, folder_name: str) -> str:
     """The key an author's cached profile and avatar are stored under.
 
-    ``author_profiles`` used to key everything by media source, which was right
-    while a source was one blogger's export folder. A shared root such as
-    ``~/Downloads/douyin`` breaks that: the source names nobody, so every author
-    inside it shared one cache entry and the second sync overwrote the first.
-    Scoping the key to ``<source>/<folder>`` gives each blogger its own nickname,
-    Douyin id and avatar while keeping every existing single-blogger install on
-    its old ``source_id`` key, so nothing has to be re-synced after upgrading.
+    Kept here as a re-export: the rule lives in
+    :func:`tiklocal.services.author_profiles.profile_key` now, because the
+    ``author import-links`` command writes the same keys the pages read and must
+    not re-implement it.
     """
-    scope = str(folder or '').strip()
-    if not scope or scope == str(folder_name or ''):
-        return str(source_id or '')
-    return f'{source_id}/{scope}'
+    return author_profiles.profile_key(source_id, folder, folder_name)
 
 
 def author_of(record: dict) -> str:
@@ -293,6 +289,11 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             # has nothing to sync at the source level, so the menu stays off there.
             refresh_enabled=not authors,
             sidecar_ready=sidecar_ready,
+            # Set when the account behind this export no longer answers: a blocked
+            # or cancelled Douyin account loses its nickname and returns no works,
+            # so the page says that instead of showing empty counters that look
+            # like a broken sync.
+            account_missing=bool(profile.get('account_missing')),
         )
 
     @app.route('/author/<source_id>')
@@ -519,11 +520,36 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
             bound = normalize_profile_url(profile_url)
             if not bound:
                 return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.profile_url')}), 400
+            # Saving the link before the timeline answers is how a mistyped link
+            # became permanent: the paste was written to authors/<key>.json, the
+            # request then failed, and every later sync started from a link that
+            # proved nothing. Prove the account owns the folder first, exactly
+            # like the sync menu does, and only then remember the link.
             try:
-                author_profiles.set_profile_url(key, bound)
+                author = tiktok_service.account_author(bound)
+                if not author:
+                    return jsonify({
+                        'success': False, 'ok': False,
+                        'error': t('author.sync.error.no_author'),
+                    }), 502
+                tiktok_service.store_author_block(
+                    key, author,
+                    folder_uid=author_profiles.douyin_id_from_folder(
+                        folder or folder_name_for(source)
+                    ),
+                    profile_url=bound,
+                )
+            except ValueError as exc:
+                return jsonify({'success': False, 'ok': False, 'error': str(exc)}), 400
+            except TikTokDownloaderError as exc:
+                app.logger.warning('author sidecar request failed: %s', exc)
+                return jsonify({'success': False, 'ok': False, 'error': tiktok_user_message(exc)}), 502
             except OSError:
                 app.logger.exception('Could not save the author link for %s', source_id)
                 return jsonify({'success': False, 'ok': False, 'error': t('common.error.storage_unavailable')}), 503
+            except Exception:  # a sidecar hiccup must never become a 500 page
+                app.logger.warning('author link check failed for %s', source_id, exc_info=True)
+                return jsonify({'success': False, 'ok': False, 'error': t('author.sync.error.unknown')}), 502
         try:
             result = tiktok_service.enqueue_latest_videos(
                 key,
@@ -701,4 +727,74 @@ def register_author_routes(app, *, library_service, media_index, tiktok_service=
                 'synced': 0,
             }), 502
         return jsonify({'success': True, 'ok': True, 'items': results, 'synced': len(synced)})
+
+    def _links_config_path() -> Path:
+        return get_author_links_config_path()
+
+    def _remembered_links_path() -> str:
+        """The dump path used last time, or ''.
+
+        It is a path on whatever machine runs TikTokDownloader, so it cannot be
+        discovered: remembering it only saves retyping.
+        """
+        try:
+            payload = json.loads(_links_config_path().read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return ''
+        if not isinstance(payload, dict):
+            return ''
+        return str(payload.get('path') or '').strip()
+
+    def _remember_links_path(value: str) -> None:
+        try:
+            _links_config_path().write_text(
+                json.dumps({'path': value}, ensure_ascii=False), encoding='utf-8',
+            )
+        except OSError:
+            # A read-only data directory must not fail an import that already
+            # wrote the profiles; the path is a convenience, not the result.
+            app.logger.warning('Could not remember the author-link dump path', exc_info=True)
+
+    @app.get('/api/author/links')
+    def author_links_get():
+        return jsonify({'success': True, 'ok': True, 'path': _remembered_links_path()})
+
+    @app.post('/api/author/links')
+    def author_links_import():
+        """Bind home pages from a TikTokDownloader user dump.
+
+        The sidecar cannot answer for a cancelled account — that is exactly the
+        account whose profile has to be rebuilt from disk — so this endpoint never
+        touches the network except to cache avatars, and those are time-boxed.
+        """
+        payload = _json_body()
+        value = str(payload.get('path') or '').strip()
+        if not value:
+            return jsonify({'success': False, 'ok': False, 'error': t('author.links.error.no_path')}), 400
+        sources = list((library_service.sources_by_id or {}).values())
+        try:
+            report = author_links.import_links(
+                value, sources,
+                download_avatars=not bool(payload.get('no_avatar')),
+                avatar_timeout=5.0,
+                # The settings page waits on this request: bind everything, but
+                # stop paying for CDN round-trips once they add up.
+                avatar_budget=20.0,
+            )
+        except ValueError as exc:
+            reason = str(exc) or 'unreadable'
+            key = {
+                'missing': 'author.links.error.missing',
+                'empty': 'author.links.error.empty',
+                'too_large': 'author.links.error.too_large',
+                'no_records': 'author.links.error.no_records',
+            }.get(reason, 'author.links.error.unreadable')
+            return jsonify({'success': False, 'ok': False, 'reason': reason, 'error': t(key)}), 400
+        except OSError:
+            app.logger.warning('Reading the author-link dump failed', exc_info=True)
+            return jsonify({
+                'success': False, 'ok': False, 'error': t('author.links.error.unreadable'),
+            }), 503
+        _remember_links_path(report.get('path') or value)
+        return jsonify({'success': True, 'ok': True, **report})
 

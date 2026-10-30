@@ -96,7 +96,9 @@ def _fake_client(monkeypatch, *, author=None, works=None, calls=None):
 
     def fetch_account(self, sec_user_id, tab='post', count=18, platform='douyin', *, source=False, pages=0):
         log.append(('account', sec_user_id, count, source, pages))
-        return list(work_items)
+        # ``source=True`` answers with the raw work payloads, author block included;
+        # ``fetch_account_author`` reads exactly that.
+        return [dict(item, author=dict(block)) for item in work_items]
 
     def fetch_detail(self, detail_id, platform='douyin', *, source=False):
         log.append(('detail', detail_id, source))
@@ -672,6 +674,9 @@ def test_update_videos_endpoint_maps_sidecar_failures_to_502(tmp_path, monkeypat
     def offline(self, source_id, *, profile_url='', count=18, local_names=None):
         raise TikTokDownloaderError('sidecar offline')
 
+    # The pasted link is verified before anything is written, so the fake has to
+    # answer the account lookup as well; the failure under test is the timeline hop.
+    _fake_client(monkeypatch)
     monkeypatch.setattr(TikTokDownloadService, 'enqueue_latest_videos', offline)
     _, client = _app(tmp_path, config={'TIKTOK_DOWNLOADER': {'base_url': SIDECAR_URL}})
 
@@ -690,3 +695,116 @@ def test_sources_endpoint_reports_the_bound_link_and_local_count(tmp_path):
     row = next(item for item in body['items'] if item['source_id'] == 'demo')
     assert row['profile_url'] == PROFILE_URL
     assert row['local_count'] == 1
+
+
+# --- a restricted account must not overwrite what still works ---------------
+
+
+def test_a_placeholder_nickname_never_replaces_the_real_one(tmp_path):
+    author_profiles.save_profile('demo', {'name': 'demo_author', 'follower_count': 1234})
+
+    profile = author_profiles.store_author_from_payload('demo', {
+        'author': {'uid': FOLDER_UID, 'nickname': f'用户{FOLDER_UID}', 'follower_count': 0},
+    }, fetch_avatar=False)
+
+    assert profile['name'] == 'demo_author'
+    assert profile['follower_count'] == 1234
+    assert profile['account_missing'] is True
+
+
+def test_a_name_that_is_only_the_numeric_id_is_a_placeholder_too(tmp_path):
+    author_profiles.save_profile('demo', {'name': 'demo_author'})
+
+    profile = author_profiles.store_author_from_payload('demo', {
+        'author': {'uid': FOLDER_UID, 'nickname': '37543', 'unique_id': '37543'},
+    }, fetch_avatar=False)
+
+    assert profile['name'] == 'demo_author'
+    assert profile['account_missing'] is True
+
+
+def test_a_real_rename_still_wins(tmp_path):
+    author_profiles.save_profile('demo', {'name': 'demo_author'})
+
+    profile = author_profiles.store_author_from_payload('demo', {
+        'author': {'uid': FOLDER_UID, 'nickname': '换了个名字'},
+    }, fetch_avatar=False)
+
+    assert profile['name'] == '换了个名字'
+    assert profile['account_missing'] is False
+
+
+def test_counters_that_drop_to_zero_keep_the_last_real_numbers(tmp_path):
+    author_profiles.save_profile('demo', {
+        'name': 'demo_author', 'follower_count': 1234, 'total_favorited': 5678,
+    })
+
+    profile = author_profiles.store_author_from_payload('demo', {
+        'author': {'uid': FOLDER_UID, 'nickname': 'demo_author',
+                   'follower_count': 0, 'total_favorited': 0},
+    }, fetch_avatar=False)
+
+    assert profile['follower_count'] == 1234
+    assert profile['total_favorited'] == 5678
+    assert profile['account_missing'] is True
+
+
+def test_a_lower_but_nonzero_count_is_written(tmp_path):
+    # Followers really do drop; only the placeholder zero is refused.
+    author_profiles.save_profile('demo', {'follower_count': 1234})
+
+    profile = author_profiles.store_author_from_payload('demo', {
+        'author': {'uid': FOLDER_UID, 'nickname': 'demo_author', 'follower_count': 1200},
+    }, fetch_avatar=False)
+
+    assert profile['follower_count'] == 1200
+    assert profile['account_missing'] is False
+
+
+def test_an_empty_answer_writes_nothing_at_all(tmp_path):
+    author_profiles.save_profile('demo', {'name': 'demo_author', 'follower_count': 1234})
+
+    author_profiles.store_author_from_payload('demo', {'author': {}}, fetch_avatar=False)
+
+    profile = author_profiles.load_profile('demo')
+    assert profile['name'] == 'demo_author'
+    assert profile['follower_count'] == 1234
+    assert 'account_missing' not in profile
+
+
+def test_a_degraded_payload_does_not_swap_the_avatar(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_download(source_id, url, **kwargs):
+        seen.append(url)
+        return True
+
+    monkeypatch.setattr(author_profiles, 'download_avatar', fake_download)
+    author_profiles.save_profile('demo', {'name': 'demo_author'})
+
+    author_profiles.store_author_from_payload('demo', {
+        'author': {'uid': FOLDER_UID, 'nickname': f'用户{FOLDER_UID}',
+                   'avatar_thumb': {'url_list': ['https://example.invalid/grey.jpg']}},
+    })
+
+    assert seen == []
+    assert author_profiles.load_profile('demo')['name'] == 'demo_author'
+
+
+def test_a_healthy_payload_still_swaps_the_avatar(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_download(source_id, url, **kwargs):
+        seen.append(url)
+        return True
+
+    monkeypatch.setattr(author_profiles, 'download_avatar', fake_download)
+    author_profiles.save_profile('demo', {'name': 'demo_author'})
+
+    author_profiles.store_author_from_payload('demo', {
+        'author': {'uid': FOLDER_UID, 'nickname': 'demo_author',
+                   'avatar_thumb': {'url_list': ['https://example.invalid/face.jpg']}},
+    })
+
+    assert seen == ['https://example.invalid/face.jpg']
+

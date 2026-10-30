@@ -552,6 +552,18 @@ body.author-picker-open { overflow: hidden; }
   outline-offset: 2px;
 }
 .author-sheet-action[disabled] { opacity: 0.55; cursor: progress; }
+/* A blocked or cancelled account keeps its home page but answers with nothing.
+   Saying so beats empty counters that look like a broken sync. */
+.author-missing {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.62);
+  text-align: left;
+}
 /* Shown instead of the two actions when TikTokDownloader has no address yet: the
    menu is discoverable, and it says where the missing piece is configured. */
 .author-sheet-note {

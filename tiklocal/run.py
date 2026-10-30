@@ -189,6 +189,13 @@ def config_tls_hosts(config):
     return [str(item) for item in value if str(item).strip()]
 
 
+def _configured_media_sources(config, args) -> list[dict]:
+    """Every media source a subcommand should work on, folded like the server does."""
+    return fold_stored_media_sources(
+        normalize_media_sources(config, getattr(args, 'media_source', None))
+    )
+
+
 def _configured_media_root(config, args) -> str:
     """The folder a single-directory subcommand should work on.
 
@@ -202,9 +209,7 @@ def _configured_media_root(config, args) -> str:
     the *launch* directory while the server served the folder chosen in settings —
     a full poster cache generated for a library nobody looks at.
     """
-    configured = fold_stored_media_sources(
-        normalize_media_sources(config, getattr(args, 'media_source', None))
-    )
+    configured = _configured_media_sources(config, args)
     if not configured:
         return ''
     chosen = next((item for item in configured if item.get('id') == 'default'), configured[0])
@@ -333,7 +338,7 @@ def main():
         elif len(argv) == 0:
             # No arguments at all: the default command is serve.
             argv.insert(0, 'serve')
-        elif argv[0] not in ('serve', 'thumbs', 'dedupe', 'vectorize', 'auth', 'tls'):
+        elif argv[0] not in ('serve', 'thumbs', 'dedupe', 'vectorize', 'auth', 'author', 'tls'):
             # A word that *looks* like a command but is not one used to be rewritten
             # into "serve <word>", so `tiklocal migrate` failed with "Media directory
             # does not exist: migrate" -- pointing at the argument instead of the
@@ -375,6 +380,7 @@ Examples:
   tiklocal dedupe /path --execute          # Delete duplicates and keep the oldest
   tiklocal vectorize /path --limit 200     # Prepare 200 photos/videos for similarity
   tiklocal auth set-password               # Set a new access password
+  tiklocal author import-links dump.jsonl  # Bind author home pages from a user dump
   tiklocal tls status                      # Show the HTTPS certificate in use
         '''
     )
@@ -425,6 +431,19 @@ Examples:
 
     auth_parser = subparsers.add_parser('auth', help='Manage access authentication')
     auth_parser.add_argument('action', choices=['set-password', 'status'], help='Authentication action')
+
+    # author command
+    author_parser = subparsers.add_parser('author', help='Manage the cached author profiles')
+    author_parser.add_argument('action', choices=['import-links'],
+                               help='import-links: bind home pages from a TikTokDownloader dump')
+    author_parser.add_argument('source', nargs='?', default='-',
+                               help='Dump file, or - to read standard input (default: -)')
+    author_parser.add_argument('--media-source', action='append', type=parse_cli_media_source,
+                               help='Add a repeatable media source as id=/path/to/media')
+    author_parser.add_argument('--no-avatar', action='store_true',
+                               help='Bind the links without downloading avatars')
+    author_parser.add_argument('--dry-run', action='store_true',
+                               help='Report what would be bound without writing anything')
 
     # thumbs command
     thumbs_parser = subparsers.add_parser('thumbs', help='Generate video thumbnails in bulk')
@@ -594,6 +613,56 @@ Examples:
         except ValueError as exc:
             parser.error(str(exc))
         print('Access password updated. All signed-in devices must sign in again.')
+        return
+
+    if cmd == 'author':
+        from tiklocal.services import author_links
+
+        sources = _configured_media_sources(config, args)
+        if not sources:
+            parser.error(
+                'Specify a media directory:\n'
+                '  - or set MEDIA_ROOT=/path/to/media\n'
+                '  - or configure media_root / media_sources in config.yaml'
+            )
+        try:
+            if args.source in (None, '', '-'):
+                text = sys.stdin.read()
+            else:
+                text = Path(args.source).expanduser().read_text(encoding='utf-8', errors='replace')
+        except OSError as exc:
+            _fatal(f"Cannot read the dump: {exc}")
+        rows = author_links.parse_dump(text)
+        if not rows:
+            _fatal('No usable records in that file. Pass the TikTokDownloader user dump '
+                   '(resolved_users.jsonl) or a list of home-page links.')
+        authors = author_links.local_authors(sources)
+        plan = author_links.plan_bindings(rows, authors)
+        if args.dry_run:
+            counts = {
+                'written': 0,
+                'bound': len(plan['bound']),
+                'abandoned': len(plan['abandoned']),
+                'unmatched': len(plan['unmatched']),
+                'unusable': len(plan['unusable']),
+            }
+        else:
+            counts = author_links.apply_plan(plan, download_avatars=not args.no_avatar)
+        print(f"Records in the dump: {len(rows)}")
+        print(f"Authors in the library: {len(authors)}")
+        verb = 'Would bind' if args.dry_run else 'Bound'
+        print(f"{verb}: {counts['bound'] + counts['abandoned']} "
+              f"({counts['abandoned']} look like a cancelled or blocked account)")
+        if counts['unmatched']:
+            names = ', '.join(entry.get('name') or entry.get('folder') or entry.get('key') or '?'
+                              for entry in plan['unmatched'][:10])
+            print(f"No entry in the dump: {counts['unmatched']} ({names})")
+        if counts['unusable']:
+            names = ', '.join(entry.get('name') or entry.get('folder') or entry.get('key') or '?'
+                              for entry in plan['unusable'][:10])
+            print(f"Entry without a usable profile id: {counts['unusable']} ({names})")
+        if counts['written']:
+            print('The author pages now show the bound link; a sync fills in the counters.')
         return
 
     if cmd == 'tls':

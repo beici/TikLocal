@@ -206,8 +206,9 @@ tl-*/
 tl_bounds*/
 tmp??????/
 .probe/
-.probe*/
-.probe-*.py
+# A probe keeps its script, its scratch JSON and its dump side by side; one rule
+# covers all three so a copied dump is never one `git add -A` away from a commit.
+.probe*
 probe-media-*/
 tiklocal-probe-*/
 

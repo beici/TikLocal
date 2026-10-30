@@ -316,6 +316,21 @@ body[data-nav-context="settings"] {
 .author-sync-result-item { color: var(--settings-muted); font-size: 10px; line-height: 1.45; word-break: break-word; }
 .author-sync-result-item.is-error { color: #b4433b; }
 [data-theme="dark"] .author-sync-result-item.is-error { color: #e69a93; }
+/* Pointing at a TikTokDownloader dump: the sidecar cannot answer for a cancelled
+   account, so the uid inside these files is the only way back to a home page. */
+.author-links { display: grid; gap: 6px; margin: 0 14px; padding-top: 12px; border-top: 1px solid var(--settings-line); }
+.author-links-label { color: var(--settings-muted); font-size: 11px; font-weight: 620; }
+.author-links-input {
+  width: 100%; min-height: 34px; padding: 0 10px;
+  border: 1px solid var(--settings-line); border-radius: 11px;
+  background: var(--settings-soft); color: var(--settings-ink);
+  font: inherit; font-size: 12px;
+}
+.author-links-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.author-links-status { color: var(--settings-muted); font-size: 10px; line-height: 1.45; }
+.author-links-status.is-error { color: #b4433b; }
+[data-theme="dark"] .author-links-status.is-error { color: #e69a93; }
+.author-links-copy { margin: 0; color: var(--settings-muted); font-size: 10px; line-height: 1.5; }
 .author-sync-sources { display: grid; gap: 6px; padding: 0 14px 14px; }
 .author-sync-sources-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .author-sync-list { display: grid; gap: 6px; }

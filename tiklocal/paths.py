@@ -102,6 +102,16 @@ def get_radio_profile_path() -> Path:
     return get_data_dir() / 'radio_profile.json'
 
 
+def get_author_links_config_path() -> Path:
+    """Where the last used author-link dump path is remembered.
+
+    The dump lives on the machine that runs TikTokDownloader, so the reader
+    retypes a long path every time it is not remembered: one small file with one
+    key beats a new table in the library database for a setting this small.
+    """
+    return get_data_dir() / 'author_links.json'
+
+
 def get_auth_path() -> Path:
     return get_data_dir() / 'auth.json'
 

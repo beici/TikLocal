@@ -840,6 +840,16 @@ class TikTokDownloadService:
         author_profiles.store_author_from_payload(source_id, matches[0])
         return author_profiles.resolve_profile(source_id)
 
+    def account_author(self, profile_url: str) -> dict[str, Any]:
+        """The author block of the account a home-page link points at.
+
+        One timeline page is enough to reach the newest work, and that work's
+        ``author`` block is what proves the numeric uid. Callers use this to know
+        whose link they were given *before* they write anything down.
+        """
+        sec_user_id = parse_profile_sec_uid(profile_url)
+        return self._client().fetch_account_author(sec_user_id)
+
     def fetch_author_profile(self, *, profile_url: str = "", aweme_id: str = "") -> dict[str, Any]:
         """Resolve an author home page (or a known work id) to the raw author block.
 
@@ -1062,7 +1072,12 @@ class TikTokDownloadService:
             raise TikTokDownloaderError(t('author.sync.error.unconfigured'))
         bound = str(profile_url or "").strip()
         if not bound:
-            bound = str(author_profiles.load_profile(source_id).get("profile_url") or "").strip()
+            # The cached author block already carries a ``sec_uid``, and that id
+            # *is* the home page, so a profile that was synced but never bound a
+            # link no longer needs the paste this error used to demand.
+            bound = author_profiles.profile_home_url(
+                author_profiles.load_profile(source_id),
+            )
         if not bound:
             raise ValueError(t('author.sync.error.no_profile_url'))
         sec_user_id = parse_profile_sec_uid(bound)

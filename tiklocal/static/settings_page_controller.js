@@ -1315,6 +1315,90 @@
     }
   }
 
+  // Home-page links from a TikTokDownloader dump. The sidecar can only answer for
+  // accounts that still exist, so a cancelled account has no other way back to a
+  // link: the uid inside the export folder is matched against the dump instead.
+  const authorLinksPath = document.getElementById('author-links-path');
+  const authorLinksImport = document.getElementById('author-links-import');
+  const authorLinksStatus = document.getElementById('author-links-status');
+
+  function setAuthorLinksStatus(text, isError) {
+    if (!authorLinksStatus) return;
+    authorLinksStatus.textContent = text || '';
+    authorLinksStatus.classList.toggle('is-error', Boolean(isError));
+  }
+
+  function authorLinksReport(payload) {
+    if (payload.reason) {
+      return T(`author.links.reason.${payload.reason}`, { records: Number(payload.records || 0) });
+    }
+    const bound = Number(payload.bound || 0) + Number(payload.abandoned || 0);
+    if (!bound) return T('author.links.reason.no_match', { records: Number(payload.records || 0) });
+    const abandoned = Number(payload.abandoned || 0);
+    return abandoned
+      ? T('author.links.done', { bound, abandoned })
+      : T('author.links.done_clean', { bound });
+  }
+
+  async function importAuthorLinks() {
+    if (!authorLinksImport) return;
+    const path = String(authorLinksPath?.value || '').trim();
+    if (!path) {
+      setAuthorLinksStatus(T('author.links.error.no_path'), true);
+      TikLocalUI.toast(T('author.links.error.no_path'), 'error');
+      return;
+    }
+    await runButton(authorLinksImport, T('author.links.working'), async () => {
+      let payload = {};
+      let ok = false;
+      try {
+        const response = await fetch('/api/author/links', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path }),
+        });
+        payload = await response.json().catch(() => ({}));
+        ok = response.ok && payload.ok !== false;
+      } catch (error) {
+        const text = errorText(error, 'author.links.error.unreadable');
+        setAuthorLinksStatus(text, true);
+        TikLocalUI.toast(text, 'error');
+        return;
+      }
+      if (!ok) {
+        const text = payload.error || T('author.links.error.unreadable');
+        setAuthorLinksStatus(text, true);
+        TikLocalUI.toast(text, 'error');
+        return;
+      }
+      if (authorLinksPath) authorLinksPath.value = payload.path || path;
+      const text = authorLinksReport(payload);
+      setAuthorLinksStatus(text, false);
+      TikLocalUI.toast(text);
+      await loadAuthorSources();
+    });
+  }
+
+  async function loadAuthorLinksPath() {
+    if (!authorLinksPath) return;
+    try {
+      const payload = await requestJson('/api/author/links');
+      if (!String(authorLinksPath.value || '').trim()) authorLinksPath.value = payload.path || '';
+    } catch (_) {
+      // The remembered path is a convenience; the field stays empty and usable.
+    }
+  }
+
+  if (authorLinksImport) {
+    authorLinksImport.addEventListener('click', () => void importAuthorLinks());
+    authorLinksPath?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void importAuthorLinks();
+      }
+    });
+  }
+
   // 设置页会被 bfcache 原样恢复（no-cache 不阻止 bfcache），回来时表单还是旧值，
   // 此时点保存会把旧配置写回去。恢复时整页重载一次最稳妥。
   window.addEventListener('pageshow', (event) => {
@@ -1337,4 +1421,5 @@
   // The author-sync card renders from this call; without it the card sits on its
   // "loading" placeholder until the user presses 刷新.
   loadAuthorSources();
+  loadAuthorLinksPath();
 })();

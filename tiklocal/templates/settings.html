@@ -225,6 +225,15 @@
           <span id="author-sync-count" class="author-sync-count"></span>
         </div>
         <div id="author-sync-result" class="author-sync-result" aria-live="polite" hidden></div>
+        <div class="author-links">
+          <label class="author-links-label" for="author-links-path">{{ t('author.links.label') }}</label>
+          <input id="author-links-path" class="author-links-input" type="text" spellcheck="false" autocomplete="off" placeholder="{{ t('author.links.placeholder') }}">
+          <div class="author-links-actions">
+            <button id="author-links-import" class="settings-action" type="button">{{ t('author.links.action') }}</button>
+            <span id="author-links-status" class="author-links-status" aria-live="polite"></span>
+          </div>
+          <p class="author-links-copy">{{ t('author.links.hint') }}</p>
+        </div>
         <div class="author-sync-sources">
           <div class="author-sync-sources-head">
             <span class="settings-row-title">{{ t('settings.sync.author_sources_title') }}</span>

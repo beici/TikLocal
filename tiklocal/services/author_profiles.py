@@ -48,6 +48,27 @@ _UID_FOLDER = re.compile(r'^UID(?P<uid>\d+)_')
 _AVATAR_KEYS = ('avatar_larger', 'avatar_medium', 'avatar_thumb', 'avatar_168x168', 'avatar_300x300')
 _STAT_KEYS = ('follower_count', 'total_favorited', 'aweme_count', 'following_count')
 
+#: Douyin's stand-in for an account whose nickname is gone: ``用户`` plus the
+#: numeric id. A blocked or cancelled account answers with this instead of a name.
+_PLACEHOLDER_NAME = re.compile(r'^用户\d{5,}$')
+
+
+def looks_placeholder(name: Any, douyin_id: Any = '') -> bool:
+    """True when ``name`` is a stand-in rather than a nickname.
+
+    Two shapes count: Douyin's ``用户<uid>`` fallback, and the numeric Douyin id
+    shown in place of a name. Both turn up exactly when an account is restricted,
+    and a restricted account is the one whose cached nickname must survive: it is
+    the only readable label the page has left.
+    """
+    text = str(name or '').strip()
+    if not text:
+        return False
+    if _PLACEHOLDER_NAME.match(text):
+        return True
+    account_id = str(douyin_id or '').strip()
+    return bool(account_id) and text == account_id
+
 
 def authors_dir() -> Path:
     directory = get_data_dir() / 'authors'
@@ -106,6 +127,23 @@ def douyin_id_from_folder(folder_name: str) -> str:
     """``UID123456789_demo_发布作品`` → ``123456789``; '' otherwise."""
     match = _UID_FOLDER.match(str(folder_name or ''))
     return match.group('uid') if match else ''
+
+
+def profile_key(source_id: str, folder: str, folder_name: str) -> str:
+    """The key an author's cached profile and avatar are stored under.
+
+    ``author_profiles`` used to key everything by media source, which was right
+    while a source was one blogger's export folder. A shared root such as
+    ``~/Downloads/douyin`` breaks that: the source names nobody, so every author
+    inside it shared one cache entry and the second sync overwrote the first.
+    Scoping the key to ``<source>/<folder>`` gives each blogger its own nickname,
+    Douyin id and avatar while keeping every existing single-blogger install on
+    its old ``source_id`` key, so nothing has to be re-synced after upgrading.
+    """
+    scope = str(folder or '').strip()
+    if not scope or scope == str(folder_name or ''):
+        return str(source_id or '')
+    return f'{source_id}/{scope}'
 
 
 def load_profile(source_id: str) -> dict:
@@ -263,18 +301,59 @@ def download_avatar(source_id: str, url: str, timeout: float = 10.0) -> bool:
     return True
 
 
+def _drop_degraded_fields(fields: dict, existing: dict) -> bool:
+    """Strip the values a restricted account reports as stand-ins.
+
+    ``save_profile`` already ignores blanks, but a blocked account does not answer
+    with blanks: it answers with ``用户<uid>`` for the name and with zeros for the
+    counters. Those are non-empty, so without this they overwrite the last real
+    nickname and follower count — the very data the offline import exists to keep.
+    A genuine rename or a genuine drop to zero is still written, because only the
+    two shapes Douyin uses as placeholders are dropped here.
+    """
+    degraded = False
+    name = fields.get('name')
+    if name and looks_placeholder(name, fields.get('douyin_id') or existing.get('douyin_id')):
+        fields.pop('name', None)
+        degraded = True
+    for key in _STAT_KEYS:
+        if key not in fields:
+            continue
+        previous = existing.get(key)
+        if fields[key] == 0 and isinstance(previous, int) and previous > 0:
+            fields.pop(key, None)
+            degraded = True
+    return degraded
+
+
 def store_author_from_payload(
     source_id: str, payload: Any, *, fetch_avatar: bool = True, profile_url: str = '',
 ) -> dict:
-    """Persist whatever the payload says about the author of ``source_id``."""
+    """Persist whatever the payload says about the author of ``source_id``.
+
+    A payload from a restricted account still counts as an answer: it says the
+    account exists but has lost its public data, so the note is raised and the
+    last real nickname and counters are kept instead of being replaced.
+    """
     fields = extract_author_fields(payload)
+    existing = load_profile(source_id)
+    degraded = _drop_degraded_fields(fields, existing)
     bound = str(profile_url or '').strip()
     if bound:
         fields['profile_url'] = bound
     if not fields:
-        return load_profile(source_id)
+        if degraded:
+            return save_profile(source_id, {'account_missing': True})
+        return existing
+    # A payload that carries a real account clears the "this author may be gone"
+    # note that ``author import-links`` left behind.
+    fields['account_missing'] = degraded
     profile = save_profile(source_id, fields)
-    if fetch_avatar and fields.get('avatar_url'):
+    # A degraded payload's avatar is the generic one Douyin serves in place of a
+    # blocked account's picture; keeping the previous face beats replacing it with
+    # a grey placeholder. A first sync of such an account simply keeps the
+    # newest-work cover the page already falls back to.
+    if fetch_avatar and fields.get('avatar_url') and not degraded:
         if download_avatar(source_id, fields['avatar_url']):
             profile['avatar_cached'] = True
             profile = save_profile(source_id, {'avatar_cached': True})
@@ -302,6 +381,29 @@ def inherited_profile(source_id: str, shared_key: str, folder_name: str) -> dict
     return shared
 
 
+def profile_home_url(profile: dict) -> str:
+    """The home-page link of a cached author, even when it was never bound.
+
+    A sync stores the ``sec_uid`` the author block carried, and a Douyin home
+    page is nothing more than that id, so the link is recoverable without asking
+    the user to paste it again. ``docs/tiktok-downloader.md`` promised this
+    behaviour from the start; the code only ever read the stored ``profile_url``,
+    so a profile that held a ``sec_uid`` but no binding looked like it had lost
+    the link.
+    """
+    if not isinstance(profile, dict):
+        return ''
+    bound = str(profile.get('profile_url') or '').strip()
+    if bound:
+        return bound
+    sec_uid = str(profile.get('sec_uid') or profile.get('sec_user_id') or '').strip()
+    # Every Douyin profile id starts with this marker; anything else is a guess
+    # that would send the next sync to the wrong account.
+    if sec_uid.startswith('MS4wLjAB'):
+        return f'https://www.douyin.com/user/{sec_uid}'
+    return ''
+
+
 def resolve_profile(source_id: str, *, folder_name: str = '', shared_key: str = '') -> dict:
     """Merge the cached profile with what the source folder alone can tell us."""
     profile = load_profile(source_id)
@@ -320,7 +422,11 @@ def resolve_profile(source_id: str, *, folder_name: str = '', shared_key: str = 
         'total_favorited': profile.get('total_favorited'),
         'aweme_count': profile.get('aweme_count'),
         'avatar_url': str(profile.get('avatar_url') or ''),
-        'profile_url': str(profile.get('profile_url') or ''),
+        'profile_url': profile_home_url(profile),
         'has_avatar': existing_avatar_path(avatar_key).is_file(),
         'cache_key': str(avatar_key or ''),
+        # Set by ``author import-links`` when the dump's own name for the account
+        # was a placeholder, which is what a cancelled or blocked account looks
+        # like. The page says so instead of leaving the counters looking broken.
+        'account_missing': bool(profile.get('account_missing')),
     }
